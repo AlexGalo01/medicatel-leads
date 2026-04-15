@@ -17,6 +17,8 @@ Motor de prospeccion inteligente de leads para sector salud, con arquitectura de
 - `FRONTEND_UI_ARCHITECTURE.md`: arquitectura de vistas React.
 - `FRONTEND_DESIGN_TOKENS.md`: tokens de diseno para UI.
 - `FRONTEND_ITERATIONS.md`: plan incremental de entregas frontend.
+- `WEBSETS.md`: referencia de WebSets de Exa usada por el pipeline.
+- `DOCS.md`: indice organizado de todos los archivos Markdown.
 
 ## Quick start backend
 

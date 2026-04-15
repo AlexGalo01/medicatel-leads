@@ -70,6 +70,13 @@ El pipeline de busqueda usa Exa WebSets con polling y guarda metadata:
 - `webset_poll_attempts`
 - `results_count`
 
+Referencia de endpoints WebSets en uso:
+
+- Base URL: `https://api.exa.ai/websets/v0`
+- Create: `POST /websets/`
+- Status: `GET /websets/{id}`
+- Items: `GET /websets/{id}/items`
+
 Variables opcionales recomendadas:
 
 - `GOOGLE_MODEL` (default: `gemini-1.5-flash-latest`)

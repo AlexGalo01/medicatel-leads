@@ -22,21 +22,28 @@ def _build_webset_payload(planner_output: dict[str, Any]) -> dict[str, Any]:
     include_domains = list(search_config.get("include_domains", []))
     exclude_domains = list(search_config.get("exclude_domains", []))
 
-    payload: dict[str, Any] = {
+    search_payload: dict[str, Any] = {
         "query": query,
         "count": num_results,
     }
-    if use_highlights:
-        payload["contents"] = {"highlights": {"max_characters": 4000}}
     if include_domains:
-        payload["includeDomains"] = include_domains
+        search_payload["includeDomains"] = include_domains
     if exclude_domains:
-        payload["excludeDomains"] = exclude_domains
+        search_payload["excludeDomains"] = exclude_domains
+
+    payload: dict[str, Any] = {"search": search_payload}
+    if use_highlights:
+        payload["enrichments"] = [
+            {
+                "description": "Extract the most relevant highlights for this result",
+                "format": "text",
+            }
+        ]
     return payload
 
 
 def _extract_results(webset_response: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_results = webset_response.get("results", webset_response.get("items", []))
+    raw_results = webset_response.get("items", webset_response.get("results", []))
     if isinstance(raw_results, list):
         return [result for result in raw_results if isinstance(result, dict)]
     return []
@@ -79,23 +86,26 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
         create_response = await exa_client.create_webset(payload)
         webset_id = _extract_webset_id(create_response)
 
-        webset_status = "processing"
+        webset_status = "created"
         poll_attempts = 0
         webset_response: dict[str, Any] = {}
         while poll_attempts < WEBSET_POLL_MAX_ATTEMPTS:
             poll_attempts += 1
             await asyncio.sleep(WEBSET_POLL_INTERVAL_SECONDS)
-            webset_response = await exa_client.get_webset(webset_id)
+            webset_response = await exa_client.get_webset(webset_id, expand_items=False)
             webset_status = _extract_webset_status(webset_response)
             if webset_status in {"completed", "done", "ready", "success"}:
                 break
-            if webset_status in {"error", "failed", "cancelled"}:
+            if webset_status in {"error", "failed", "cancelled", "canceled"}:
                 raise ValueError(f"WebSet finalizo con estado invalido: {webset_status}")
 
         if webset_status not in {"completed", "done", "ready", "success"}:
             raise TimeoutError("WebSet no completo dentro del tiempo de polling.")
 
-        exa_results = _extract_results(webset_response)
+        exa_results = await exa_client.list_webset_items(webset_id=webset_id, limit=200)
+        if not exa_results:
+            expanded_response = await exa_client.get_webset(webset_id, expand_items=True)
+            exa_results = _extract_results(expanded_response)
 
         logger.info(
             "Exa webset node completado para job_id=%s con %s resultados usando webset_id=%s",
