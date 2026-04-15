@@ -17,9 +17,7 @@ class ApiErrorResponse(BaseModel):
 
 
 class SearchJobCreateRequest(BaseModel):
-    specialty: str = Field(min_length=2, max_length=120)
-    country: str = Field(min_length=2, max_length=80)
-    city: str = Field(min_length=2, max_length=120)
+    query: str = Field(min_length=3, max_length=500)
     contact_channels: list[str] = Field(default_factory=list)
     notes: str | None = Field(default=None, max_length=500)
 

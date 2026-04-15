@@ -4,6 +4,7 @@ import logging
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
+from mle.core.config import get_settings
 from mle.db.base import async_session_factory
 from mle.db.models import Lead
 from mle.repositories.jobs_repository import JobsRepository
@@ -56,6 +57,8 @@ async def storage_export_node(state: LeadSearchGraphState) -> dict[str, object]:
         if not normalized_leads:
             raise ValueError("No hay leads procesados para almacenar.")
 
+        settings = get_settings()
+
         async with async_session_factory() as session:
             leads_repository = LeadsRepository(session)
             jobs_repository = JobsRepository(session)
@@ -64,7 +67,11 @@ async def storage_export_node(state: LeadSearchGraphState) -> dict[str, object]:
                 lead_model = _build_lead_model(state.job_id, lead_data, state.langsmith_metadata)
                 await leads_repository.create(lead_model)
 
-            export_path = export_leads_to_csv(state.job_id, normalized_leads)
+            export_path = export_leads_to_csv(
+                job_id=state.job_id,
+                leads=normalized_leads,
+                export_dir_path=settings.export_dir,
+            )
             await jobs_repository.update_status(
                 job_id=state.job_id,
                 status="completed",

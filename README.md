@@ -5,14 +5,14 @@ Motor de prospeccion inteligente de leads para sector salud, con arquitectura de
 ## Estado actual
 
 - Fase 1 implementada: contratos de datos con `Pydantic` + `SQLModel`.
-- Fase 2 iniciada: `Planner Node` y `Exa Webset Node` asincronos.
+- Fase 2 implementada con pipeline real: `Planner -> Exa WebSets -> Scoring -> Storage/Export`.
 - Documentacion de frontend y contrato API disponibles en archivos markdown del proyecto.
 
 ## Estructura
 
 - `backend/`: codigo Python del motor de agentes.
 - `DEVELOPMENT_PLAN.md`: roadmap maestro.
-- `DESIGN.md`: guia visual inspirada en Coinbase.
+- `DESIGN.md`: guia visual principal (Meta Store + referencia de hero minimal).
 - `API_CONTRACT.md`: contrato base frontend-backend.
 - `FRONTEND_UI_ARCHITECTURE.md`: arquitectura de vistas React.
 - `FRONTEND_DESIGN_TOKENS.md`: tokens de diseno para UI.
@@ -86,10 +86,25 @@ PYTHONPATH=src python3 -m mle.scripts.run_exa_node_demo
 - `DATABASE_URL`
 - `EXA_API_KEY`
 - `GOOGLE_API_KEY`
+- `GOOGLE_MODEL` (opcional, default: `gemini-1.5-flash-latest`)
 - `LANGSMITH_TRACING`
 - `LANGSMITH_ENDPOINT`
 - `LANGSMITH_API_KEY`
 - `LANGSMITH_PROJECT`
+- `EXPORT_DIR` (opcional, default: `/app/exports` en Docker)
+
+## Contrato de busqueda actual
+
+- El frontend y backend usan un input unico de busqueda (`query`) para crear jobs.
+- Endpoint de creacion:
+
+```json
+{
+  "query": "doctores de honduras con contacto directo",
+  "contact_channels": ["email", "whatsapp", "linkedin"],
+  "notes": "opcional"
+}
+```
 
 ## Nota de seguridad
 

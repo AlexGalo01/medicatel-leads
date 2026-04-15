@@ -29,6 +29,9 @@ class LeadSearchGraphState:
     current_stage: str = "planner"
     progress: int = 0
     planner_output: dict[str, Any] = field(default_factory=dict)
+    webset_id: str | None = None
+    webset_status: str | None = None
+    webset_poll_attempts: int = 0
     exa_raw_results: list[dict[str, Any]] = field(default_factory=list)
     leads: list[GraphLeadItem] = field(default_factory=list)
     langsmith_metadata: dict[str, Any] = field(default_factory=dict)

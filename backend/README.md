@@ -52,3 +52,25 @@ API base: `http://localhost:8000`
 - Listar leads: `GET /api/v1/leads?job_id=...`
 - Detalle lead: `GET /api/v1/leads/{lead_id}`
 - Exportar CSV: `POST /api/v1/leads/export`
+
+Payload de creacion de job (busqueda unica):
+
+```json
+{
+  "query": "doctores de honduras con whatsapp y email",
+  "contact_channels": ["email", "whatsapp", "linkedin"],
+  "notes": "opcional"
+}
+```
+
+El pipeline de busqueda usa Exa WebSets con polling y guarda metadata:
+
+- `webset_id`
+- `webset_status`
+- `webset_poll_attempts`
+- `results_count`
+
+Variables opcionales recomendadas:
+
+- `GOOGLE_MODEL` (default: `gemini-1.5-flash-latest`)
+- `EXPORT_DIR` (default: `/app/exports` en Docker)

@@ -35,10 +35,7 @@ def _extract_contact_channels(query_text: str) -> list[str]:
 
 
 def _build_exa_query(query_text: str) -> str:
-    normalized_query = _normalize_text(query_text)
-    if "honduras" not in normalized_query.lower():
-        return f"{normalized_query} en Honduras"
-    return normalized_query
+    return _normalize_text(query_text)
 
 
 def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
@@ -54,8 +51,8 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
     )
 
     normalized_specialty = normalized_query
-    normalized_location = "Honduras" if "honduras" in normalized_query.lower() else "Sin ubicacion definida"
-    planner_notes = "Busqueda configurada con estrategia deep y resultados enriquecidos."
+    normalized_location = "No definida"
+    planner_notes = "Busqueda general configurada con estrategia webset."
 
     return PlannerOutput(
         search_config=search_config,

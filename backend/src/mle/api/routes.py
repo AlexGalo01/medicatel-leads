@@ -21,6 +21,7 @@ from mle.repositories.jobs_repository import JobsRepository
 from mle.repositories.leads_repository import LeadsRepository
 from mle.services.export_service import export_leads_to_csv
 from mle.services.pipeline_service import run_job_pipeline
+from mle.core.config import get_settings
 
 api_router = APIRouter(prefix="/api/v1", tags=["mle"])
 
@@ -36,9 +37,7 @@ async def create_search_job(payload: SearchJobCreateRequest) -> SearchJobCreateR
     async with async_session_factory() as session:
         jobs_repository = JobsRepository(session)
         created_job = await jobs_repository.create(
-            specialty=payload.specialty,
-            country=payload.country,
-            city=payload.city,
+            query=payload.query,
             requested_contact_channels=contact_channels,
             notes=payload.notes,
         )
@@ -176,7 +175,12 @@ async def export_leads(payload: LeadsExportRequest) -> LeadsExportResponse:
         }
         for lead in leads_page.items
     ]
-    export_path = export_leads_to_csv(job_id=job_id, leads=leads_payload)
+    settings = get_settings()
+    export_path = export_leads_to_csv(
+        job_id=job_id,
+        leads=leads_payload,
+        export_dir_path=settings.export_dir,
+    )
     return LeadsExportResponse(
         download_path=export_path,
         generated_at=datetime.now(timezone.utc),

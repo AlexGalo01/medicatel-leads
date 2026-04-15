@@ -6,8 +6,8 @@ from typing import Any
 from uuid import UUID
 
 
-def export_leads_to_csv(job_id: UUID, leads: list[dict[str, Any]]) -> str:
-    export_dir = Path("backend/exports")
+def export_leads_to_csv(job_id: UUID, leads: list[dict[str, Any]], export_dir_path: str) -> str:
+    export_dir = Path(export_dir_path)
     export_dir.mkdir(parents=True, exist_ok=True)
 
     export_path = export_dir / f"leads_{job_id}.csv"

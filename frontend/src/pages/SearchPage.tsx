@@ -4,11 +4,16 @@ import { useNavigate } from "react-router-dom";
 
 import { createSearchJob } from "../api";
 
+const quickPrompts: string[] = [
+  "Doctores de Honduras con WhatsApp y email",
+  "Clínicas privadas en Tegucigalpa con presencia digital",
+  "Distribuidores de equipo médico en Centroamérica",
+  "Hospitales con área de ginecología y obstetricia",
+];
+
 export function SearchPage(): JSX.Element {
   const navigate = useNavigate();
-  const [specialty, setSpecialty] = useState("Cardiología");
-  const [country, setCountry] = useState("Honduras");
-  const [city, setCity] = useState("Tegucigalpa");
+  const [query, setQuery] = useState("Doctores de Honduras con email, whatsapp y linkedin");
   const [notes, setNotes] = useState("");
 
   const createJobMutation = useMutation({
@@ -19,46 +24,61 @@ export function SearchPage(): JSX.Element {
   const onSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     createJobMutation.mutate({
-      specialty,
-      country,
-      city,
+      query,
       notes,
       contact_channels: ["email", "whatsapp", "linkedin"],
     });
   };
 
   return (
-    <section className="panel">
-      <h2>Crear nueva búsqueda</h2>
-      <p className="muted-text">Define especialidad y ubicación para iniciar el pipeline real.</p>
-      <form className="form-grid" onSubmit={onSubmit}>
-        <label>
-          Especialidad
-          <input value={specialty} onChange={(event) => setSpecialty(event.target.value)} required />
-        </label>
-        <label>
-          País
-          <input value={country} onChange={(event) => setCountry(event.target.value)} required />
-        </label>
-        <label>
-          Ciudad
-          <input value={city} onChange={(event) => setCity(event.target.value)} required />
-        </label>
-        <label>
-          Notas
+    <section className="search-hero">
+      <div className="search-hero-card">
+        <p className="hero-kicker">Lead intelligence</p>
+        <h2>Encuentra leads de alta calidad con WebSets</h2>
+        <p className="muted-text">
+          Escribe cualquier búsqueda en lenguaje natural. El motor ejecuta pipeline real: WebSets,
+          scoring y exportación.
+        </p>
+
+        <form className="hero-search-form" onSubmit={onSubmit}>
+          <input
+            className="hero-search-input"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Ej: clínicas privadas en Honduras con contacto directo"
+            required
+          />
+          <button className="cta-button" type="submit" disabled={createJobMutation.isPending}>
+            {createJobMutation.isPending ? "Ejecutando..." : "Buscar"}
+          </button>
+        </form>
+
+        <div className="quick-prompts">
+          {quickPrompts.map((promptItem) => (
+            <button
+              key={promptItem}
+              type="button"
+              className="prompt-chip"
+              onClick={() => setQuery(promptItem)}
+            >
+              {promptItem}
+            </button>
+          ))}
+        </div>
+
+        <label className="notes-label">
+          Contexto opcional
           <textarea
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
-            placeholder="Contexto adicional de la prospección"
+            placeholder="Notas para orientar mejor el pipeline"
           />
         </label>
-        <button className="cta-button" type="submit" disabled={createJobMutation.isPending}>
-          {createJobMutation.isPending ? "Creando búsqueda..." : "Crear búsqueda"}
-        </button>
-      </form>
-      {createJobMutation.isError ? (
-        <p className="error-text">No se pudo crear el job. Revisa que el backend esté activo.</p>
-      ) : null}
+
+        {createJobMutation.isError ? (
+          <p className="error-text">No se pudo crear el job. Revisa que el backend esté activo.</p>
+        ) : null}
+      </div>
     </section>
   );
 }

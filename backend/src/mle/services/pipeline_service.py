@@ -11,9 +11,9 @@ from mle.state.graph_state import LeadSearchGraphState
 logger = logging.getLogger(__name__)
 
 
-def _build_query_text(specialty: str, country: str, city: str, channels: list[str]) -> str:
+def _build_query_text(base_query: str, channels: list[str]) -> str:
     channels_text = ", ".join(channels) if channels else "email, whatsapp, linkedin"
-    return f"{specialty} con contacto {channels_text} en {city}, {country}"
+    return f"{base_query} con contacto {channels_text}"
 
 
 async def run_job_pipeline(job_id: UUID) -> None:
@@ -24,12 +24,8 @@ async def run_job_pipeline(job_id: UUID) -> None:
             logger.error("No se encontro job para ejecutar pipeline job_id=%s", job_id)
             return
 
-        query_text = _build_query_text(
-            specialty=job.specialty,
-            country=job.country,
-            city=job.city,
-            channels=job.requested_contact_channels,
-        )
+        base_query = str(job.metadata_json.get("query_text", "")).strip() or job.specialty
+        query_text = _build_query_text(base_query=base_query, channels=job.requested_contact_channels)
         await jobs_repository.update_status(
             job_id=job.id,
             status="running",

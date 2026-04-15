@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     database_url: str = Field(alias="DATABASE_URL")
     exa_api_key: str = Field(alias="EXA_API_KEY")
     google_api_key: str = Field(alias="GOOGLE_API_KEY")
+    google_model: str = Field(default="gemini-1.5-flash-latest", alias="GOOGLE_MODEL")
+    export_dir: str = Field(default="/app/exports", alias="EXPORT_DIR")
     langsmith_tracing: bool = Field(default=False, alias="LANGSMITH_TRACING")
     langsmith_endpoint: AnyUrl | None = Field(default=None, alias="LANGSMITH_ENDPOINT")
     langsmith_api_key: str | None = Field(default=None, alias="LANGSMITH_API_KEY")

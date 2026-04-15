@@ -83,7 +83,10 @@ async def scoring_cleaning_node(state: LeadSearchGraphState) -> dict[str, object
             raise ValueError("No hay resultados de Exa para procesar.")
 
         settings = get_settings()
-        gemini_client = GeminiClient(api_key=settings.google_api_key)
+        gemini_client = GeminiClient(
+            api_key=settings.google_api_key,
+            model_name=settings.google_model,
+        )
 
         cleaned_leads: list[GraphLeadItem] = []
         for raw_result in state.exa_raw_results:

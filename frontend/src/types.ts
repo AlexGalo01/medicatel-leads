@@ -1,7 +1,5 @@
 export interface SearchJobCreateRequest {
-  specialty: string;
-  country: string;
-  city: string;
+  query: string;
   contact_channels: string[];
   notes?: string;
 }

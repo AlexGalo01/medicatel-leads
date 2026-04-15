@@ -16,6 +16,7 @@ COPY src /app/src
 RUN pip install --upgrade pip && pip install .
 
 RUN useradd --create-home --shell /bin/bash appuser
+RUN mkdir -p /app/exports && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000

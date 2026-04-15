@@ -17,21 +17,20 @@ class JobsRepository:
 
     async def create(
         self,
-        specialty: str,
-        country: str,
-        city: str,
+        query: str,
         requested_contact_channels: list[str],
         notes: str | None = None,
     ) -> SearchJob:
+        normalized_query = query.strip()
         job = SearchJob(
-            specialty=specialty,
-            country=country,
-            city=city,
+            specialty=normalized_query[:120] or "Busqueda general",
+            country="Global",
+            city="Global",
             status="pending",
             progress=0,
             requested_contact_channels=requested_contact_channels,
             notes=notes,
-            metadata_json={},
+            metadata_json={"query_text": normalized_query},
         )
         self.session.add(job)
         await self.session.commit()

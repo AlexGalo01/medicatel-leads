@@ -27,6 +27,8 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://medicatel:medicatel@postgres:5432/medicatel
+      GOOGLE_MODEL: gemini-1.5-flash-latest
+      EXPORT_DIR: /app/exports
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
     depends_on:
@@ -34,6 +36,8 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+    volumes:
+      - backend_exports:/app/exports
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
       interval: 20s
@@ -56,3 +60,4 @@ services:
 
 volumes:
   postgres_data:
+  backend_exports:

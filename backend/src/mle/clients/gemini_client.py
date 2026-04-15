@@ -7,11 +7,16 @@ from typing import Any
 class GeminiClient:
     """Minimal async client for Gemini generateContent endpoint."""
 
-    def __init__(self, api_key: str, timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model_name: str = "gemini-1.5-flash-latest",
+        timeout_seconds: float = 30.0,
+    ) -> None:
         self.api_key = api_key
+        self.model_name = model_name
         self.timeout_seconds = timeout_seconds
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
-        self.model_name = "gemini-1.5-flash"
 
     async def score_lead(self, lead_payload: dict[str, Any]) -> dict[str, Any]:
         import httpx
@@ -26,14 +31,29 @@ class GeminiClient:
                 }
             ]
         }
-        request_url = f"{self.base_url}/{self.model_name}:generateContent?key={self.api_key}"
+        model_candidates = [
+            self.model_name,
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-flash",
+            "gemini-2.0-flash",
+        ]
         headers = {"Content-Type": "application/json"}
 
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.post(request_url, headers=headers, json=request_body)
-            response.raise_for_status()
-            payload = dict(response.json())
-            return self._parse_response(payload)
+            last_error: Exception | None = None
+            for model in model_candidates:
+                request_url = f"{self.base_url}/{model}:generateContent?key={self.api_key}"
+                response = await client.post(request_url, headers=headers, json=request_body)
+                if response.status_code == 404:
+                    last_error = ValueError(f"Modelo no encontrado: {model}")
+                    continue
+                response.raise_for_status()
+                payload = dict(response.json())
+                return self._parse_response(payload)
+
+        if last_error is not None:
+            raise last_error
+        raise ValueError("No se pudo obtener respuesta valida de Gemini.")
 
     def _build_prompt(self, lead_payload: dict[str, Any]) -> str:
         lead_text = json.dumps(lead_payload, ensure_ascii=False)

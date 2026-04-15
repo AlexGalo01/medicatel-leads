@@ -16,6 +16,13 @@ def _apply_patch(state: LeadSearchGraphState, patch: dict[str, object]) -> LeadS
         current_stage=str(patch.get("current_stage", state.current_stage)),
         progress=int(patch.get("progress", state.progress)),
         planner_output=dict(patch.get("planner_output", state.planner_output)),
+        webset_id=str(patch.get("webset_id")) if patch.get("webset_id") else state.webset_id,
+        webset_status=(
+            str(patch.get("webset_status")) if patch.get("webset_status") else state.webset_status
+        ),
+        webset_poll_attempts=int(
+            patch.get("webset_poll_attempts", state.webset_poll_attempts)
+        ),
         exa_raw_results=list(patch.get("exa_raw_results", state.exa_raw_results)),
         leads=list(patch.get("leads", state.leads)),
         errors=list(patch.get("errors", state.errors)),
