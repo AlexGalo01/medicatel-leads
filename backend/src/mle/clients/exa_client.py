@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
-
 
 class ExaClient:
     """Minimal async client for Exa Search API."""
@@ -14,6 +12,8 @@ class ExaClient:
         self.base_url = "https://api.exa.ai"
 
     async def search(self, payload: dict[str, Any]) -> dict[str, Any]:
+        import httpx
+
         headers = {
             "x-api-key": self.api_key,
             "Content-Type": "application/json",

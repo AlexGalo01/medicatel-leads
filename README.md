@@ -28,6 +28,50 @@ pip install -e .
 PYTHONPATH=src python3 -m mle.scripts.init_db
 ```
 
+## Quick start frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Variable opcional:
+
+```bash
+VITE_API_BASE_URL=http://localhost:8000
+```
+
+## Docker Compose (recomendado)
+
+Levanta toda la plataforma (PostgreSQL + Backend + Frontend):
+
+```bash
+docker compose up --build -d
+```
+
+Servicios:
+
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8000`
+- Healthcheck backend: `http://localhost:8000/health`
+- PostgreSQL: `localhost:5432` (`medicatel/medicatel`)
+
+Comandos utiles:
+
+```bash
+docker compose ps
+docker compose logs -f backend
+docker compose logs -f frontend
+docker compose down
+```
+
+Para borrar tambien los datos de Postgres:
+
+```bash
+docker compose down -v
+```
+
 ## Ejecutar demos de nodos
 
 ```bash

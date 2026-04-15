@@ -55,6 +55,12 @@ class LeadsRepository:
         items = [self._to_read_model(lead) for lead in leads]
         return LeadsListRead(items=items, page=page, page_size=page_size, total=total)
 
+    async def get_by_id(self, lead_id: UUID) -> LeadRead | None:
+        lead = await self.session.get(Lead, lead_id)
+        if lead is None:
+            return None
+        return self._to_read_model(lead)
+
     def _to_read_model(self, lead: Lead) -> LeadRead:
         return LeadRead(
             id=lead.id,

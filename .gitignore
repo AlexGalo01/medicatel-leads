@@ -9,3 +9,6 @@ __pycache__/
 .vscode/
 dist/
 build/
+backend/exports/*.csv
+frontend/node_modules/
+frontend/dist/
