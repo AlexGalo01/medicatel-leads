@@ -40,6 +40,9 @@ def _build_exa_query(query_text: str) -> str:
 
 def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
     normalized_query = _normalize_text(state.query_text)
+    if not normalized_query:
+        raise ValueError("El query normalizado quedo vacio.")
+
     channels = _extract_contact_channels(normalized_query)
     exa_query = _build_exa_query(normalized_query)
 

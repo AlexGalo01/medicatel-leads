@@ -42,6 +42,21 @@ def _build_webset_payload(planner_output: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _ensure_non_empty_query(payload: dict[str, Any], fallback_query: str) -> dict[str, Any]:
+    search_payload = payload.get("search", {})
+    query = str(search_payload.get("query", "")).strip()
+    if query:
+        return payload
+
+    normalized_fallback = " ".join(fallback_query.strip().split())
+    if not normalized_fallback:
+        return payload
+
+    search_payload["query"] = normalized_fallback
+    payload["search"] = search_payload
+    return payload
+
+
 def _extract_results(webset_response: dict[str, Any]) -> list[dict[str, Any]]:
     raw_results = webset_response.get("items", webset_response.get("results", []))
     if isinstance(raw_results, list):
@@ -77,7 +92,10 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             raise ValueError("No existe planner_output para ejecutar Exa Webset.")
 
         payload = _build_webset_payload(planner_output)
-        if not payload.get("query"):
+        payload = _ensure_non_empty_query(payload, fallback_query=state.query_text)
+
+        search_payload = payload.get("search", {})
+        if not str(search_payload.get("query", "")).strip():
             raise ValueError("El query tecnico de Exa esta vacio.")
 
         settings = get_settings()
