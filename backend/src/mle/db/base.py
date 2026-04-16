@@ -16,7 +16,12 @@ def _normalize_database_url(database_url: str) -> str:
 def create_engine() -> AsyncEngine:
     settings = get_settings()
     normalized_url = _normalize_database_url(settings.database_url)
-    return create_async_engine(normalized_url, echo=False, pool_pre_ping=True)
+    return create_async_engine(
+        normalized_url,
+        echo=False,
+        pool_pre_ping=True,
+        connect_args={"statement_cache_size": 0},
+    )
 
 
 engine: AsyncEngine = create_engine()

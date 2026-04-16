@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from mle.orchestration import pipeline as pipeline_module
@@ -27,8 +28,8 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
 
         async def fake_scoring_node(state: LeadSearchGraphState) -> dict[str, object]:
             return {
-                "status": "completed",
-                "current_stage": "storage_export",
+                "status": "running",
+                "current_stage": "lead_purification",
                 "progress": 90,
                 "leads": [{"full_name": "Dra. Test", "score": 8.5}],
             }
@@ -41,13 +42,36 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
                 "langsmith_metadata": {"export_path": "backend/exports/leads_test.csv"},
             }
 
+        async def fake_purification_node(state: LeadSearchGraphState) -> dict[str, object]:
+            return {
+                "status": "running",
+                "current_stage": "contact_retry",
+                "progress": 92,
+                "leads": state.leads,
+                "contact_coverage": 0.5,
+                "missing_contact_count": 0,
+            }
+
+        async def fake_retry_node(state: LeadSearchGraphState) -> dict[str, object]:
+            return {
+                "status": "running",
+                "current_stage": "storage_export",
+                "progress": 96,
+                "leads": state.leads,
+                "retry_used": False,
+            }
+
         original_planner = pipeline_module.planner_node
         original_exa = pipeline_module.exa_webset_node
         original_scoring = pipeline_module.scoring_cleaning_node
+        original_purification = pipeline_module.lead_purification_node
+        original_retry = pipeline_module.contact_retry_node
         original_storage = pipeline_module.storage_export_node
         pipeline_module.planner_node = fake_planner_node
         pipeline_module.exa_webset_node = fake_exa_node
         pipeline_module.scoring_cleaning_node = fake_scoring_node
+        pipeline_module.lead_purification_node = fake_purification_node
+        pipeline_module.contact_retry_node = fake_retry_node
         pipeline_module.storage_export_node = fake_storage_node
 
         try:
@@ -55,7 +79,8 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
                 job_id=uuid4(),
                 query_text="Cardiologos en Honduras",
             )
-            final_state = await pipeline_module.run_lead_pipeline(initial_state)
+            with patch.object(pipeline_module, "persist_pipeline_progress", new_callable=AsyncMock):
+                final_state = await pipeline_module.run_lead_pipeline(initial_state)
 
             self.assertEqual(final_state.status, "completed")
             self.assertEqual(final_state.current_stage, "done")
@@ -65,6 +90,8 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             pipeline_module.planner_node = original_planner
             pipeline_module.exa_webset_node = original_exa
             pipeline_module.scoring_cleaning_node = original_scoring
+            pipeline_module.lead_purification_node = original_purification
+            pipeline_module.contact_retry_node = original_retry
             pipeline_module.storage_export_node = original_storage
 
     async def test_pipeline_stops_on_planner_error(self) -> None:
@@ -83,7 +110,8 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
                 job_id=uuid4(),
                 query_text="Cardiologos en Honduras",
             )
-            final_state = await pipeline_module.run_lead_pipeline(initial_state)
+            with patch.object(pipeline_module, "persist_pipeline_progress", new_callable=AsyncMock):
+                final_state = await pipeline_module.run_lead_pipeline(initial_state)
             self.assertEqual(final_state.status, "error")
             self.assertEqual(final_state.current_stage, "planner")
             self.assertIn("Planner fallo de prueba", final_state.errors)

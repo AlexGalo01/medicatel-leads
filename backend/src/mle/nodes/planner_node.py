@@ -4,6 +4,9 @@ import asyncio
 import logging
 from dataclasses import asdict
 
+from langsmith import traceable
+
+from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.schemas.planner import ExaSearchConfig, PlannerOutput
 from mle.state.graph_state import LeadSearchGraphState
 
@@ -49,13 +52,13 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
     search_config = ExaSearchConfig(
         query=exa_query,
         type="deep",
-        num_results=25,
+        num_results=100,
         use_highlights=True,
     )
 
     normalized_specialty = normalized_query
     normalized_location = "No definida"
-    planner_notes = "Busqueda general configurada con estrategia webset."
+    planner_notes = "Busqueda general configurada con estrategia search profunda."
 
     return PlannerOutput(
         search_config=search_config,
@@ -66,6 +69,12 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
     )
 
 
+@traceable(
+    name="planner_node",
+    run_type="chain",
+    process_inputs=trace_inputs_from_graph_state,
+    process_outputs=compact_node_patch,
+)
 async def planner_node(state: LeadSearchGraphState) -> dict[str, object]:
     """
     Build technical Exa search configuration from plain user query.

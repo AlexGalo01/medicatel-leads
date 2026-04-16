@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from mle.api.routes import api_router
 from mle.db.base import init_db
 from mle.logging_config import configure_logging
+from mle.observability import configure_langsmith_env
 
 
 def create_app() -> FastAPI:
@@ -23,6 +24,7 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def on_startup() -> None:
+        configure_langsmith_env()
         await init_db()
 
     @app.get("/health")

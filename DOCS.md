@@ -17,7 +17,8 @@ Este archivo centraliza y organiza la documentación existente del repositorio.
 
 ## Integración de búsqueda
 
-- `WEBSETS.md`: referencia completa de Exa WebSets (endpoints, SDK y ejemplos).
+- `SEARCH.md`: referencia activa de Exa Search (endpoints, parámetros y ejemplos).
+- `WEBSETS.md`: referencia de WebSets (actualmente no activa en este flujo).
 - `exa-api-setup-prompt.md`: guía amplia de configuración e integración con Exa.
 
 ## Backend específico

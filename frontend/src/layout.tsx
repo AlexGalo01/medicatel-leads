@@ -1,13 +1,14 @@
 import { Link, Outlet } from "react-router-dom";
+import logoImage from "./assets/Logo.png";
 
 export function AppLayout(): JSX.Element {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <h1>Medicatel Lead Engine</h1>
-        <nav className="nav-links">
-          <Link to="/search">Nueva búsqueda</Link>
-        </nav>
+        <Link to="/search" className="brand-link">
+          <img src={logoImage} alt="MedicatelCRM" className="brand-logo" />
+          <h1>MedicatelCRM</h1>
+        </Link>
       </header>
       <main className="app-main">
         <Outlet />

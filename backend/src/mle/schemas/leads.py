@@ -14,7 +14,7 @@ class LeadContacts(BaseModel):
 
 
 class LeadSourceCitation(BaseModel):
-    url: HttpUrl
+    url: str
     title: str
     confidence: str = Field(default="medium")
 
@@ -31,15 +31,15 @@ class LeadRead(BaseModel):
     score_reasoning: str | None = None
     contacts: LeadContacts
     primary_source_url: HttpUrl | None = None
+    source_citations: list[LeadSourceCitation] = Field(default_factory=list)
+    langsmith_metadata: dict[str, Any] = Field(default_factory=dict)
     validation_status: str
     created_at: datetime
     updated_at: datetime
 
 
 class LeadDetailRead(LeadRead):
-    source_citations: list[LeadSourceCitation] = Field(default_factory=list)
     exa_result_json: dict[str, Any] = Field(default_factory=dict)
-    langsmith_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class LeadsListRead(BaseModel):

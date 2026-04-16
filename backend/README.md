@@ -63,19 +63,16 @@ Payload de creacion de job (busqueda unica):
 }
 ```
 
-El pipeline de busqueda usa Exa WebSets con polling y guarda metadata:
+El pipeline de busqueda usa Exa Search API normal y guarda metadata:
 
-- `webset_id`
-- `webset_status`
-- `webset_poll_attempts`
+- `search_type`
+- `request_id`
 - `results_count`
 
-Referencia de endpoints WebSets en uso:
+Referencia del endpoint en uso:
 
-- Base URL: `https://api.exa.ai/websets/v0`
-- Create: `POST /websets/`
-- Status: `GET /websets/{id}`
-- Items: `GET /websets/{id}/items`
+- Base URL: `https://api.exa.ai`
+- Search: `POST /search`
 
 Variables opcionales recomendadas:
 

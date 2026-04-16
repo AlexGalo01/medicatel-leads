@@ -1,0 +1,1 @@
+{"root":["./src/api.ts","./src/layout.tsx","./src/main.tsx","./src/router.tsx","./src/types.ts","./src/vite-env.d.ts","./src/data/searchSuggestions.ts","./src/pages/JobStatusPage.tsx","./src/pages/LeadDetailPage.tsx","./src/pages/LeadsPage.tsx","./src/pages/SearchPage.tsx"],"version":"5.9.3"}

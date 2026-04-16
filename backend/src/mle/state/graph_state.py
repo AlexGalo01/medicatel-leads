@@ -29,11 +29,12 @@ class LeadSearchGraphState:
     current_stage: str = "planner"
     progress: int = 0
     planner_output: dict[str, Any] = field(default_factory=dict)
-    webset_id: str | None = None
-    webset_status: str | None = None
-    webset_poll_attempts: int = 0
     exa_raw_results: list[dict[str, Any]] = field(default_factory=list)
     leads: list[GraphLeadItem] = field(default_factory=list)
+    discarded_leads: list[dict[str, Any]] = field(default_factory=list)
+    contact_coverage: float = 0.0
+    missing_contact_count: int = 0
+    retry_used: bool = False
     langsmith_metadata: dict[str, Any] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 

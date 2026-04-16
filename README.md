@@ -5,7 +5,7 @@ Motor de prospeccion inteligente de leads para sector salud, con arquitectura de
 ## Estado actual
 
 - Fase 1 implementada: contratos de datos con `Pydantic` + `SQLModel`.
-- Fase 2 implementada con pipeline real: `Planner -> Exa WebSets -> Scoring -> Storage/Export`.
+- Fase 2 implementada con pipeline real: `Planner -> Exa Search -> Scoring -> Storage/Export`.
 - Documentacion de frontend y contrato API disponibles en archivos markdown del proyecto.
 
 ## Estructura
@@ -17,7 +17,8 @@ Motor de prospeccion inteligente de leads para sector salud, con arquitectura de
 - `FRONTEND_UI_ARCHITECTURE.md`: arquitectura de vistas React.
 - `FRONTEND_DESIGN_TOKENS.md`: tokens de diseno para UI.
 - `FRONTEND_ITERATIONS.md`: plan incremental de entregas frontend.
-- `WEBSETS.md`: referencia de WebSets de Exa usada por el pipeline.
+- `SEARCH.md`: referencia activa de Exa Search usada por el pipeline.
+- `WEBSETS.md`: referencia adicional (no activa en este flujo).
 - `DOCS.md`: indice organizado de todos los archivos Markdown.
 
 ## Quick start backend

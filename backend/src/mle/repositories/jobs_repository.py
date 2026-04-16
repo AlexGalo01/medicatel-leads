@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -17,11 +18,14 @@ class JobsRepository:
 
     async def create(
         self,
-        query: str,
+        expanded_query_text: str,
         requested_contact_channels: list[str],
         notes: str | None = None,
+        metadata_json: dict[str, Any] | None = None,
     ) -> SearchJob:
-        normalized_query = query.strip()
+        normalized_query = expanded_query_text.strip()
+        meta = dict(metadata_json or {})
+        meta.setdefault("query_text", normalized_query)
         job = SearchJob(
             specialty=normalized_query[:120] or "Busqueda general",
             country="Global",
@@ -30,7 +34,7 @@ class JobsRepository:
             progress=0,
             requested_contact_channels=requested_contact_channels,
             notes=notes,
-            metadata_json={"query_text": normalized_query},
+            metadata_json=meta,
         )
         self.session.add(job)
         await self.session.commit()

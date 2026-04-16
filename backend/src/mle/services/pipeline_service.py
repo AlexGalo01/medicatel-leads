@@ -3,7 +3,10 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
+from langsmith import traceable
+
 from mle.db.base import async_session_factory
+from mle.observability.langsmith_setup import configure_langsmith_env, trace_inputs_job_id
 from mle.orchestration.pipeline import run_lead_pipeline
 from mle.repositories.jobs_repository import JobsRepository
 from mle.state.graph_state import LeadSearchGraphState
@@ -16,7 +19,9 @@ def _build_query_text(base_query: str, channels: list[str]) -> str:
     return f"{base_query} con contacto {channels_text}"
 
 
+@traceable(name="search_job_pipeline", run_type="chain", process_inputs=trace_inputs_job_id)
 async def run_job_pipeline(job_id: UUID) -> None:
+    configure_langsmith_env()
     async with async_session_factory() as session:
         jobs_repository = JobsRepository(session)
         job = await jobs_repository.get_by_id(job_id)

@@ -5,7 +5,10 @@ import logging
 from dataclasses import asdict
 from typing import Any
 
+from langsmith import traceable
+
 from mle.clients.gemini_client import GeminiClient
+from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.core.config import get_settings
 from mle.state.graph_state import GraphLeadItem, LeadSearchGraphState
 
@@ -76,6 +79,12 @@ def _score_heuristic(lead: GraphLeadItem) -> tuple[float, str]:
     return final_score, reasoning
 
 
+@traceable(
+    name="scoring_cleaning_node",
+    run_type="chain",
+    process_inputs=trace_inputs_from_graph_state,
+    process_outputs=compact_node_patch,
+)
 async def scoring_cleaning_node(state: LeadSearchGraphState) -> dict[str, object]:
     """Clean Exa results and assign a lead score."""
     try:
@@ -87,6 +96,7 @@ async def scoring_cleaning_node(state: LeadSearchGraphState) -> dict[str, object
             api_key=settings.google_api_key,
             model_name=settings.google_model,
         )
+        gemini_rate_limited = False
 
         cleaned_leads: list[GraphLeadItem] = []
         for raw_result in state.exa_raw_results:
@@ -94,8 +104,14 @@ async def scoring_cleaning_node(state: LeadSearchGraphState) -> dict[str, object
             try:
                 # Async boundary to keep processing friendly for future batching.
                 await asyncio.sleep(0)
+                if gemini_rate_limited:
+                    raise RuntimeError("Gemini rate limited")
                 score, reasoning = await _score_with_gemini(gemini_client, lead)
             except Exception as gemini_error:  # noqa: BLE001
+                status_code = getattr(getattr(gemini_error, "response", None), "status_code", None)
+                if status_code == 429:
+                    gemini_rate_limited = True
+                    logger.warning("Gemini rate limit detectado; usando fallback heuristico para el resto del lote.")
                 logger.warning("Gemini no disponible para lead '%s': %s", lead.full_name, gemini_error)
                 score, reasoning = _score_heuristic(lead)
 
@@ -110,8 +126,8 @@ async def scoring_cleaning_node(state: LeadSearchGraphState) -> dict[str, object
             len(serialized_leads),
         )
         return {
-            "status": "completed",
-            "current_stage": "storage_export",
+            "status": "running",
+            "current_stage": "lead_purification",
             "progress": 90,
             "leads": serialized_leads,
             "langsmith_metadata": {

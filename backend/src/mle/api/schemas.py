@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -16,10 +16,14 @@ class ApiErrorResponse(BaseModel):
     error: ApiErrorBody
 
 
+SearchFocusLiteral = Literal["general", "linkedin", "instagram"]
+
+
 class SearchJobCreateRequest(BaseModel):
     query: str = Field(min_length=3, max_length=500)
     contact_channels: list[str] = Field(default_factory=list)
     notes: str | None = Field(default=None, max_length=500)
+    search_focus: SearchFocusLiteral | None = None
 
 
 class SearchJobCreateResponse(BaseModel):
@@ -34,6 +38,7 @@ class SearchJobStatusResponse(BaseModel):
     progress: int
     current_stage: str
     metrics: dict[str, int]
+    quality_metrics: dict[str, Any] = Field(default_factory=dict)
     updated_at: datetime
 
 
@@ -61,8 +66,19 @@ class LeadDetailResponse(LeadItemResponse):
     score_reasoning: str | None = None
     validation_status: str
     source_citations: list[dict[str, Any]] = Field(default_factory=list)
+    crm_stage: str = "new"
+    crm_notes: str | None = None
+    activity_timeline: list[dict[str, str]] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+    enrichment_status: str | None = None
+    enrichment_message: str | None = None
+
+
+class LeadCrmUpdateRequest(BaseModel):
+    crm_stage: str | None = Field(default=None, max_length=32)
+    crm_notes: str | None = Field(default=None, max_length=2000)
+    activity_note: str | None = Field(default=None, max_length=500)
 
 
 class LeadsExportRequest(BaseModel):
