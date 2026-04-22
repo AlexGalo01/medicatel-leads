@@ -6,7 +6,7 @@ from typing import Any
 
 from langsmith import traceable
 
-from mle.clients.exa_client import ExaClient
+from mle.clients.exa_client import ExaClient, finalize_exa_search_payload
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.core.config import get_settings
 from mle.state.graph_state import LeadSearchGraphState
@@ -26,17 +26,15 @@ def _build_retry_payload(state: LeadSearchGraphState) -> dict[str, Any]:
         f"{base_query} incluir correo electronico y whatsapp "
         "site:linkedin.com OR contacto OR telefono OR email"
     )
-    return {
+    settings = get_settings()
+    payload: dict[str, Any] = {
         "query": retry_query,
-        "type": "deep",
-        "numResults": 100,
-        "contents": {
-            "highlights": {
-                "maxCharacters": 5000,
-                "query": "obtener email, whatsapp, telefono, contacto y canal directo",
-            }
-        },
+        "type": settings.exa_search_type,
+        "category": "people",
+        "numResults": 40,
+        "contents": {"highlights": True},
     }
+    return finalize_exa_search_payload(payload)
 
 
 def _extract_highlight_text(result_item: dict[str, Any]) -> str:
@@ -99,7 +97,10 @@ async def contact_retry_node(state: LeadSearchGraphState) -> dict[str, object]:
             }
 
         settings = get_settings()
-        exa_client = ExaClient(api_key=settings.exa_api_key)
+        exa_client = ExaClient(
+            api_key=settings.exa_api_key,
+            timeout_seconds=settings.exa_search_timeout_seconds,
+        )
         retry_payload = _build_retry_payload(state)
         retry_response = await exa_client.search(retry_payload)
         retry_results = retry_response.get("results", [])

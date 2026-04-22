@@ -9,11 +9,9 @@ from mle.observability.langsmith_setup import (
     trace_outputs_graph_state,
 )
 from mle.nodes.exa_webset_node import exa_webset_node
-from mle.nodes.contact_retry_node import contact_retry_node
-from mle.nodes.lead_purification_node import lead_purification_node
 from mle.nodes.planner_node import planner_node
-from mle.nodes.scoring_cleaning_node import scoring_cleaning_node
-from mle.nodes.storage_export_node import storage_export_node
+from mle.nodes.relevance_filter_node import relevance_filter_node
+from mle.nodes.search_finalize_node import search_finalize_node
 from mle.services.job_progress_sink import persist_pipeline_progress
 from mle.state.graph_state import LeadSearchGraphState
 
@@ -24,6 +22,7 @@ def _apply_patch(state: LeadSearchGraphState, patch: dict[str, object]) -> LeadS
         status=str(patch.get("status", state.status)),
         current_stage=str(patch.get("current_stage", state.current_stage)),
         progress=int(patch.get("progress", state.progress)),
+        search_plan=dict(patch.get("search_plan", state.search_plan)),
         planner_output=dict(patch.get("planner_output", state.planner_output)),
         exa_raw_results=list(patch.get("exa_raw_results", state.exa_raw_results)),
         leads=list(patch.get("leads", state.leads)),
@@ -43,6 +42,10 @@ def _apply_patch(state: LeadSearchGraphState, patch: dict[str, object]) -> LeadS
     process_outputs=trace_outputs_graph_state,
 )
 async def run_lead_pipeline(initial_state: LeadSearchGraphState) -> LeadSearchGraphState:
+    """
+    Pipeline demo: planner + Exa + filtro de relevancia + cierre con vista previa.
+    Ver AGENT_TO_DO.md para reactivar limpieza, reintento y persistencia de leads.
+    """
     planner_patch = await planner_node(initial_state)
     state_after_planner = _apply_patch(initial_state, planner_patch)
     await persist_pipeline_progress(initial_state.job_id, state_after_planner)
@@ -55,26 +58,13 @@ async def run_lead_pipeline(initial_state: LeadSearchGraphState) -> LeadSearchGr
     if state_after_exa.status == "error":
         return state_after_exa
 
-    scoring_patch = await scoring_cleaning_node(state_after_exa)
-    state_after_scoring = _apply_patch(state_after_exa, scoring_patch)
-    await persist_pipeline_progress(initial_state.job_id, state_after_scoring)
-    if state_after_scoring.status == "error":
-        return state_after_scoring
+    relevance_patch = await relevance_filter_node(state_after_exa)
+    state_after_relevance = _apply_patch(state_after_exa, relevance_patch)
+    await persist_pipeline_progress(initial_state.job_id, state_after_relevance)
+    if state_after_relevance.status == "error":
+        return state_after_relevance
 
-    purification_patch = await lead_purification_node(state_after_scoring)
-    state_after_purification = _apply_patch(state_after_scoring, purification_patch)
-    await persist_pipeline_progress(initial_state.job_id, state_after_purification)
-    if state_after_purification.status == "error":
-        return state_after_purification
-
-    retry_patch = await contact_retry_node(state_after_purification)
-    state_after_retry = _apply_patch(state_after_purification, retry_patch)
-    await persist_pipeline_progress(initial_state.job_id, state_after_retry)
-    if state_after_retry.status == "error":
-        return state_after_retry
-
-    storage_patch = await storage_export_node(state_after_retry)
-    final_state = _apply_patch(state_after_retry, storage_patch)
+    finalize_patch = await search_finalize_node(state_after_relevance)
+    final_state = _apply_patch(state_after_relevance, finalize_patch)
     await persist_pipeline_progress(initial_state.job_id, final_state)
     return final_state
-

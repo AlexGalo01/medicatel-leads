@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +18,7 @@ class ApiErrorResponse(BaseModel):
 
 
 SearchFocusLiteral = Literal["general", "linkedin", "instagram"]
+ExaCategoryLiteral = Literal["people", "company"]
 
 
 class SearchJobCreateRequest(BaseModel):
@@ -24,12 +26,31 @@ class SearchJobCreateRequest(BaseModel):
     contact_channels: list[str] = Field(default_factory=list)
     notes: str | None = Field(default=None, max_length=500)
     search_focus: SearchFocusLiteral | None = None
+    exa_category: ExaCategoryLiteral | None = None
+    exa_criteria: str | None = Field(default=None, max_length=1200)
 
 
 class SearchJobCreateResponse(BaseModel):
     job_id: str
     status: str
     created_at: datetime
+    clarifying_question: str | None = None
+
+
+class SearchJobListItemResponse(BaseModel):
+    job_id: str
+    query: str
+    status: str
+    created_at: datetime
+    exa_category: str | None = None
+
+
+class SearchJobsListResponse(BaseModel):
+    items: list[SearchJobListItemResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
 
 
 class SearchJobStatusResponse(BaseModel):
@@ -40,6 +61,98 @@ class SearchJobStatusResponse(BaseModel):
     metrics: dict[str, int]
     quality_metrics: dict[str, Any] = Field(default_factory=dict)
     updated_at: datetime
+    pipeline_mode: str | None = None
+    exa_results_preview: list[dict[str, Any]] = Field(default_factory=list)
+    notes: str | None = None
+    exa_category: str | None = None
+    exa_criteria: str | None = None
+    query_text: str | None = None
+
+
+class ProfileInterpretRequest(BaseModel):
+    texts: list[str] = Field(default_factory=list, max_length=100)
+
+
+class ProfileInterpretItemResponse(BaseModel):
+    source_text: str
+    normalized_name: str | None = None
+    normalized_company: str | None = None
+    normalized_specialty: str | None = None
+
+
+class ProfileInterpretResponse(BaseModel):
+    items: list[ProfileInterpretItemResponse]
+
+
+class ProfileSummaryRequest(BaseModel):
+    title: str = Field(default="", max_length=1000)
+    specialty: str | None = Field(default=None, max_length=500)
+    city: str | None = Field(default=None, max_length=500)
+    snippet: str | None = Field(default=None, max_length=12000)
+
+
+class ProfileSummaryExperienceItem(BaseModel):
+    role: str
+    organization: str | None = None
+    period: str | None = None
+
+
+class ProfileSummaryResponse(BaseModel):
+    professional_summary: str | None = None
+    company: str | None = None
+    location: str | None = None
+    about: str | None = None
+    experiences: list[ProfileSummaryExperienceItem] = Field(default_factory=list)
+    confidence: Literal["high", "medium", "low"] = "low"
+    notes: str | None = None
+
+
+class UserPublic(BaseModel):
+    user_id: str
+    email: str
+    display_name: str
+    role: str
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserPublic
+
+
+class AdminCreateUserRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=200)
+    display_name: str = Field(min_length=1, max_length=160)
+    role: Literal["admin", "user"] = "user"
+
+
+class AdminUsersListResponse(BaseModel):
+    items: list[UserPublic]
+
+
+class OpportunityOwnerSnippet(BaseModel):
+    user_id: str
+    display_name: str
+    email: str
+
+
+class ExaMoreResultsRequest(BaseModel):
+    num_results: int = Field(default=40, ge=1, le=100)
+
+
+class ExaMoreResultsResponse(BaseModel):
+    ok: bool = True
+    added_count: int = 0
+    total_count: int = 0
+    preview_count: int = 0
+    query_used: str | None = None
+    error: str | None = None
 
 
 class LeadItemResponse(BaseModel):
@@ -90,4 +203,96 @@ class LeadsExportRequest(BaseModel):
 class LeadsExportResponse(BaseModel):
     download_path: str
     generated_at: datetime
+
+
+class DirectoryEntryItemResponse(BaseModel):
+    entry_id: str
+    display_title: str
+    primary_url: str
+    snippet: str | None = None
+    entity_type: str
+    city: str
+    country: str
+    created_at: datetime
+
+
+class DirectoryEntriesListResponse(BaseModel):
+    items: list[DirectoryEntryItemResponse]
+    page: int
+    page_size: int
+    total: int
+
+
+class OpportunityContactPayload(BaseModel):
+    id: str | None = None
+    kind: str = "other"
+    value: str = ""
+    note: str | None = None
+    role: str | None = None
+    is_primary: bool = False
+
+
+class OpportunityResponse(BaseModel):
+    opportunity_id: str
+    job_id: str
+    exa_preview_index: int
+    title: str
+    source_url: str
+    snippet: str | None = None
+    specialty: str
+    city: str
+    stage: str
+    response_outcome: str | None = None
+    contacts: list[dict[str, Any]]
+    activity_timeline: list[dict[str, Any]]
+    profile_overrides: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+    created: bool = False
+    owner: OpportunityOwnerSnippet | None = None
+
+
+class OpportunityListItemResponse(BaseModel):
+    opportunity_id: str
+    job_id: str
+    exa_preview_index: int
+    title: str
+    city: str
+    stage: str
+    response_outcome: str | None = None
+    updated_at: datetime
+    owner: OpportunityOwnerSnippet | None = None
+
+
+class OpportunityListResponse(BaseModel):
+    items: list[OpportunityListItemResponse]
+
+
+class OpportunityCreateFromPreviewRequest(BaseModel):
+    job_id: UUID
+    exa_preview_index: int = Field(ge=1)
+
+
+class OpportunityProfileCvPatch(BaseModel):
+    """Valores editables en ficha; null elimina el override y vuelve al resumen generado."""
+
+    about: str | None = Field(default=None, max_length=8000)
+    location: str | None = Field(default=None, max_length=500)
+    experiences: list[ProfileSummaryExperienceItem] | None = None
+
+
+class OpportunityUpdateRequest(BaseModel):
+    stage: str | None = Field(default=None, max_length=64)
+    response_outcome: str | None = Field(default=None, max_length=32)
+    note: str | None = Field(default=None, max_length=4000)
+    profile_cv: OpportunityProfileCvPatch | None = None
+
+
+class OpportunityBitacoraRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    author: str | None = Field(default=None, max_length=64)
+
+
+class OpportunityContactsReplaceRequest(BaseModel):
+    contacts: list[OpportunityContactPayload] = Field(default_factory=list)
 

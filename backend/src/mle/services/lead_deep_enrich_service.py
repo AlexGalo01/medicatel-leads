@@ -6,7 +6,7 @@ import re
 from typing import Any
 from uuid import UUID
 
-from mle.clients.exa_client import ExaClient
+from mle.clients.exa_client import ExaClient, finalize_exa_search_payload
 from mle.clients.gemini_client import GeminiClient
 from mle.core.config import get_settings
 from mle.db.base import async_session_factory
@@ -78,17 +78,14 @@ def _build_exa_payload(lead: Lead) -> dict[str, Any]:
     if li:
         parts.append(li)
     query = " ".join(p for p in parts if p)
-    return {
+    payload: dict[str, Any] = {
         "query": query[:900],
-        "type": "deep",
+        "type": get_settings().exa_search_type,
+        "category": "people",
         "numResults": 18,
-        "contents": {
-            "highlights": {
-                "maxCharacters": 4500,
-                "query": "extrae correos, telefonos, whatsapp, urls de linkedin facebook instagram y sitios web",
-            }
-        },
+        "contents": {"highlights": True},
     }
+    return finalize_exa_search_payload(payload)
 
 
 def _proposer_prompt(evidence: str, lead: Lead) -> str:
@@ -159,7 +156,10 @@ async def deep_enrich_lead(lead_id: UUID) -> LeadRead | None:
         if lead_orm is None:
             return None
 
-        exa_client = ExaClient(api_key=settings.exa_api_key)
+        exa_client = ExaClient(
+            api_key=settings.exa_api_key,
+            timeout_seconds=settings.exa_search_timeout_seconds,
+        )
         payload = _build_exa_payload(lead_orm)
         try:
             search_response = await exa_client.search(payload)

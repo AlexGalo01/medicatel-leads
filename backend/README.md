@@ -23,6 +23,34 @@ pip install -e .
 PYTHONPATH=src python -m mle.scripts.init_db
 ```
 
+`init_db` crea tablas que faltan, pero **no añade columnas nuevas** a tablas ya creadas. Con **PostgreSQL**, al arrancar la API se ejecuta además un `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` para `opportunities.profile_overrides` (ver [`src/mle/db/base.py`](src/mle/db/base.py)); basta **reiniciar el contenedor `backend`** para aplicar el cambio en bases ya existentes.
+
+Si prefieres aplicar la migración a mano o tu motor no es Postgres, usa los scripts en [`sql/`](sql/).
+
+### Migración: `opportunities.profile_overrides`
+
+Script: [`sql/001_opportunities_profile_overrides.sql`](sql/001_opportunities_profile_overrides.sql).
+
+Con el servicio `postgres` del [`docker-compose.yml`](../docker-compose.yml) en marcha:
+
+```bash
+docker compose exec postgres psql -U medicatel -d medicatel -c "ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS profile_overrides JSONB NOT NULL DEFAULT '{}'::jsonb;"
+```
+
+O desde el archivo (desde la **raíz del repo**, donde está `docker-compose.yml`):
+
+```bash
+docker compose exec -T postgres psql -U medicatel -d medicatel < backend/sql/001_opportunities_profile_overrides.sql
+```
+
+Comprobación rápida tras migrar:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/api/v1/opportunities
+```
+
+Debe responder `200` (no `500` por columna inexistente).
+
 ## Ejecutar nodos de ejemplo
 
 ```bash

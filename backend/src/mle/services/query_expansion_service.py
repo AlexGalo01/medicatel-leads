@@ -7,51 +7,98 @@ from langsmith import traceable
 
 from mle.clients.gemini_client import GeminiClient
 from mle.core.config import get_settings
+from mle.schemas.search_plan import SearchPlan, search_plan_from_fallback
 
 logger = logging.getLogger(__name__)
 
 
-@traceable(name="expand_user_search_query", run_type="chain")
+def _coerce_raw_plan(raw: dict[str, Any], contact_channels: list[str]) -> dict[str, Any]:
+    geo_in = raw.get("geo")
+    if isinstance(geo_in, dict):
+        geo_obj = {"country": str(geo_in.get("country", "")).strip(), "city": str(geo_in.get("city", "")).strip()}
+    else:
+        geo_obj = {"country": "", "city": ""}
+
+    add_q = raw.get("additional_queries") or []
+    if not isinstance(add_q, list):
+        add_q = []
+
+    req = raw.get("required_channels") or contact_channels
+    if not isinstance(req, list):
+        req = list(contact_channels)
+
+    cq = raw.get("clarifying_question")
+    if cq is not None and str(cq).strip() == "":
+        cq = None
+
+    return {
+        "entity_type": str(raw.get("entity_type", "")).strip(),
+        "geo": geo_obj,
+        "main_query": str(raw.get("main_query", "")).strip(),
+        "additional_queries": add_q,
+        "required_channels": [str(x).strip() for x in req if str(x).strip()],
+        "negative_constraints": str(raw.get("negative_constraints", "")).strip(),
+        "clarifying_question": cq,
+        "exa_category": raw.get("exa_category"),
+    }
+
+
+@traceable(
+    name="expand_user_search_query",
+    run_type="chain",
+    metadata={"phase": "directory"},
+    tags=["search-job", "query-expansion"],
+)
 async def expand_user_search_query(
     user_query: str,
     contact_channels: list[str],
     search_focus: str | None,
     notes: str | None,
-) -> tuple[str, dict[str, Any]]:
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
     """
-    Devuelve (texto_expandido_para_Exa, metadata_de_expansion).
-    Si Gemini falla, devuelve el query del usuario sin cambios.
+    Devuelve (texto principal para el job, metadata, search_plan serializado).
     """
     normalized_user = user_query.strip()
     if not normalized_user:
-        return "", {"fallback": True, "reason": "empty_user_query"}
+        plan = search_plan_from_fallback(".", contact_channels)
+        return "", {"fallback": True, "reason": "empty_user_query"}, plan.model_dump_for_job()
 
     settings = get_settings()
     client = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_model)
     try:
-        payload = await client.expand_search_query(
+        raw = await client.expand_search_plan(
             user_query=normalized_user,
             contact_channels=contact_channels,
             search_focus=search_focus or "general",
             notes=(notes or "").strip() or None,
         )
-        expanded = str(payload.get("expanded_query", "")).strip()
-        if not expanded:
-            raise ValueError("expanded_query vacio en respuesta del modelo")
-
+        coerced = _coerce_raw_plan(dict(raw), contact_channels)
+        if not coerced["main_query"]:
+            coerced["main_query"] = normalized_user
+        plan = SearchPlan.model_validate(coerced)
         expansion_meta: dict[str, Any] = {
             "model": settings.google_model,
             "focus": search_focus or "general",
-            "channel_instructions": payload.get("channel_instructions"),
-            "negative_constraints": payload.get("negative_constraints"),
             "fallback": False,
+            "clarifying_question": plan.clarifying_question,
+            "negative_constraints": plan.negative_constraints or None,
         }
-        return expanded, expansion_meta
+        if plan.clarifying_question:
+            logger.info(
+                "Plan de busqueda sugiere aclaracion (se continua con main_query): %s",
+                plan.clarifying_question,
+            )
+        return plan.main_query.strip(), expansion_meta, plan.model_dump_for_job()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Expansion de query con Gemini no disponible, usando texto del usuario: %s", exc)
-        return normalized_user, {
-            "fallback": True,
-            "model": settings.google_model,
-            "focus": search_focus or "general",
-            "error": str(exc)[:240],
-        }
+        logger.warning("Plan de busqueda con Gemini no disponible, usando fallback: %s", exc)
+        plan = search_plan_from_fallback(normalized_user, contact_channels)
+        return (
+            plan.main_query.strip(),
+            {
+                "fallback": True,
+                "model": settings.google_model,
+                "focus": search_focus or "general",
+                "error": str(exc)[:240],
+            },
+            plan.model_dump_for_job(),
+        )

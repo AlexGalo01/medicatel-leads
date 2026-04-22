@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mle.db.models import SearchJob
@@ -66,4 +66,33 @@ class JobsRepository:
         await self.session.commit()
         await self.session.refresh(job)
         return job
+
+    async def list_jobs(
+        self,
+        *,
+        limit: int | None = 15,
+        offset: int = 0,
+        query_text: str | None = None,
+    ) -> tuple[list[SearchJob], int]:
+        base_query = select(SearchJob)
+        normalized = (query_text or "").strip()
+        if normalized:
+            pattern = f"%{normalized}%"
+            base_query = base_query.where(
+                or_(
+                    SearchJob.specialty.ilike(pattern),
+                    SearchJob.metadata_json["user_query"].as_string().ilike(pattern),
+                    SearchJob.metadata_json["query_text"].as_string().ilike(pattern),
+                )
+            )
+        total_query = select(func.count()).select_from(base_query.subquery())
+        total_result = await self.session.execute(total_query)
+        total = int(total_result.scalar_one() or 0)
+
+        query = base_query.order_by(SearchJob.created_at.desc()).offset(max(0, offset))
+        if limit is not None:
+            query = query.limit(max(1, min(limit, 5000)))
+
+        result = await self.session.execute(query)
+        return list(result.scalars().all()), total
 

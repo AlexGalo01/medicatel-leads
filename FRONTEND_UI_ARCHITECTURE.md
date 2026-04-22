@@ -13,8 +13,8 @@ Definir la arquitectura de interfaz para operar el `Medicatel Lead Engine` desde
 ## Estructura de rutas
 - `/` -> redirección a `/search`
 - `/search` -> creación de job de prospección
-- `/jobs/:jobId` -> estado de ejecución del job
-- `/jobs/:jobId/leads` -> resultados (tabla)
+- `/jobs/:jobId` -> **workspace de búsqueda** (tabla + panel de criterios; polling del job y de leads)
+- `/jobs/:jobId/leads` -> redirección a `/jobs/:jobId` (compatibilidad)
 - `/leads/:leadId` -> detalle del lead
 
 ## Vistas principales
@@ -36,33 +36,20 @@ Definir la arquitectura de interfaz para operar el `Medicatel Lead Engine` desde
 - En éxito: navegar a `/jobs/:jobId`
 - En error: mostrar banner con mensaje accionable.
 
-### 2) JobExecutionView
-**Propósito:** monitorear progreso.
+### 2) JobSearchWorkspaceView (`JobSearchWorkspacePage`)
+**Propósito:** monitorear el job y ver **resultados en tabla** en la misma pantalla (layout dos columnas).
 
 **Elementos:**
-- Estado general (`pending`, `running`, `completed`, `error`)
-- Barra de progreso y métricas.
-- Log resumido por etapas.
+- Estado del job, progreso, etapa; pipeline colapsable.
+- Tabla de leads (polling `GET /leads` mientras `running`).
+- Panel lateral: criterios (texto + chips desde estado de navegación), enriquecimientos, métricas.
 
 **Comportamiento:**
-- Polling cada 3-5 segundos con `GET /search-jobs/:jobId`
-- En `completed`: habilitar CTA a resultados.
+- Polling ~1,5s `GET /search-jobs/:jobId`; leads cada ~2,5s si el job no terminó.
+- En `completed`: última carga de leads; sin redirección automática a otra ruta.
 
-### 3) LeadsResultsView
-**Propósito:** revisar y operar leads.
-
-**Elementos:**
-- Tabla con columnas:
-  - nombre
-  - especialidad
-  - score
-  - email
-  - whatsapp
-  - linkedin
-  - fuente principal
-- Filtros por score, ciudad, canal de contacto disponible.
-- Ordenamiento por score y fecha.
-- Exportación.
+### 3) LeadsResultsView (histórico)
+La vista dedicada de solo lista con filtros CSV fue **retirada**; filtros y exportación CSV pueden reintroducirse dentro del workspace en una iteración posterior.
 
 ### 4) LeadDetailView
 **Propósito:** trazabilidad completa del lead.

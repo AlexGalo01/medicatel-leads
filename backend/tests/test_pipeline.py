@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+import sys
+import types
 import unittest
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
+
+if "langsmith" not in sys.modules:
+
+    def _traceable_stub(**_kwargs):  # noqa: ANN003
+        def _decorator(fn):  # noqa: ANN001
+            return fn
+
+        return _decorator
+
+    _ls = types.ModuleType("langsmith")
+    _ls.traceable = _traceable_stub  # type: ignore[attr-defined]
+    sys.modules["langsmith"] = _ls
 
 from mle.orchestration import pipeline as pipeline_module
 from mle.state.graph_state import LeadSearchGraphState
@@ -21,58 +35,47 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         async def fake_exa_node(state: LeadSearchGraphState) -> dict[str, object]:
             return {
                 "status": "running",
-                "current_stage": "scoring_cleaning",
-                "progress": 60,
+                "current_stage": "relevance_filter",
+                "progress": 68,
                 "exa_raw_results": [{"title": "Dra. Test", "url": "https://linkedin.com/in/test"}],
             }
 
-        async def fake_scoring_node(state: LeadSearchGraphState) -> dict[str, object]:
+        async def fake_relevance_node(state: LeadSearchGraphState) -> dict[str, object]:
             return {
                 "status": "running",
-                "current_stage": "lead_purification",
-                "progress": 90,
-                "leads": [{"full_name": "Dra. Test", "score": 8.5}],
+                "current_stage": "search_finalize",
+                "progress": 72,
+                "exa_raw_results": list(state.exa_raw_results),
+                "langsmith_metadata": {
+                    **state.langsmith_metadata,
+                    "relevance_filter_kept": len(state.exa_raw_results),
+                    "relevance_filter_dropped": 0,
+                    "relevance_filter_mode": "test_bypass",
+                },
             }
 
-        async def fake_storage_node(state: LeadSearchGraphState) -> dict[str, object]:
+        async def fake_finalize_node(state: LeadSearchGraphState) -> dict[str, object]:
             return {
                 "status": "completed",
                 "current_stage": "done",
                 "progress": 100,
-                "langsmith_metadata": {"export_path": "backend/exports/leads_test.csv"},
-            }
-
-        async def fake_purification_node(state: LeadSearchGraphState) -> dict[str, object]:
-            return {
-                "status": "running",
-                "current_stage": "contact_retry",
-                "progress": 92,
-                "leads": state.leads,
-                "contact_coverage": 0.5,
-                "missing_contact_count": 0,
-            }
-
-        async def fake_retry_node(state: LeadSearchGraphState) -> dict[str, object]:
-            return {
-                "status": "running",
-                "current_stage": "storage_export",
-                "progress": 96,
-                "leads": state.leads,
-                "retry_used": False,
+                "langsmith_metadata": {
+                    **state.langsmith_metadata,
+                    "pipeline_mode": "presearch_and_search_only",
+                    "exa_results_preview": [
+                        {"index": 1, "title": "Dra. Test", "url": "https://linkedin.com/in/test", "snippet": None}
+                    ],
+                },
             }
 
         original_planner = pipeline_module.planner_node
         original_exa = pipeline_module.exa_webset_node
-        original_scoring = pipeline_module.scoring_cleaning_node
-        original_purification = pipeline_module.lead_purification_node
-        original_retry = pipeline_module.contact_retry_node
-        original_storage = pipeline_module.storage_export_node
+        original_relevance = pipeline_module.relevance_filter_node
+        original_finalize = pipeline_module.search_finalize_node
         pipeline_module.planner_node = fake_planner_node
         pipeline_module.exa_webset_node = fake_exa_node
-        pipeline_module.scoring_cleaning_node = fake_scoring_node
-        pipeline_module.lead_purification_node = fake_purification_node
-        pipeline_module.contact_retry_node = fake_retry_node
-        pipeline_module.storage_export_node = fake_storage_node
+        pipeline_module.relevance_filter_node = fake_relevance_node
+        pipeline_module.search_finalize_node = fake_finalize_node
 
         try:
             initial_state = LeadSearchGraphState(
@@ -85,14 +88,12 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(final_state.status, "completed")
             self.assertEqual(final_state.current_stage, "done")
             self.assertEqual(final_state.progress, 100)
-            self.assertEqual(len(final_state.leads), 1)
+            self.assertEqual(len(final_state.exa_raw_results), 1)
         finally:
             pipeline_module.planner_node = original_planner
             pipeline_module.exa_webset_node = original_exa
-            pipeline_module.scoring_cleaning_node = original_scoring
-            pipeline_module.lead_purification_node = original_purification
-            pipeline_module.contact_retry_node = original_retry
-            pipeline_module.storage_export_node = original_storage
+            pipeline_module.relevance_filter_node = original_relevance
+            pipeline_module.search_finalize_node = original_finalize
 
     async def test_pipeline_stops_on_planner_error(self) -> None:
         async def fake_planner_node(state: LeadSearchGraphState) -> dict[str, object]:
@@ -121,4 +122,3 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -1,0 +1,238 @@
+{
+  "version": "2.11",
+  "children": [
+    {
+      "type": "frame",
+      "id": "Odwhy",
+      "x": 0,
+      "y": 0,
+      "name": "Workspace Busqueda",
+      "width": 1280,
+      "height": 800,
+      "fill": "#F4F6F9",
+      "gap": 20,
+      "padding": 24,
+      "children": [
+        {
+          "type": "frame",
+          "id": "Su7GE",
+          "name": "Columna resultados",
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "stroke": {
+            "thickness": 1,
+            "fill": "#E5E7EB"
+          },
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "8uAVm",
+              "fill": "#111827",
+              "content": "Tabla de oportunidades",
+              "fontFamily": "Inter",
+              "fontSize": 18,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "NyUhz",
+              "name": "toolbar",
+              "width": "fill_container",
+              "gap": 16,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "mGYfE",
+                  "fill": "#6B7280",
+                  "content": "Filtrar",
+                  "fontFamily": "Inter",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "fTRMI",
+                  "fill": "#6B7280",
+                  "content": "Ordenar",
+                  "fontFamily": "Inter",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "xi1Z7",
+                  "fill": "#0052FF",
+                  "content": "+ Enriquecimiento",
+                  "fontFamily": "Inter",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "bML9c",
+              "fill": "#374151",
+              "textGrowth": "fixed-width",
+              "width": 620,
+              "content": "# | Nombre | Especialidad | Ciudad | Evidencia | Score",
+              "fontFamily": "Inter",
+              "fontSize": 11,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "PSCiB",
+              "fill": "#1F2937",
+              "textGrowth": "fixed-width",
+              "width": 620,
+              "content": "1 · Nicole Urbina · Psicóloga · Tegucigalpa · Match 2 ref. · 8.2",
+              "fontFamily": "Inter",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "Rz23C",
+              "fill": "#1F2937",
+              "textGrowth": "fixed-width",
+              "width": 620,
+              "content": "2 · Sharon Brenes · Psicóloga · Tegucigalpa · Match 2 ref. · 7.9",
+              "fontFamily": "Inter",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "KzDxw",
+              "fill": "#1F2937",
+              "textGrowth": "fixed-width",
+              "width": 620,
+              "content": "3 · Kendy Castellanos · Psicóloga · Tegucigalpa · Match 1 ref. · 7.5",
+              "fontFamily": "Inter",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "OM1rt",
+              "opacity": 0.7,
+              "fill": "#9CA3AF",
+              "content": "… · (fila en carga · skeleton)",
+              "fontFamily": "Inter",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "RFgpj",
+          "name": "Panel criterios",
+          "width": 340,
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "stroke": {
+            "thickness": 1,
+            "fill": "#E5E7EB"
+          },
+          "layout": "vertical",
+          "gap": 14,
+          "padding": 16,
+          "children": [
+            {
+              "type": "text",
+              "id": "FPUro",
+              "fill": "#111827",
+              "content": "Criterios",
+              "fontFamily": "Inter",
+              "fontSize": 16,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "4cy83",
+              "name": "pill",
+              "gap": 6,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "SGkOc",
+                  "fill": "#6B21A8",
+                  "content": "Personas",
+                  "fontFamily": "Inter",
+                  "fontSize": 11,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "9Gulf",
+              "fill": "#4B5563",
+              "textGrowth": "fixed-width",
+              "width": 300,
+              "content": "Consulta:\nPsicólogos en Tegucigalpa, Francisco Morazán, Honduras que crean contenido",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "WYQKg",
+              "fill": "#5B21B6",
+              "content": "● Rol: psicólogo/a clínico",
+              "fontFamily": "Inter",
+              "fontSize": 11,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "sgwK3",
+              "fill": "#C2410C",
+              "content": "● Ubicación: Honduras",
+              "fontFamily": "Inter",
+              "fontSize": 11,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "hMKKh",
+              "fill": "#6B7280",
+              "textGrowth": "fixed-width",
+              "width": 300,
+              "content": "Enriquecimientos: Email · WhatsApp · LinkedIn · + Personalizado",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "SqN74",
+              "fill": "#9CA3AF",
+              "content": "Más resultados:  [25]  [100]  [Personalizado]",
+              "fontFamily": "Inter",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "VEnR7",
+              "fill": "#0052FF",
+              "content": "18 oportunidades | 24 extraídos | 120 fuentes",
+              "fontFamily": "Inter",
+              "fontSize": 12,
+              "fontWeight": "500"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

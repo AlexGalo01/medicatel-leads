@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
+import { Check, ExternalLink, Sparkles } from "lucide-react";
 
 import { deepEnrichLead, getLeadDetail } from "../api";
+import { Button } from "../components/ui/button";
+import { Card } from "../components/ui/card";
 import type { LeadSourceCitation } from "../types";
 
 function formatDateTime(dateValue: string): string {
@@ -38,6 +41,20 @@ function collectSourceLinks(primaryUrl: string | null, citations: LeadSourceCita
     out.push({ url: citation.url, label: citation.title || citation.url });
   }
   return out;
+}
+
+function hostLabel(url: string): string {
+  try {
+    const u = new URL(url.startsWith("http") ? url : `https://${url}`);
+    return u.hostname.replace(/^www\./, "");
+  } catch {
+    return url.slice(0, 32);
+  }
+}
+
+function profileInitial(name: string): string {
+  const t = name.trim();
+  return t ? t.charAt(0).toUpperCase() : "?";
 }
 
 export function LeadDetailPage(): JSX.Element {
@@ -77,7 +94,7 @@ export function LeadDetailPage(): JSX.Element {
   );
 
   if (leadDetailQuery.isLoading) {
-    return <section className="panel">Cargando detalle...</section>;
+    return <section className="panel">Cargando detalle…</section>;
   }
   if (leadDetailQuery.isError || !leadDetailQuery.data) {
     return <section className="panel error-text">No se pudo cargar esta oportunidad.</section>;
@@ -86,105 +103,101 @@ export function LeadDetailPage(): JSX.Element {
   const lead = leadDetailQuery.data;
   const description =
     lead.score_reasoning?.trim() ||
-    "Aún no hay una descripción generada para esta oportunidad. Puedes ejecutar una búsqueda extensiva para intentar enriquecerla con evidencia verificable.";
+    "Aún no hay un resumen de relevancia. Puedes ejecutar el enriquecimiento para buscar evidencia verificable en la web (perfiles públicos, directorios, etc.).";
+
+  const hasContact = Boolean(lead.email || lead.whatsapp || lead.linkedin_url);
 
   return (
-    <section className="lead-detail-page">
-      <div className="panel lead-detail-header">
-        <div className="lead-detail-header-left">
-          <button className="link-button lead-back-button" onClick={() => navigate(-1)} type="button">
-            Volver a la lista
-          </button>
-          <h2>{lead.full_name}</h2>
-          <p className="muted-text">
-            {lead.specialty} — {lead.city}, {lead.country}
-          </p>
-        </div>
-        <div className="lead-detail-header-actions">
-          <div className="lead-score-badge">Score IA: {lead.score ?? "-"}</div>
-          <button
-            className="cta-button lead-deep-enrich-button"
-            type="button"
-            disabled={deepEnrichMutation.isPending || !leadId}
-            onClick={() => {
-              setDeepError(null);
-              deepEnrichMutation.mutate();
-            }}
-          >
-            {deepEnrichMutation.isPending ? "Búsqueda en curso…" : "Búsqueda extensiva (IA + evidencia)"}
-          </button>
-        </div>
-      </div>
+    <section className="lead-detail-page lead-detail-page--two-col">
+      <nav className="lead-detail-topbar" aria-label="Navegación del detalle">
+        <button className="link-button lead-back-button" onClick={() => navigate(-1)} type="button">
+          Volver a la lista
+        </button>
+      </nav>
 
-      {lead.enrichment_message ? (
-        <div className="panel lead-enrichment-banner muted-text">
-          <strong>Última búsqueda extensiva:</strong> {lead.enrichment_message}
-          {lead.enrichment_status ? <span> ({lead.enrichment_status})</span> : null}
+      {deepError ? (
+        <div className="panel error-text lead-detail-inline-alert" role="alert">
+          {deepError}
         </div>
       ) : null}
 
-      {deepError ? <div className="panel error-text">{deepError}</div> : null}
+      <div className="lead-detail-grid lead-detail-grid--proposal-b">
+        <div className="lead-detail-main">
+          <Card className="panel lead-detail-hero">
+            <div className="lead-detail-hero-visual">
+              <span className="lead-detail-avatar" aria-hidden>
+                {profileInitial(lead.full_name)}
+              </span>
+            </div>
+            <div className="lead-detail-hero-text">
+              <h1 className="lead-detail-title">{lead.full_name}</h1>
+              <p className="lead-detail-subtitle muted-text">
+                {lead.specialty}
+                {lead.city || lead.country
+                  ? ` · ${[lead.city, lead.country].filter(Boolean).join(", ")}`
+                  : null}
+              </p>
+              <div className="lead-detail-hero-meta">
+                <span className="lead-score-badge">Score IA: {lead.score ?? "—"}</span>
+                <span className="muted-text lead-detail-validation">Validación: {lead.validation_status}</span>
+              </div>
+            </div>
+          </Card>
 
-      <div className="lead-detail-grid">
-        <aside className="lead-detail-sidebar">
-          <section className="panel lead-detail-card">
-            <h3>Contacto</h3>
-            <p className="muted-text">Solo se muestran datos presentes en esta ejecución.</p>
-            <ul className="lead-detail-list">
-              {lead.email ? (
-                <li>
-                  <strong>Email:</strong> {lead.email}
-                </li>
-              ) : null}
-              {lead.whatsapp ? (
-                <li>
-                  <strong>WhatsApp:</strong> {lead.whatsapp}
-                </li>
-              ) : null}
-              {lead.linkedin_url ? (
-                <li>
-                  <strong>LinkedIn:</strong>{" "}
-                  <a href={lead.linkedin_url} target="_blank" rel="noreferrer">
-                    Abrir perfil
-                  </a>
-                </li>
-              ) : null}
-              {!lead.email && !lead.whatsapp && !lead.linkedin_url ? (
-                <li className="muted-text">Sin canales de contacto en el registro actual.</li>
-              ) : null}
-            </ul>
-          </section>
+          <details className="panel lead-detail-accordion" open>
+            <summary className="lead-detail-accordion-summary">Resumen de relevancia</summary>
+            <div className="lead-detail-accordion-body">
+              <p className="lead-detail-description">{description}</p>
+            </div>
+          </details>
 
-          <section className="panel lead-detail-card">
-            <h3>Metadatos</h3>
-            <ul className="lead-detail-list">
-              <li>
-                <strong>Validación:</strong> {lead.validation_status}
-              </li>
-              <li>
-                <strong>Creado:</strong> {formatDateTime(lead.created_at)}
-              </li>
-              <li>
-                <strong>Actualizado:</strong> {formatDateTime(lead.updated_at)}
-              </li>
-            </ul>
-          </section>
-        </aside>
+          <details className="panel lead-detail-accordion" open={citations.length > 0}>
+            <summary className="lead-detail-accordion-summary">Evidencia y referencias</summary>
+            <div className="lead-detail-accordion-body">
+              {citations.length > 0 ? (
+                <ul className="lead-evidence-list">
+                  {citations.map((citation) => (
+                    <li key={citation.url} className="lead-evidence-row">
+                      <span className="lead-evidence-check" aria-hidden>
+                        <Check size={20} strokeWidth={2.5} />
+                      </span>
+                      <div>
+                        <div className="lead-evidence-title">{citation.title}</div>
+                        <p className="muted-text lead-evidence-note">
+                          Referencia indexada en el pipeline
+                          {citation.confidence ? ` · confianza: ${citation.confidence}` : ""}.
+                        </p>
+                        <a
+                          className="lead-evidence-link"
+                          href={citation.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {hostLabel(citation.url)}
+                          <ExternalLink size={14} aria-hidden />
+                        </a>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted-text">
+                  Sin citas estructuradas todavía. Tras enriquecer la oportunidad pueden aparecer enlaces verificables aquí.
+                </p>
+              )}
+            </div>
+          </details>
 
-        <main className="lead-detail-main">
-          <section className="panel lead-detail-card">
-            <h3>Descripción</h3>
-            <p className="lead-detail-description">{description}</p>
-          </section>
-
-          <section className="panel lead-detail-card">
-            <h3>Fuentes enlazadas</h3>
+          <Card className="panel lead-detail-card">
+            <h2 className="lead-detail-section-title">Fuentes y enlaces</h2>
             {sourceLinks.length > 0 ? (
-              <ul className="lead-detail-list">
+              <ul className="lead-source-link-list">
                 {sourceLinks.map((item) => (
-                  <li key={item.url}>
-                    <a href={item.url} target="_blank" rel="noreferrer">
+                  <li key={item.url} className="lead-source-link-row">
+                    <span className="lead-source-host">{hostLabel(item.url)}</span>
+                    <a href={item.url} target="_blank" rel="noreferrer" className="lead-source-anchor">
                       {item.label}
+                      <ExternalLink size={14} aria-hidden />
                     </a>
                   </li>
                 ))}
@@ -192,36 +205,128 @@ export function LeadDetailPage(): JSX.Element {
             ) : (
               <p className="muted-text">No hay URLs de fuente registradas.</p>
             )}
-          </section>
+          </Card>
+        </div>
 
-          <section className="panel lead-detail-card">
-            <h3>Citas y evidencia</h3>
-            {citations.length > 0 ? (
-              <ul className="lead-citation-blocks">
-                {citations.map((citation) => (
-                  <li key={citation.url} className="lead-citation-block">
-                    <div className="lead-citation-title">
-                      <a href={citation.url} target="_blank" rel="noreferrer">
-                        {citation.title}
-                      </a>
-                    </div>
-                    <div className="muted-text lead-citation-meta">
-                      Confianza: {citation.confidence ?? "media"}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="muted-text">No hay citas estructuradas. Tras la búsqueda extensiva pueden aparecer aquí.</p>
-            )}
-          </section>
-        </main>
-      </div>
+        <aside className="lead-detail-sidebar" aria-label="Contacto y acciones">
+          <Card className="panel lead-detail-enrich-card">
+            <div className="lead-detail-enrich-icon" aria-hidden>
+              <Sparkles size={22} />
+            </div>
+            <h2 className="lead-detail-enrich-title">Enriquecer esta oportunidad</h2>
+            <p className="muted-text lead-detail-enrich-copy">
+              Ejecuta una búsqueda ampliada con IA sobre la web para localizar correo, WhatsApp, LinkedIn y otras pistas
+              públicas. Más adelante podrás orientar el agente hacia Instagram u otras redes.
+            </p>
+            <Button
+              className="cta-button lead-detail-enrich-cta"
+              type="button"
+              disabled={deepEnrichMutation.isPending || !leadId}
+              onClick={() => {
+                setDeepError(null);
+                deepEnrichMutation.mutate();
+              }}
+            >
+              {deepEnrichMutation.isPending ? "Búsqueda en curso…" : "Ejecutar búsqueda extensiva"}
+            </Button>
+            {lead.enrichment_message ? (
+              <p className="lead-detail-enrich-status muted-text">
+                <strong>Última ejecución:</strong> {lead.enrichment_message}
+                {lead.enrichment_status ? ` (${lead.enrichment_status})` : null}
+              </p>
+            ) : null}
+          </Card>
 
-      <div className="actions-row">
-        <button className="link-button" onClick={() => navigate(-1)} type="button">
-          Volver a la lista
-        </button>
+          <Card className="panel lead-detail-card lead-detail-contact-card">
+            <h2 className="lead-detail-section-title">Contacto</h2>
+            <p className="muted-text lead-detail-card-hint">Solo datos presentes en el registro o añadidos tras enriquecer.</p>
+            <dl className="lead-contact-dl">
+              <div className="lead-contact-row">
+                <dt>Correo</dt>
+                <dd>{lead.email ? <a href={`mailto:${lead.email}`}>{lead.email}</a> : <span className="muted-text">Sin dato — enriquecer</span>}</dd>
+              </div>
+              <div className="lead-contact-row">
+                <dt>WhatsApp</dt>
+                <dd>
+                  {lead.whatsapp ? (
+                    <a href={`https://wa.me/${lead.whatsapp.replace(/\D/g, "")}`} target="_blank" rel="noreferrer">
+                      {lead.whatsapp}
+                    </a>
+                  ) : (
+                    <span className="muted-text">Sin dato — enriquecer</span>
+                  )}
+                </dd>
+              </div>
+              <div className="lead-contact-row">
+                <dt>LinkedIn</dt>
+                <dd>
+                  {lead.linkedin_url ? (
+                    <a href={lead.linkedin_url} target="_blank" rel="noreferrer">
+                      Abrir perfil
+                      <ExternalLink size={14} aria-hidden />
+                    </a>
+                  ) : (
+                    <span className="muted-text">Sin dato — enriquecer</span>
+                  )}
+                </dd>
+              </div>
+              <div className="lead-contact-row">
+                <dt>Fuente principal</dt>
+                <dd>
+                  {lead.primary_source_url ? (
+                    <a href={lead.primary_source_url} target="_blank" rel="noreferrer">
+                      {hostLabel(lead.primary_source_url)}
+                      <ExternalLink size={14} aria-hidden />
+                    </a>
+                  ) : (
+                    <span className="muted-text">—</span>
+                  )}
+                </dd>
+              </div>
+            </dl>
+            {!hasContact ? (
+              <p className="lead-inline-note">Aún no hay canales de contacto verificables. Usa el enriquecimiento para intentar localizarlos.</p>
+            ) : null}
+          </Card>
+
+          <Card className="panel lead-detail-card lead-detail-crm-card">
+            <h2 className="lead-detail-section-title">CRM</h2>
+            <dl className="lead-contact-dl">
+              <div className="lead-contact-row">
+                <dt>Etapa</dt>
+                <dd>{lead.crm_stage}</dd>
+              </div>
+              {lead.crm_notes ? (
+                <div className="lead-contact-row lead-contact-row--block">
+                  <dt>Notas</dt>
+                  <dd className="lead-crm-notes">{lead.crm_notes}</dd>
+                </div>
+              ) : null}
+              <div className="lead-contact-row">
+                <dt>Creado</dt>
+                <dd className="muted-text">{formatDateTime(lead.created_at)}</dd>
+              </div>
+              <div className="lead-contact-row">
+                <dt>Actualizado</dt>
+                <dd className="muted-text">{formatDateTime(lead.updated_at)}</dd>
+              </div>
+            </dl>
+            {lead.activity_timeline?.length ? (
+              <div className="lead-activity-preview">
+                <h3 className="lead-activity-heading">Actividad reciente</h3>
+                <ul className="lead-activity-list">
+                  {lead.activity_timeline.slice(-4).map((entry, idx) => (
+                    <li key={idx} className="muted-text">
+                      {Object.entries(entry)
+                        .map(([k, v]) => `${k}: ${v}`)
+                        .join(" · ")}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </Card>
+        </aside>
       </div>
     </section>
   );

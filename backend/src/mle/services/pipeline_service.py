@@ -29,6 +29,9 @@ async def run_job_pipeline(job_id: UUID) -> None:
             logger.error("No se encontro job para ejecutar pipeline job_id=%s", job_id)
             return
 
+        raw_plan = job.metadata_json.get("search_plan")
+        search_plan: dict[str, object] = dict(raw_plan) if isinstance(raw_plan, dict) else {}
+
         base_query = str(job.metadata_json.get("query_text", "")).strip() or job.specialty
         query_text = _build_query_text(base_query=base_query, channels=job.requested_contact_channels)
         await jobs_repository.update_status(
@@ -44,6 +47,7 @@ async def run_job_pipeline(job_id: UUID) -> None:
         status="running",
         current_stage="planner",
         progress=5,
+        search_plan=search_plan,
     )
     final_state = await run_lead_pipeline(initial_state)
 

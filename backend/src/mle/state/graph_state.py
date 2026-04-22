@@ -28,6 +28,7 @@ class LeadSearchGraphState:
     status: str = "pending"
     current_stage: str = "planner"
     progress: int = 0
+    search_plan: dict[str, Any] = field(default_factory=dict)
     planner_output: dict[str, Any] = field(default_factory=dict)
     exa_raw_results: list[dict[str, Any]] = field(default_factory=list)
     leads: list[GraphLeadItem] = field(default_factory=list)

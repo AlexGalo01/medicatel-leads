@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 def _db_status_from_state(state: LeadSearchGraphState) -> str:
     if state.status == "error":
         return "error"
+    if state.status == "completed":
+        return "completed"
     if state.current_stage == "done" and state.progress >= 100:
         return "completed"
     return "running"
@@ -43,6 +45,16 @@ async def persist_pipeline_progress(job_id: UUID, state: LeadSearchGraphState) -
             base_meta["missing_contact_count"] = int(state.missing_contact_count)
             base_meta["retry_used"] = bool(state.retry_used)
             base_meta["discarded_leads_count"] = len(state.discarded_leads)
+
+            meta_from_state = state.langsmith_metadata or {}
+            for key in ("exa_results_preview", "pipeline_mode", "exa_accumulated_raw", "exa_more_rounds"):
+                if key in meta_from_state:
+                    base_meta[key] = meta_from_state[key]
+
+            planner_out = state.planner_output if isinstance(state.planner_output, dict) else {}
+            rel_c = planner_out.get("relevance_criteria")
+            if isinstance(rel_c, dict) and rel_c:
+                base_meta["relevance_criteria"] = rel_c
 
             await jobs_repository.update_status(
                 job_id=job_id,
