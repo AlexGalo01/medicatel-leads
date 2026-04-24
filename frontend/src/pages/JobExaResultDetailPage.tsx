@@ -393,26 +393,63 @@ export function JobExaResultDetailPage(): JSX.Element {
 
           <section className="panel lead-detail-card lead-detail-contact-card">
             <h2 className="lead-detail-section-title">Contacto</h2>
-            <p className="muted-text lead-detail-card-hint">
-              Tras crear la oportunidad podrás registrar correos, teléfonos, WhatsApp y más en la ficha.
-            </p>
+            {row?.email || row?.phone || row?.whatsapp || row?.linkedin_url ? (
+              <p className="muted-text lead-detail-card-hint">
+                Información encontrada en la búsqueda. Podrás confirmar o agregar más en la ficha de oportunidad.
+              </p>
+            ) : (
+              <p className="muted-text lead-detail-card-hint">
+                Tras crear la oportunidad podrás registrar correos, teléfonos, WhatsApp y más en la ficha.
+              </p>
+            )}
             <dl className="lead-contact-dl">
               <div className="lead-contact-row">
                 <dt>Correo</dt>
                 <dd>
-                  <span className="muted-text">En la ficha de oportunidad</span>
+                  {row?.email ? (
+                    <a href={`mailto:${row.email}`} className="link">
+                      {row.email}
+                    </a>
+                  ) : (
+                    <span className="muted-text">—</span>
+                  )}
+                </dd>
+              </div>
+              <div className="lead-contact-row">
+                <dt>Teléfono</dt>
+                <dd>
+                  {row?.phone ? (
+                    <a href={`tel:${row.phone}`} className="link">
+                      {row.phone}
+                    </a>
+                  ) : (
+                    <span className="muted-text">—</span>
+                  )}
                 </dd>
               </div>
               <div className="lead-contact-row">
                 <dt>WhatsApp</dt>
                 <dd>
-                  <span className="muted-text">En la ficha de oportunidad</span>
+                  {row?.whatsapp ? (
+                    <a href={`https://wa.me/${row.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="link">
+                      {row.whatsapp}
+                    </a>
+                  ) : (
+                    <span className="muted-text">—</span>
+                  )}
                 </dd>
               </div>
               <div className="lead-contact-row">
                 <dt>LinkedIn</dt>
                 <dd>
-                  <span className="muted-text">En la ficha de oportunidad</span>
+                  {row?.linkedin_url ? (
+                    <a href={row.linkedin_url} target="_blank" rel="noreferrer" className="link">
+                      Perfil
+                      <ExternalLink size={14} aria-hidden />
+                    </a>
+                  ) : (
+                    <span className="muted-text">—</span>
+                  )}
                 </dd>
               </div>
               <div className="lead-contact-row">
