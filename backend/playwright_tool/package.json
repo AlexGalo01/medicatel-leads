@@ -1,0 +1,23 @@
+{
+  "name": "mle-search",
+  "version": "1.0.0",
+  "description": "Playwright-based Google Search and Google Maps scraper for medical lead enrichment",
+  "main": "dist/search.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/search.js",
+    "dev": "node --loader ts-node/esm src/search.ts"
+  },
+  "bin": {
+    "mle-search": "bin/mle-search"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "playwright": "^1.42.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}

@@ -36,12 +36,12 @@ class Settings(BaseSettings):
     exa_enrich_snippet_prompt_max: int = Field(default=2000, ge=400, le=8_000, alias="EXA_ENRICH_SNIPPET_PROMPT_MAX")
     # Excerpt del filtro de relevancia (antes 1400, ahora amplio porque ya tenemos text completo).
     relevance_filter_excerpt_max_chars: int = Field(default=6000, ge=1_000, le=20_000, alias="RELEVANCE_FILTER_EXCERPT_MAX_CHARS")
-    # === OpenCLI (contact enrichment via Chrome automation) ===
+    # === Playwright Search (contact enrichment via Chrome automation - Knowledge Panel + Google Maps) ===
     opencli_enabled: bool = Field(default=True, alias="OPENCLI_ENABLED")
-    opencli_binary_path: str = Field(default="opencli", alias="OPENCLI_BINARY_PATH")
+    opencli_binary_path: str = Field(default="/app/playwright_tool/bin/mle-search", alias="OPENCLI_BINARY_PATH")
     opencli_chrome_profile_path: str = Field(default="", alias="OPENCLI_CHROME_PROFILE_PATH")
     opencli_concurrency: int = Field(default=5, ge=1, le=20, alias="OPENCLI_CONCURRENCY")
-    opencli_timeout_seconds: int = Field(default=30, ge=5, le=120, alias="OPENCLI_TIMEOUT_SECONDS")
+    opencli_timeout_seconds: int = Field(default=60, ge=5, le=120, alias="OPENCLI_TIMEOUT_SECONDS")
     opencli_include_facebook: bool = Field(default=False, alias="OPENCLI_INCLUDE_FACEBOOK")
     opencli_include_instagram: bool = Field(default=False, alias="OPENCLI_INCLUDE_INSTAGRAM")
     google_api_key: str = Field(alias="GOOGLE_API_KEY")

@@ -33,13 +33,14 @@ class OpenCliClient:
         self.timeout = int(settings.opencli_timeout_seconds)
         self.include_facebook = bool(settings.opencli_include_facebook)
         self.include_instagram = bool(settings.opencli_include_instagram)
+        self.timeout_ms = int(self.timeout * 1000)
 
     async def _run(self, args: list[str]) -> dict[str, Any]:
-        """Ejecuta `opencli <args> -f json` async. Retorna dict parseado o levanta OpenCliError."""
+        """Ejecuta `mle-search --mode <mode> --query <query> --timeout <ms>` async. Retorna dict parseado o levanta OpenCliError."""
         if not self.enabled:
             return {}
-        cmd = [self.binary, *args, "-f", "json"]
-        logger.debug("opencli invoke: %s", shlex.join(cmd))
+        cmd = [self.binary, *args, "--timeout", str(self.timeout_ms)]
+        logger.debug("mle-search invoke: %s", shlex.join(cmd))
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -85,14 +86,14 @@ class OpenCliClient:
         """Knowledge Panel de Google (teléfono, dirección, horario, sitio web)."""
         if not query.strip():
             return {}
-        raw = await self._run_safe("google_search", ["google", "search", query])
+        raw = await self._run_safe("google_search", ["--mode", "google_search", "--query", query])
         return _normalize_google_knowledge_panel(raw, source="google_search")
 
     async def google_maps(self, query: str) -> dict[str, Any]:
         """Ficha de negocio en Google Maps (phone/address/hours/reviews)."""
         if not query.strip():
             return {}
-        raw = await self._run_safe("google_maps", ["google-maps", "search", query])
+        raw = await self._run_safe("google_maps", ["--mode", "google_maps", "--query", query])
         return _normalize_google_maps(raw, source="google_maps")
 
     async def doctoralia(self, name: str, specialty: str, city: str) -> dict[str, Any]:
