@@ -983,6 +983,7 @@ async def enrich_opportunity(opportunity_id: UUID) -> OpportunityEnrichResponse:
         proposer=proposer,
         reviewer=reviewer,
         settings=st,
+        exclude_linkedin=True,
     )
 
     return OpportunityEnrichResponse(

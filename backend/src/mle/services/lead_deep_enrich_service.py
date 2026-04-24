@@ -187,7 +187,7 @@ def _extract_regex_contacts(text: str, source_url: str) -> list[dict[str, str]]:
     return unique_contacts
 
 
-def _build_exa_search_payload(lead: LeadCore, settings: Settings) -> dict[str, Any]:
+def _build_exa_search_payload(lead: LeadCore, settings: Settings, exclude_linkedin: bool = False) -> dict[str, Any]:
     from urllib.parse import urlparse
 
     parts = [
@@ -207,13 +207,14 @@ def _build_exa_search_payload(lead: LeadCore, settings: Settings) -> dict[str, A
         "query": query[:900],
         "type": settings.exa_search_type,
         "numResults": 18,
-        "excludeDomains": ["linkedin.com"],
         "contents": exa_contents_full_config(
             text_max_characters=settings.exa_text_max_characters,
             highlights_max_characters=settings.exa_highlights_max_characters,
             subpages=settings.exa_subpages,
         ),
     }
+    if exclude_linkedin:
+        payload["excludeDomains"] = ["linkedin.com"]
     return finalize_exa_search_payload(payload)
 
 
@@ -221,6 +222,7 @@ async def _exa_evidence(
     exa_client: ExaClient,
     lead: LeadCore,
     settings: Settings,
+    exclude_linkedin: bool = False,
 ) -> tuple[list[dict[str, Any]], str, list[dict[str, str]]]:
     """Combina /contents sobre primary_source_url (si existe) + /search genérica.
 
@@ -241,7 +243,7 @@ async def _exa_evidence(
             logger.info("Exa /contents para %s falló (degrade safe): %s", lead.primary_source_url, exc)
 
     try:
-        search_payload = _build_exa_search_payload(lead, settings)
+        search_payload = _build_exa_search_payload(lead, settings, exclude_linkedin=exclude_linkedin)
         search_response = await exa_client.search(search_payload)
         results.extend(_extract_results(search_response))
     except Exception as exc:  # noqa: BLE001
@@ -515,16 +517,18 @@ async def enrich_lead_contacts(
     reviewer: GeminiClient,
     settings: Settings | None = None,
     prefetched_maps: dict[str, Any] | None = None,
+    exclude_linkedin: bool = False,
 ) -> EnrichmentResult:
     """Enriquece un lead con Exa (evidencia textual) + OpenCLI (contactos estructurados) + Gemini reviewer.
 
     Función pura: no persiste en DB. El caller decide qué hacer con el resultado.
     Si prefetched_maps está disponible, usa esos datos en lugar de llamar a Google Maps de nuevo.
+    exclude_linkedin: si True, excluye linkedin.com de los resultados Exa (solo para enriquecimiento manual).
     """
     st = settings or get_settings()
 
     # Ejecutar exa y opencli en paralelo usando create_task para mejor control
-    exa_task = asyncio.create_task(_exa_evidence(exa_client, lead, st))
+    exa_task = asyncio.create_task(_exa_evidence(exa_client, lead, st, exclude_linkedin=exclude_linkedin))
     opencli_task = asyncio.create_task(_opencli_evidence(opencli, lead, prefetched_maps=prefetched_maps))
 
     # Esperar a que exa termine, luego lanzar deep_fetch en paralelo con opencli
