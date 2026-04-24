@@ -444,57 +444,69 @@ export interface OpportunityEnrichResult {
 
 export async function enrichOpportunity(
   opportunityId: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
 ): Promise<OpportunityEnrichResult> {
-  return new Promise((resolve, reject) => {
-    const token = localStorage.getItem("auth_token") || "";
-    const eventSource = new EventSource(
-      `${apiBaseUrl}/api/v1/opportunities/${opportunityId}/enrich`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      } as any
-    );
+  const response = await apiFetch(
+    `${apiBaseUrl}/api/v1/opportunities/${opportunityId}/enrich`,
+    {
+      method: "POST",
+      headers: { Accept: "text/event-stream" },
+    },
+  );
 
-    eventSource.addEventListener("message", (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.stage) {
-          onProgress?.(data.stage);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(formatApiErrorMessage(response.status, text));
+  }
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      let eventType = "message";
+      let eventData = "";
+
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          eventData += line.slice(6);
+        } else if (line === "") {
+          if (eventData) {
+            try {
+              const parsed = JSON.parse(eventData);
+              if (eventType === "done") {
+                reader.cancel();
+                return parsed as OpportunityEnrichResult;
+              } else if (eventType === "error") {
+                reader.cancel();
+                throw new Error(parsed.error || "Enrichment failed");
+              } else if (parsed.stage) {
+                onProgress?.(parsed.stage);
+              }
+            } catch (e) {
+              if (eventType === "done" || eventType === "error") throw e;
+            }
+            eventType = "message";
+            eventData = "";
+          }
         }
-      } catch (e) {
-        console.error("Failed to parse progress message:", e);
       }
-    });
+    }
+  } finally {
+    reader.releaseLock();
+  }
 
-    eventSource.addEventListener("done", (event) => {
-      try {
-        const result = JSON.parse(event.data);
-        eventSource.close();
-        resolve(result);
-      } catch (e) {
-        eventSource.close();
-        reject(new Error("Failed to parse enrichment result"));
-      }
-    });
-
-    eventSource.addEventListener("error", (event) => {
-      try {
-        const error = JSON.parse((event as any).data);
-        eventSource.close();
-        reject(new Error(error.error || "Enrichment failed"));
-      } catch (e) {
-        eventSource.close();
-        reject(new Error("Enrichment failed"));
-      }
-    });
-
-    eventSource.onerror = () => {
-      eventSource.close();
-      reject(new Error("Connection failed"));
-    };
-  });
+  throw new Error("El servidor cerró la conexión sin resultado.");
 }
 
 export async function authLogin(email: string, password: string): Promise<LoginResponse> {
