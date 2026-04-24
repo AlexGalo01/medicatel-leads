@@ -59,7 +59,6 @@ export function SearchableSelect({
           onClick={() => setIsOpen(!isOpen)}
           aria-label={ariaLabel}
           aria-expanded={isOpen}
-          required={required}
         >
           <span className={selectedOption ? "" : "placeholder"}>
             {selectedOption?.name || "— Elige un directorio —"}

@@ -2,12 +2,8 @@
 
 import { chromium } from 'playwright';
 import { Command } from 'commander';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 import * as fs from 'fs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const program = new Command();
 program
@@ -18,7 +14,7 @@ program
   .option('--chromium-path <path>', 'Path to Chromium binary', '/usr/bin/chromium')
   .parse();
 
-const { mode, query, stateFile, timeout, chromiumPath } = program.opts();
+const { mode, query, stateFile, chromiumPath } = program.opts();
 
 async function extractFromJsonLd(jsonLd: unknown[], key: string): Promise<string | null> {
   for (const obj of jsonLd) {
