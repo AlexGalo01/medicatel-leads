@@ -9,11 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from langsmith import traceable
 
-from datetime import datetime, timezone
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from mle.clients.exa_client import ExaClient
 from mle.clients.opencli_client import OpenCliClient
@@ -66,6 +68,7 @@ async def _create_opportunities_for_directory(job_id, enriched_items: list[dict[
             if first_step is None:
                 logger.warning("auto_enrich job_id=%s directorio sin steps — skip", job_id)
                 return 0
+            rows: list[dict[str, Any]] = []
             for item in enriched_items:
                 if not isinstance(item, dict):
                     continue
@@ -78,10 +81,7 @@ async def _create_opportunities_for_directory(job_id, enriched_items: list[dict[
                     val = str(item.get(kind) or "").strip()
                     if not val:
                         continue
-                    if kind == "linkedin_url":
-                        mapped_kind = "linkedin"
-                    else:
-                        mapped_kind = kind
+                    mapped_kind = "linkedin" if kind == "linkedin_url" else kind
                     contacts.append(
                         {
                             "id": f"auto-{mapped_kind}-{len(contacts)}",
@@ -92,22 +92,20 @@ async def _create_opportunities_for_directory(job_id, enriched_items: list[dict[
                             "is_primary": len(contacts) == 0,
                         }
                     )
-                snippet = str(item.get("snippet") or "").strip()[:4000] or None
-                specialty = str(item.get("specialty") or "").strip()[:160]
-                city = str(item.get("city") or "").strip()[:120]
-                opp = Opportunity(
-                    directory_id=job.directory_id,
-                    current_step_id=first_step.id,
-                    job_id=job_id,
-                    exa_preview_index=item.get("index"),
-                    title=title or url,
-                    source_url=url,
-                    snippet=snippet,
-                    specialty=specialty,
-                    city=city,
-                    stage="first_contact",  # legacy; el flow real viene de current_step_id
-                    contacts=contacts,
-                    activity_timeline=[
+                rows.append({
+                    "id": uuid4(),
+                    "directory_id": job.directory_id,
+                    "current_step_id": first_step.id,
+                    "job_id": job_id,
+                    "exa_preview_index": item.get("index"),
+                    "title": title or url,
+                    "source_url": url,
+                    "snippet": str(item.get("snippet") or "").strip()[:4000] or None,
+                    "specialty": str(item.get("specialty") or "").strip()[:160],
+                    "city": str(item.get("city") or "").strip()[:120],
+                    "stage": "first_contact",
+                    "contacts": contacts,
+                    "activity_timeline": [
                         {
                             "at": now.isoformat(),
                             "stage": first_step.name,
@@ -115,13 +113,19 @@ async def _create_opportunities_for_directory(job_id, enriched_items: list[dict[
                             "text": "Oportunidad creada automáticamente desde búsqueda Exa + auto-enrich.",
                         }
                     ],
-                    profile_overrides={},
-                    created_at=now,
-                    updated_at=now,
+                    "profile_overrides": {},
+                    "created_at": now,
+                    "updated_at": now,
+                })
+
+            if rows:
+                stmt = pg_insert(Opportunity).values(rows)
+                stmt = stmt.on_conflict_do_nothing(
+                    index_elements=["job_id", "exa_preview_index"],
                 )
-                session.add(opp)
-                created += 1
-            await session.commit()
+                result = await session.execute(stmt)
+                await session.commit()
+                created = result.rowcount
     except Exception as exc:  # noqa: BLE001
         logger.warning("auto_enrich: creación de Opps falló job_id=%s: %s", job_id, exc)
     return created
