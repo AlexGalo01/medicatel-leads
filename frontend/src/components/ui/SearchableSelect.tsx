@@ -48,7 +48,10 @@ export function SearchableSelect({
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const inContainer = containerRef.current && containerRef.current.contains(target);
+      const inPortal = target && (target as Element).closest?.(".searchable-select-menu");
+      if (!inContainer && !inPortal) {
         setIsOpen(false);
       }
     }
