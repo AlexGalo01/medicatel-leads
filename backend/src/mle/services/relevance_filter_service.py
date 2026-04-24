@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Calidad sobre latencia: lotes pequeños para mejor precisión del modelo
 DEFAULT_CHUNK_SIZE = 8
-DEFAULT_CONFIDENCE_THRESHOLD = 4
+DEFAULT_CONFIDENCE_THRESHOLD = 6
 
 
 def _exa_category_entity_rules(exa_category: str | None) -> str:
@@ -81,8 +81,9 @@ def _sector_intent_rules_block(user_query: str) -> str:
     return (
         "*** Alineación sectorial ***\n"
         "- Si el resultado CLARAMENTE no pertenece al sector buscado → match=false.\n"
-        "- Si hay duda razonable pero el título/excerpt sugieren que podría ser del sector → "
-        "match=true con confidence 4-5 (el filtro de confidence descartará los más dudosos).\n"
+        "- Si hay duda razonable y no puedes confirmar que el resultado sea del sector → match=false.\n"
+        "- Solo marca match=true cuando el título o excerpt demuestren de forma positiva que el resultado "
+        "pertenece al sector buscado.\n"
         "- Negocios de rubro completamente distinto (papelerías, ferreterías, restaurantes, "
         "hoteles) son match=false cuando el usuario busca otro sector específico.\n"
         "- confidence 1-3 solo para resultados que claramente NO son del sector.\n"
@@ -258,9 +259,9 @@ def _parse_verdicts(
         # Apply confidence threshold: low-confidence matches become rejections
         if out.get(idx) is True:
             try:
-                confidence = int(row.get("confidence", 10))
+                confidence = int(row.get("confidence", 0))
             except (TypeError, ValueError):
-                confidence = 10
+                confidence = 0
             if confidence < confidence_threshold:
                 out[idx] = False
     return out
