@@ -10,6 +10,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
+import { SearchableSelect } from "../components/ui/SearchableSelect";
 import { defaultChannelsForFocus } from "../data/searchSuggestions";
 import type { ExaCategoryChoice, SearchFocus } from "../types";
 
@@ -233,23 +234,23 @@ export function SearchPage(): JSX.Element {
             </div>
 
             <div className="search-command-directory-row">
-              <label className="search-command-directory-label">
-                <Folder size={14} aria-hidden />
-                <span>Directorio destino</span>
-              </label>
-              <Select
-                value={directoryId}
-                onChange={(e) => setDirectoryId(e.target.value)}
-                required
-                aria-label="Directorio destino"
-              >
-                <option value="">— Elige un directorio —</option>
-                {(directoriesQuery.data?.items ?? []).map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </Select>
+              <div className="search-command-directory-select-wrapper">
+                <label className="search-command-directory-label">
+                  <Folder size={14} aria-hidden />
+                  <span>Directorio destino</span>
+                </label>
+                <SearchableSelect
+                  value={directoryId}
+                  onChange={setDirectoryId}
+                  options={(directoriesQuery.data?.items ?? []).map((d) => ({
+                    id: d.id,
+                    name: d.name,
+                  }))}
+                  placeholder="Buscar directorio..."
+                  required
+                  ariaLabel="Directorio destino"
+                />
+              </div>
               <Link to="/directories/new?returnTo=/search" className="link-button">
                 + Crear directorio
               </Link>
