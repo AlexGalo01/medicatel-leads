@@ -132,9 +132,11 @@ async def _run_slot_with_prefetch(
     exa_client: ExaClient,
     n_queries: int,
     job_id: Any,
+    semaphore: asyncio.Semaphore,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Ejecuta un slot Exa y dispara Google Maps para empresas en cuanto llegan los resultados."""
-    search_response = await exa_client.search(payload)
+    async with semaphore:
+        search_response = await exa_client.search(payload)
     batch_results = _extract_results(search_response)
 
     # Para búsquedas de empresas: dispara Google Maps inmediatamente en paralelo
@@ -204,6 +206,9 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
         if entity_type == "company":
             opencli = OpenCliClient(settings)
 
+        # Semáforo para limitar concurrencia en Exa (evitar 429 rate limits)
+        exa_semaphore = asyncio.Semaphore(2)
+
         batches: list[list[dict[str, Any]]] = []
         request_ids: list[str] = []
         last_search_type = str(search_config.get("type", "auto"))
@@ -221,11 +226,11 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
                 continue
             valid_payloads.append((slot_idx, num_for_call, payload))
 
-        # Ejecutar todos los slots en paralelo (Exa + Google Maps prefetch para empresas)
+        # Ejecutar todos los slots en paralelo (con semáforo para limitar concurrencia Exa)
         slot_coroutines = [
             _run_slot_with_prefetch(
                 slot_idx, payload, num_for_call, opencli, entity_type, geo_hint,
-                exa_client, n_queries, state.job_id,
+                exa_client, n_queries, state.job_id, exa_semaphore,
             )
             for slot_idx, num_for_call, payload in valid_payloads
         ]
@@ -265,8 +270,12 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
                 kp.pop("category", None)
                 keyword_payloads.append(kp)
 
+            async def _keyword_search(payload: dict[str, Any]) -> dict[str, Any]:
+                async with exa_semaphore:
+                    return await exa_client.search(payload)
+
             keyword_outcomes = await asyncio.gather(
-                *[exa_client.search(kp) for kp in keyword_payloads],
+                *[_keyword_search(kp) for kp in keyword_payloads],
                 return_exceptions=True,
             )
             keyword_batches: list[list[dict[str, Any]]] = []

@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # === OpenCLI (contact enrichment via Chrome automation) ===
     opencli_enabled: bool = Field(default=True, alias="OPENCLI_ENABLED")
     opencli_binary_path: str = Field(default="opencli", alias="OPENCLI_BINARY_PATH")
-    opencli_chrome_profile_path: str = Field(default="/data/chrome-profile", alias="OPENCLI_CHROME_PROFILE_PATH")
+    opencli_chrome_profile_path: str = Field(default="", alias="OPENCLI_CHROME_PROFILE_PATH")
     opencli_concurrency: int = Field(default=5, ge=1, le=20, alias="OPENCLI_CONCURRENCY")
     opencli_timeout_seconds: int = Field(default=30, ge=5, le=120, alias="OPENCLI_TIMEOUT_SECONDS")
     opencli_include_facebook: bool = Field(default=False, alias="OPENCLI_INCLUDE_FACEBOOK")

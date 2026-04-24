@@ -76,18 +76,22 @@ async def _create_opportunities_for_directory(job_id, enriched_items: list[dict[
                 url = str(item.get("url") or "").strip()[:2000]
                 if not title and not url:
                     continue
+                contact_sources = item.get("_contact_sources") or {}
+                if not isinstance(contact_sources, dict):
+                    contact_sources = {}
                 contacts: list[dict[str, Any]] = []
                 for kind in ("email", "whatsapp", "phone", "linkedin_url", "website", "facebook_url", "instagram_url"):
                     val = str(item.get(kind) or "").strip()
                     if not val:
                         continue
                     mapped_kind = "linkedin" if kind == "linkedin_url" else kind
+                    source_note = contact_sources.get(kind) or contact_sources.get(mapped_kind) or None
                     contacts.append(
                         {
                             "id": f"auto-{mapped_kind}-{len(contacts)}",
                             "kind": mapped_kind,
                             "value": val[:500],
-                            "note": None,
+                            "note": source_note,
                             "role": None,
                             "is_primary": len(contacts) == 0,
                         }
@@ -156,6 +160,8 @@ def _apply_enrichment_to_preview(preview: dict[str, Any], enr: EnrichmentResult)
             existing = {}
         existing.update(enr.enriched_sources)
         out["enriched_sources"] = existing
+    if enr.contact_sources:
+        out["_contact_sources"] = enr.contact_sources
     out["enrichment_status"] = enr.status
     if enr.message:
         out["enrichment_message"] = enr.message

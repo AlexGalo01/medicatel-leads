@@ -61,6 +61,7 @@ class EnrichmentResult:
     primary_source_url: str = ""
     citations: list[dict[str, Any]] = field(default_factory=list)
     enriched_sources: dict[str, Any] = field(default_factory=dict)
+    contact_sources: dict[str, str] = field(default_factory=dict)
     audit: list[dict[str, Any]] = field(default_factory=list)
     status: str = "no_verified_data"
     message: str = ""
@@ -595,6 +596,8 @@ async def enrich_lead_contacts(
 
         if field == "email" and not result.email and not lead.email and value:
             result.email = value[:255]
+            if source_url:
+                result.contact_sources["email"] = source_url
             result.citations.append({
                 "url": source_url,
                 "title": f"Email (regex extraction)",
@@ -603,6 +606,8 @@ async def enrich_lead_contacts(
             })
         elif field == "phone" and not result.phone and not lead.phone and value:
             result.phone = value[:40]
+            if source_url:
+                result.contact_sources["phone"] = source_url
             result.citations.append({
                 "url": source_url,
                 "title": f"Phone (regex extraction)",
@@ -611,6 +616,8 @@ async def enrich_lead_contacts(
             })
         elif field == "whatsapp" and not result.whatsapp and not lead.whatsapp and value:
             result.whatsapp = value[:30]
+            if source_url:
+                result.contact_sources["whatsapp"] = source_url
             result.citations.append({
                 "url": source_url,
                 "title": f"WhatsApp (regex extraction)",

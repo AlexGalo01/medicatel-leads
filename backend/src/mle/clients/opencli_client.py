@@ -30,24 +30,19 @@ class OpenCliClient:
     def __init__(self, settings: Settings) -> None:
         self.enabled = bool(settings.opencli_enabled)
         self.binary = settings.opencli_binary_path
-        self.chrome_profile = settings.opencli_chrome_profile_path
         self.timeout = int(settings.opencli_timeout_seconds)
         self.include_facebook = bool(settings.opencli_include_facebook)
         self.include_instagram = bool(settings.opencli_include_instagram)
 
     async def _run(self, args: list[str]) -> dict[str, Any]:
-        """Ejecuta `opencli <args> --json` async. Retorna dict parseado o levanta OpenCliError."""
+        """Ejecuta `opencli <args> -f json` async. Retorna dict parseado o levanta OpenCliError."""
         if not self.enabled:
             return {}
-        cmd = [self.binary, *args, "--json"]
-        env_args: list[str] = []
-        if self.chrome_profile:
-            env_args = ["--profile", self.chrome_profile]
-        full_cmd = [*cmd[:1], *env_args, *cmd[1:]]
-        logger.debug("opencli invoke: %s", shlex.join(full_cmd))
+        cmd = [self.binary, *args, "-f", "json"]
+        logger.debug("opencli invoke: %s", shlex.join(cmd))
         try:
             proc = await asyncio.create_subprocess_exec(
-                *full_cmd,
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

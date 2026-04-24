@@ -83,6 +83,16 @@ function formatWhen(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("es-HN", { dateStyle: "short", timeStyle: "short" });
 }
 
+function isUrl(s: string | null | undefined): boolean {
+  if (!s) return false;
+  try {
+    new URL(s);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function BitacoraStageIcon({ stage }: { stage: string }): JSX.Element {
   const key = stage as OpportunityStageKey;
   const iconProps = { size: 18, strokeWidth: 2, "aria-hidden": true as const };
@@ -680,6 +690,18 @@ export function OpportunityDetailPage(): JSX.Element {
                   </label>
                   <label className="opportunity-field opportunity-field--grow">
                     <span>Nota</span>
+                    {c.note && isUrl(c.note) && (
+                      <a
+                        href={c.note}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="contact-source-badge"
+                        title="Fuente donde se encontró este dato"
+                      >
+                        <ExternalLink size={12} aria-hidden />
+                        {new URL(c.note).hostname?.replace(/^www\./, "")}
+                      </a>
+                    )}
                     <Input
                       type="text"
                       value={c.note ?? ""}
