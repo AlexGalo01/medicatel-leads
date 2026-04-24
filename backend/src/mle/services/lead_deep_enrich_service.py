@@ -125,25 +125,8 @@ def _linkedin_in_evidence(url: str, evidence_lower: str) -> bool:
 
 
 def _is_crawlable_personal_site(url: str) -> bool:
-    """Devuelve True si la URL vale la pena hacer deep-fetch (excluye redes sociales y directorios)."""
-    u = url.lower()
-    excluded = [
-        "linkedin.com",
-        "facebook.com",
-        "instagram.com",
-        "twitter.com",
-        "x.com",
-        "doctoralia.com",
-        "healthgrades.com",
-        "zocdoc.com",
-        "webmd.com",
-        "yelp.com",
-        "google.com",
-        "youtube.com",
-        "tiktok.com",
-        "reddit.com",
-    ]
-    return not any(exc in u for exc in excluded)
+    """Devuelve True si la URL vale la pena hacer deep-fetch (excluye solo LinkedIn)."""
+    return "linkedin.com" not in url.lower()
 
 
 def _extract_regex_contacts(text: str, source_url: str) -> list[dict[str, str]]:
@@ -277,51 +260,54 @@ async def _deep_fetch_contacts(
     exa_client: ExaClient,
     search_results: list[dict[str, Any]],
     settings: Settings,
+    primary_source_url: str = "",
 ) -> list[dict[str, str]]:
-    """Hace un get_contents() profundo (50K chars) sobre el top URL personal.
+    """Visita TODOS los URLs útiles de los resultados de búsqueda (excluye LinkedIn y primary_source_url).
 
-    Busca el primer resultado que no sea social media ni directory (ya fetched).
     Retorna lista de contactos extraídos con regex del texto completo.
     """
     if not search_results:
         return []
 
-    # Filtrar URLs crawleables (excluir sociales, directorios, etc.)
+    primary_lower = primary_source_url.strip().lower().rstrip("/")
+
     candidates = [
         r for r in search_results
-        if isinstance(r, dict) and _is_crawlable_personal_site(r.get("url", ""))
+        if isinstance(r, dict)
+        and _is_crawlable_personal_site(r.get("url", ""))
+        and str(r.get("url", "")).strip().lower().rstrip("/") != primary_lower
     ]
 
     if not candidates:
         return []
 
-    # Tomar el primer candidato
-    target_url = candidates[0].get("url", "")
-    if not target_url:
-        return []
+    async def _fetch_one(url: str) -> list[dict[str, str]]:
+        try:
+            payload: dict[str, Any] = {
+                "ids": [url],
+                "text": {"maxCharacters": 50000},
+                "highlights": {"maxCharacters": 8000},
+                "subpages": 3,
+            }
+            response = await exa_client.get_contents(payload)
+            items = _extract_results(response)
+            contacts: list[dict[str, str]] = []
+            for item in items:
+                if isinstance(item, dict) and item.get("text"):
+                    contacts.extend(_extract_regex_contacts(item["text"], item.get("url", url)))
+                for sp in item.get("subpages", []) if isinstance(item, dict) else []:
+                    if isinstance(sp, dict) and sp.get("text"):
+                        contacts.extend(_extract_regex_contacts(sp["text"], sp.get("url", url)))
+            return contacts
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Deep fetch para %s falló (degrade safe): %s", url, exc)
+            return []
 
-    try:
-        payload: dict[str, Any] = {
-            "ids": [target_url],
-            "text": {"maxCharacters": 50000},
-            "highlights": {"maxCharacters": 8000},
-            "subpages": 3,
-        }
-        response = await exa_client.get_contents(payload)
-        results = _extract_results(response)
-
-        deep_contacts: list[dict[str, str]] = []
-        for item in results:
-            if isinstance(item, dict) and item.get("text"):
-                deep_contacts.extend(_extract_regex_contacts(item["text"], item.get("url", "")))
-            for sp in item.get("subpages", []) if isinstance(item, dict) else []:
-                if isinstance(sp, dict) and sp.get("text"):
-                    deep_contacts.extend(_extract_regex_contacts(sp["text"], sp.get("url", "")))
-
-        return deep_contacts
-    except Exception as exc:  # noqa: BLE001
-        logger.info("Deep fetch para %s falló (degrade safe): %s", target_url, exc)
-        return []
+    all_batches = await asyncio.gather(*[_fetch_one(r["url"]) for r in candidates])
+    merged: list[dict[str, str]] = []
+    for batch in all_batches:
+        merged.extend(batch)
+    return merged
 
 
 # ---------------- OpenCLI evidence ----------------
@@ -373,10 +359,6 @@ async def _opencli_evidence(
             "google_maps": opencli.google_maps(maps_q),
         }
 
-    # Doctoralia solo para personas
-    if not is_company:
-        tasks["doctoralia"] = opencli.doctoralia(lead.full_name, lead.specialty, lead.city)
-
     # Para empresas: Facebook e Instagram siempre activados
     # Para personas: solo si está habilitado en settings
     if is_company or opencli.include_facebook:
@@ -397,11 +379,11 @@ async def _opencli_evidence(
 
 
 def _merge_opencli_contacts(opencli_results: dict[str, Any]) -> dict[str, str]:
-    """Prioriza fuentes por confiabilidad: maps > search > doctoralia > redes.
+    """Prioriza fuentes por confiabilidad: maps > search > redes.
 
     Extrae también URLs de redes sociales (facebook_url, instagram_url) desde profile_url.
     """
-    priority = ["google_maps", "google_search", "doctoralia", "facebook", "instagram"]
+    priority = ["google_maps", "google_search", "facebook", "instagram"]
     merged: dict[str, str] = {
         "phone": "",
         "address": "",
@@ -541,7 +523,12 @@ async def enrich_lead_contacts(
 
     # Esperar a que exa termine, luego lanzar deep_fetch en paralelo con opencli
     exa_results, evidence, regex_contacts = await exa_task
-    deep_fetch_task = asyncio.create_task(_deep_fetch_contacts(exa_client, exa_results, st))
+    deep_fetch_task = asyncio.create_task(
+        _deep_fetch_contacts(
+            exa_client, exa_results, st,
+            primary_source_url=lead.primary_source_url,
+        )
+    )
 
     # Esperar a opencli y deep_fetch en paralelo
     opencli_results, deep_contacts = await asyncio.gather(opencli_task, deep_fetch_task)
