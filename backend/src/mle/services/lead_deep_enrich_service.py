@@ -77,6 +77,8 @@ def _extract_results(search_response: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _flatten_evidence(results: list[dict[str, Any]]) -> str:
+    MAX_HEAD = 1400
+    MAX_TAIL = 600
     parts: list[str] = []
     for index, item in enumerate(results):
         url = str(item.get("url", "")).strip()
@@ -85,8 +87,12 @@ def _flatten_evidence(results: list[dict[str, Any]]) -> str:
         if not isinstance(highlights, list):
             highlights = []
         hl_join = " | ".join(str(h) for h in highlights[:8])
-        text = str(item.get("text", ""))[:2000]
-        parts.append(f"[{index}] URL: {url}\nTitulo: {title}\nHighlights: {hl_join}\nTexto: {text}\n")
+        text = str(item.get("text", ""))
+        if len(text) > MAX_HEAD + MAX_TAIL:
+            text_slice = text[:MAX_HEAD] + "\n[...]\n" + text[-MAX_TAIL:]
+        else:
+            text_slice = text
+        parts.append(f"[{index}] URL: {url}\nTitulo: {title}\nHighlights: {hl_join}\nTexto: {text_slice}\n")
     return "\n".join(parts)
 
 
@@ -118,6 +124,86 @@ def _linkedin_in_evidence(url: str, evidence_lower: str) -> bool:
     return u.rstrip("/") in evidence_lower
 
 
+def _is_crawlable_personal_site(url: str) -> bool:
+    """Devuelve True si la URL vale la pena hacer deep-fetch (excluye redes sociales y directorios)."""
+    u = url.lower()
+    excluded = [
+        "linkedin.com",
+        "facebook.com",
+        "instagram.com",
+        "twitter.com",
+        "x.com",
+        "doctoralia.com",
+        "healthgrades.com",
+        "zocdoc.com",
+        "webmd.com",
+        "yelp.com",
+        "google.com",
+        "youtube.com",
+        "tiktok.com",
+        "reddit.com",
+    ]
+    return not any(exc in u for exc in excluded)
+
+
+def _extract_regex_contacts(text: str, source_url: str) -> list[dict[str, str]]:
+    """Extrae emails y teléfonos del texto crudo con regex.
+
+    Devuelve lista de {field: "email"|"phone"|"whatsapp", value, source_url}.
+    """
+    contacts: list[dict[str, str]] = []
+    text_lower = text.lower()
+
+    # Extraer emails
+    email_pattern = r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
+    for match in re.finditer(email_pattern, text):
+        email = match.group()
+        if not any(x in email.lower() for x in ["@example.com", "@test.", "@fake"]):
+            contacts.append({"field": "email", "value": email.strip(), "source_url": source_url})
+
+    # Extraer teléfonos LATAM (Honduras: 7-8 dígitos, prefijos +504, (504), etc.)
+    phone_patterns = [
+        r"\+504\s?(?:\()?(\d{4})?(?:\))?\s?(\d{4})",  # +504 XXXX-XXXX
+        r"\(504\)\s?(\d{4})?[\s\-]?(\d{4})",           # (504) XXXX-XXXX
+        r"(?:tel|phone|teléfono|telefono)[\s:]*\(?(\d{4})[\s\-]?(\d{4})\)?",
+        r"(?:^|\s)(\d{4})[\s\-](\d{4})(?:\s|$)",       # XXXX-XXXX en contexto
+    ]
+
+    found_phones: set[str] = set()
+    for pattern in phone_patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            groups = [g for g in match.groups() if g]
+            phone_str = "".join(groups) if groups else ""
+            digits = _digits_only(phone_str)
+            if 7 <= len(digits) <= 8 and digits not in ["0000000", "00000000"]:
+                phone_formatted = f"{digits[:4]}-{digits[4:]}" if len(digits) == 8 else digits
+                found_phones.add(phone_formatted)
+
+    for phone in found_phones:
+        contacts.append({"field": "phone", "value": phone, "source_url": source_url})
+
+    # Detectar WhatsApp (número cercano a la palabra "whatsapp")
+    whatsapp_pattern = r"(?:whatsapp|wa\.me|whatsapp\.com)[:\s/]*(\+?\d{1,3}[\s\-]?\d{3,4}[\s\-]?\d{4})"
+    for match in re.finditer(whatsapp_pattern, text, re.IGNORECASE):
+        whatsapp = match.group(1)
+        digits = _digits_only(whatsapp)
+        if 7 <= len(digits) <= 15:
+            # Preferir el que ya encontramos como phone
+            if not any(c["field"] == "whatsapp" and c["value"] == digits for c in contacts):
+                contacts.append({"field": "whatsapp", "value": digits, "source_url": source_url})
+
+    # Deduplicar por (field, value)
+    seen = set()
+    unique_contacts = []
+    for c in contacts:
+        key = (c["field"], c["value"].lower())
+        if key not in seen:
+            seen.add(key)
+            unique_contacts.append(c)
+
+    return unique_contacts
+
+
 def _build_exa_search_payload(lead: LeadCore, settings: Settings) -> dict[str, Any]:
     parts = [
         lead.full_name,
@@ -146,8 +232,11 @@ async def _exa_evidence(
     exa_client: ExaClient,
     lead: LeadCore,
     settings: Settings,
-) -> tuple[list[dict[str, Any]], str]:
-    """Combina /contents sobre primary_source_url (si existe) + /search genérica."""
+) -> tuple[list[dict[str, Any]], str, list[dict[str, str]]]:
+    """Combina /contents sobre primary_source_url (si existe) + /search genérica.
+
+    Retorna (results, evidence_para_llm, regex_contacts_directos).
+    """
     results: list[dict[str, Any]] = []
     if lead.primary_source_url:
         try:
@@ -170,7 +259,69 @@ async def _exa_evidence(
         logger.info("Exa /search para %s falló (degrade safe): %s", lead.full_name, exc)
 
     evidence = _flatten_evidence(results)
-    return results, evidence
+
+    # Extraer contacts con regex del texto completo (no truncado)
+    regex_contacts: list[dict[str, str]] = []
+    for item in results:
+        if isinstance(item, dict) and item.get("text"):
+            regex_contacts.extend(_extract_regex_contacts(item["text"], item.get("url", "")))
+        # También extraer de subpages
+        for sp in item.get("subpages", []) if isinstance(item, dict) else []:
+            if isinstance(sp, dict) and sp.get("text"):
+                regex_contacts.extend(_extract_regex_contacts(sp["text"], sp.get("url", "")))
+
+    return results, evidence, regex_contacts
+
+
+async def _deep_fetch_contacts(
+    exa_client: ExaClient,
+    search_results: list[dict[str, Any]],
+    settings: Settings,
+) -> list[dict[str, str]]:
+    """Hace un get_contents() profundo (50K chars) sobre el top URL personal.
+
+    Busca el primer resultado que no sea social media ni directory (ya fetched).
+    Retorna lista de contactos extraídos con regex del texto completo.
+    """
+    if not search_results:
+        return []
+
+    # Filtrar URLs crawleables (excluir sociales, directorios, etc.)
+    candidates = [
+        r for r in search_results
+        if isinstance(r, dict) and _is_crawlable_personal_site(r.get("url", ""))
+    ]
+
+    if not candidates:
+        return []
+
+    # Tomar el primer candidato
+    target_url = candidates[0].get("url", "")
+    if not target_url:
+        return []
+
+    try:
+        payload: dict[str, Any] = {
+            "ids": [target_url],
+            "text": {"maxCharacters": 50000},
+            "highlights": {"maxCharacters": 8000},
+            "subpages": 3,
+        }
+        response = await exa_client.get_contents(payload)
+        results = _extract_results(response)
+
+        deep_contacts: list[dict[str, str]] = []
+        for item in results:
+            if isinstance(item, dict) and item.get("text"):
+                deep_contacts.extend(_extract_regex_contacts(item["text"], item.get("url", "")))
+            for sp in item.get("subpages", []) if isinstance(item, dict) else []:
+                if isinstance(sp, dict) and sp.get("text"):
+                    deep_contacts.extend(_extract_regex_contacts(sp["text"], sp.get("url", "")))
+
+        return deep_contacts
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Deep fetch para %s falló (degrade safe): %s", target_url, exc)
+        return []
 
 
 # ---------------- OpenCLI evidence ----------------
@@ -384,9 +535,26 @@ async def enrich_lead_contacts(
     """
     st = settings or get_settings()
 
-    exa_task = _exa_evidence(exa_client, lead, st)
-    opencli_task = _opencli_evidence(opencli, lead, prefetched_maps=prefetched_maps)
-    (exa_results, evidence), opencli_results = await asyncio.gather(exa_task, opencli_task)
+    # Ejecutar exa y opencli en paralelo usando create_task para mejor control
+    exa_task = asyncio.create_task(_exa_evidence(exa_client, lead, st))
+    opencli_task = asyncio.create_task(_opencli_evidence(opencli, lead, prefetched_maps=prefetched_maps))
+
+    # Esperar a que exa termine, luego lanzar deep_fetch en paralelo con opencli
+    exa_results, evidence, regex_contacts = await exa_task
+    deep_fetch_task = asyncio.create_task(_deep_fetch_contacts(exa_client, exa_results, st))
+
+    # Esperar a opencli y deep_fetch en paralelo
+    opencli_results, deep_contacts = await asyncio.gather(opencli_task, deep_fetch_task)
+
+    # Combinar todos los contactos directos (regex + deep_fetch), deduplicar
+    all_direct_contacts = regex_contacts + deep_contacts
+    seen = set()
+    unique_direct_contacts = []
+    for c in all_direct_contacts:
+        key = (c["field"], c["value"].lower())
+        if key not in seen:
+            seen.add(key)
+            unique_direct_contacts.append(c)
 
     opencli_merged = _merge_opencli_contacts(opencli_results)
 
@@ -405,6 +573,37 @@ async def enrich_lead_contacts(
         result.facebook_url = opencli_merged["facebook_url"][:500]
     if opencli_merged["instagram_url"]:
         result.instagram_url = opencli_merged["instagram_url"][:500]
+
+    # Aplicar contactos extraídos con regex del texto completo (prioridad: OpenCLI > regex > LLM)
+    for direct_contact in unique_direct_contacts:
+        field = direct_contact.get("field", "")
+        value = direct_contact.get("value", "").strip()
+        source_url = direct_contact.get("source_url", "")
+
+        if field == "email" and not result.email and not lead.email and value:
+            result.email = value[:255]
+            result.citations.append({
+                "url": source_url,
+                "title": f"Email (regex extraction)",
+                "confidence": "high",
+                "source": "direct_regex",
+            })
+        elif field == "phone" and not result.phone and not lead.phone and value:
+            result.phone = value[:40]
+            result.citations.append({
+                "url": source_url,
+                "title": f"Phone (regex extraction)",
+                "confidence": "high",
+                "source": "direct_regex",
+            })
+        elif field == "whatsapp" and not result.whatsapp and not lead.whatsapp and value:
+            result.whatsapp = value[:30]
+            result.citations.append({
+                "url": source_url,
+                "title": f"WhatsApp (regex extraction)",
+                "confidence": "high",
+                "source": "direct_regex",
+            })
 
     # Si no hay evidencia ni de Exa ni de OpenCLI, termina no_verified_data.
     if not evidence.strip() and not any([result.phone, result.address, result.schedule_text]):
