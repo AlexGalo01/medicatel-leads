@@ -15,7 +15,7 @@ from mle.state.graph_state import LeadSearchGraphState
 
 logger = logging.getLogger(__name__)
 
-MAX_DIRECTORY_EXA_CALLS = 5
+MAX_DIRECTORY_EXA_CALLS = 8
 MIN_RESULTS_PER_QUERY = 8
 MAX_EXA_RESULTS_PER_CALL = 100
 
@@ -176,14 +176,14 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             raise ValueError("No existe planner_output para ejecutar Exa Search.")
 
         search_config = planner_output.get("search_config", {})
-        total_budget = min(MAX_EXA_RESULTS_PER_CALL, int(search_config.get("num_results", 50)))
+        per_query_budget = min(MAX_EXA_RESULTS_PER_CALL, int(search_config.get("num_results", 50)))
 
         queries = _queries_from_planner(planner_output)
         if not queries:
             raise ValueError("No hay consultas Exa derivadas del planner.")
 
         n_queries = len(queries)
-        per_slot = [_fair_num_results_for_query_slot(total_budget, i, n_queries) for i in range(n_queries)]
+        per_slot = [per_query_budget for _ in range(n_queries)]
 
         settings = get_settings()
         exa_client = ExaClient(
@@ -255,6 +255,29 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             last_search_type = str(search_response.get("searchType", search_type))
 
         exa_results = _merge_exa_results(batches)
+
+        # Búsqueda complementaria keyword: cubre directorios y páginas web estáticas
+        # que el deep-reasoning semántico no alcanza
+        if valid_payloads:
+            keyword_payloads = []
+            for slot_idx, num_for_call, payload in valid_payloads[:3]:
+                kp = {**payload, "type": "keyword", "numResults": 30}
+                kp.pop("category", None)
+                keyword_payloads.append(kp)
+
+            keyword_outcomes = await asyncio.gather(
+                *[exa_client.search(kp) for kp in keyword_payloads],
+                return_exceptions=True,
+            )
+            keyword_batches: list[list[dict[str, Any]]] = []
+            for ko in keyword_outcomes:
+                if isinstance(ko, Exception):
+                    logger.warning("Exa keyword complementaria falló: %s", ko)
+                    keyword_batches.append([])
+                else:
+                    keyword_batches.append(_extract_results(ko))
+
+            exa_results = _merge_exa_results(batches + keyword_batches)
 
         logger.info(
             "Exa search node completado job_id=%s unicos_tras_merge=%s llamadas=%s detalle_batches=%s",

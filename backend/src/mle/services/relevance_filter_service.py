@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Calidad sobre latencia: lotes pequeños para mejor precisión del modelo
 DEFAULT_CHUNK_SIZE = 8
-DEFAULT_CONFIDENCE_THRESHOLD = 6
+DEFAULT_CONFIDENCE_THRESHOLD = 4
 
 
 def _exa_category_entity_rules(exa_category: str | None) -> str:
@@ -77,15 +77,16 @@ def _professional_intent_rules_block(user_query: str, role_or_stack_hint: str | 
 
 
 def _sector_intent_rules_block(user_query: str) -> str:
-    """Refuerzo genérico de alineación sectorial (sin keywords hardcodeados)."""
+    """Alineación sectorial con balance entre precisión y cobertura."""
     return (
-        "*** Refuerzo ESTRICTO de alineación sectorial ***\n"
-        "- ANTE CUALQUIER DUDA sobre si el resultado pertenece al sector buscado → match=false.\n"
-        "- NO dar beneficio de la duda NUNCA. La carga de la prueba está en el resultado: "
-        "si el título y excerpt no demuestran CLARAMENTE que es del sector buscado, es match=false.\n"
-        "- Papelerías, hoteles, ferreterías, restaurantes, tiendas, bancos, inmobiliarias, etc. "
-        "son match=false cuando se buscan clínicas, médicos, hospitales, o cualquier otro rubro distinto.\n"
-        "- confidence debe ser 1-3 si tienes cualquier duda sobre la alineación sectorial.\n"
+        "*** Alineación sectorial ***\n"
+        "- Si el resultado CLARAMENTE no pertenece al sector buscado → match=false.\n"
+        "- Si hay duda razonable pero el título/excerpt sugieren que podría ser del sector → "
+        "match=true con confidence 4-5 (el filtro de confidence descartará los más dudosos).\n"
+        "- Negocios de rubro completamente distinto (papelerías, ferreterías, restaurantes, "
+        "hoteles) son match=false cuando el usuario busca otro sector específico.\n"
+        "- confidence 1-3 solo para resultados que claramente NO son del sector.\n"
+        "- confidence 8-10 para resultados que demuestran CLARAMENTE alineación sectorial.\n"
     )
 
 
