@@ -607,16 +607,6 @@ export function OpportunityDetailPage(): JSX.Element {
               </Select>
             </label>
           ) : null}
-          <label className="opportunity-field">
-            <span>Nota para la bitácora (opcional)</span>
-            <textarea
-              value={stageNote}
-              onChange={(e) => setStageNote(e.target.value)}
-              rows={2}
-              maxLength={4000}
-              placeholder="Qué ocurrió al cambiar de fase…"
-            />
-          </label>
           <Button
             type="button"
             className="cta-button opportunity-phase-save"

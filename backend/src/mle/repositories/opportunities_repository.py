@@ -155,6 +155,27 @@ class OpportunitiesRepository:
         spec = str(row.get("specialty", "")).strip()[:160]
         city = str(row.get("city", "")).strip()[:120]
 
+        contact_sources = row.get("_contact_sources") or {}
+        if not isinstance(contact_sources, dict):
+            contact_sources = {}
+        contacts: list[dict[str, Any]] = []
+        for kind in ("email", "whatsapp", "phone", "linkedin_url", "website", "facebook_url", "instagram_url"):
+            val = str(row.get(kind) or "").strip()
+            if not val:
+                continue
+            mapped_kind = "linkedin" if kind == "linkedin_url" else kind
+            source_note = contact_sources.get(kind) or contact_sources.get(mapped_kind) or None
+            contacts.append(
+                {
+                    "id": f"auto-{mapped_kind}-{len(contacts)}",
+                    "kind": mapped_kind,
+                    "value": val[:500],
+                    "note": source_note,
+                    "role": None,
+                    "is_primary": len(contacts) == 0,
+                }
+            )
+
         now = datetime.now(timezone.utc)
         initial_note = {
             "at": now.isoformat(),
@@ -172,7 +193,7 @@ class OpportunitiesRepository:
             city=city,
             stage=DEFAULT_OPPORTUNITY_STAGE,
             response_outcome=None,
-            contacts=[],
+            contacts=contacts,
             activity_timeline=[initial_note],
             owner_user_id=owner_user_id,
             created_at=now,
