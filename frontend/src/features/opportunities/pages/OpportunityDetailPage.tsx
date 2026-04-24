@@ -882,15 +882,15 @@ export function OpportunityDetailPage(): JSX.Element {
 
             {enrichMut.isSuccess && enrichMut.data && (() => {
               const r = enrichMut.data;
-              const found: Array<{ kind: OpportunityContactKind | "other"; label: string; value: string; source?: string }> = [
-                { kind: "email",    label: "Email",      value: r.email },
-                { kind: "phone",    label: "Teléfono",   value: r.phone },
-                { kind: "whatsapp", label: "WhatsApp",   value: r.whatsapp },
-                { kind: "linkedin", label: "LinkedIn",   value: r.linkedin_url },
-                { kind: "other",    label: "Dirección",  value: r.address },
-                { kind: "other",    label: "Sitio web",  value: r.website },
-                { kind: "other",    label: "Facebook",   value: r.facebook_url },
-                { kind: "other",    label: "Instagram",  value: r.instagram_url },
+              const found = [
+                { kind: "email" as OpportunityContactKind,    label: "Email",      value: r.email },
+                { kind: "phone" as OpportunityContactKind,    label: "Teléfono",   value: r.phone },
+                { kind: "whatsapp" as OpportunityContactKind, label: "WhatsApp",   value: r.whatsapp },
+                { kind: "linkedin" as OpportunityContactKind, label: "LinkedIn",   value: r.linkedin_url },
+                { kind: "other" as OpportunityContactKind,    label: "Dirección",  value: r.address },
+                { kind: "other" as OpportunityContactKind,    label: "Sitio web",  value: r.website },
+                { kind: "other" as OpportunityContactKind,    label: "Facebook",   value: r.facebook_url },
+                { kind: "other" as OpportunityContactKind,    label: "Instagram",  value: r.instagram_url },
               ].filter((x) => x.value.trim() !== "");
 
               return (
