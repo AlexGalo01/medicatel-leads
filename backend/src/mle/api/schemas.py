@@ -293,6 +293,22 @@ class OpportunityResponse(BaseModel):
     owner: OpportunityOwnerSnippet | None = None
 
 
+class OpportunityEnrichResponse(BaseModel):
+    status: str
+    message: str = ""
+    email: str = ""
+    phone: str = ""
+    whatsapp: str = ""
+    address: str = ""
+    schedule_text: str = ""
+    website: str = ""
+    facebook_url: str = ""
+    instagram_url: str = ""
+    linkedin_url: str = ""
+    description: str = ""
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class OpportunityListItemResponse(BaseModel):
     opportunity_id: str
     job_id: str | None = None

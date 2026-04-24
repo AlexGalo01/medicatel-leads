@@ -5988,3 +5988,143 @@ textarea {
   gap: 4px;
 }
 
+/* ─── Enrich Modal ─────────────────────────────────── */
+.enrich-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+  padding: 1rem;
+}
+
+.enrich-modal-panel {
+  background: var(--surface-1, #fff);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.enrich-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.1rem 1.25rem 0.75rem;
+  border-bottom: 1px solid var(--border-muted, #e5e7eb);
+}
+
+.enrich-modal-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.enrich-modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--text-muted, #6b7280);
+  padding: 0.25rem;
+  line-height: 1;
+}
+
+.enrich-modal-close:hover {
+  color: var(--text-primary, #111827);
+}
+
+.enrich-modal-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 2.5rem 1.5rem;
+}
+
+.enrich-modal-stage {
+  font-size: 0.9rem;
+  color: var(--text-muted, #6b7280);
+  text-align: center;
+  min-height: 1.4em;
+}
+
+.enrich-modal-results {
+  padding: 1.25rem;
+}
+
+.enrich-modal-summary {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-success, #16a34a);
+  margin: 0 0 0.75rem;
+}
+
+.enrich-modal-contact-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.enrich-modal-contact-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-2, #f9fafb);
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+
+.enrich-modal-contact-label {
+  font-weight: 600;
+  min-width: 80px;
+  color: var(--text-muted, #6b7280);
+  font-size: 0.8rem;
+}
+
+.enrich-modal-contact-value {
+  word-break: break-all;
+  color: var(--text-primary, #111827);
+}
+
+.enrich-modal-sources {
+  font-size: 0.8rem;
+  color: var(--text-muted, #6b7280);
+  margin-bottom: 0.75rem;
+}
+
+.enrich-modal-sources summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+
+.enrich-modal-sources ul {
+  padding-left: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.enrich-modal-source-link {
+  word-break: break-all;
+  color: var(--color-link, #2563eb);
+}
+
+.enrich-modal-source-tag {
+  margin-left: 0.4rem;
+  background: var(--color-success-light, #dcfce7);
+  color: var(--color-success, #16a34a);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+

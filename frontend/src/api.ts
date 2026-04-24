@@ -426,6 +426,29 @@ export async function putOpportunityContacts(
   return parseJsonResponse<OpportunityResponse>(response);
 }
 
+export interface OpportunityEnrichResult {
+  status: string;
+  message: string;
+  email: string;
+  phone: string;
+  whatsapp: string;
+  address: string;
+  schedule_text: string;
+  website: string;
+  facebook_url: string;
+  instagram_url: string;
+  linkedin_url: string;
+  description: string;
+  citations: Array<{ url?: string; title?: string; confidence?: string; source?: string }>;
+}
+
+export async function enrichOpportunity(opportunityId: string): Promise<OpportunityEnrichResult> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities/${opportunityId}/enrich`, {
+    method: "POST",
+  });
+  return parseJsonResponse<OpportunityEnrichResult>(response);
+}
+
 export async function authLogin(email: string, password: string): Promise<LoginResponse> {
   const response = await apiFetch(`${apiBaseUrl}/api/v1/auth/login`, {
     method: "POST",

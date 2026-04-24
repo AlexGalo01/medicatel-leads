@@ -34,6 +34,7 @@ from mle.api.schemas import (
     OpportunityBitacoraRequest,
     OpportunityContactsReplaceRequest,
     OpportunityCreateFromPreviewRequest,
+    OpportunityEnrichResponse,
     OpportunityListItemResponse,
     OpportunityListResponse,
     OpportunityOwnerSnippet,
@@ -84,7 +85,11 @@ from mle.services.query_expansion_service import expand_user_search_query
 from mle.services.exa_more_results_service import append_exa_results_for_job
 from mle.services.profile_interpret_service import interpret_profile_texts
 from mle.services.profile_interpret_service import extract_profile_summary
-from mle.core.config import get_settings
+from mle.services.lead_deep_enrich_service import LeadCore, enrich_lead_contacts
+from mle.clients.exa_client import ExaClient
+from mle.clients.opencli_client import OpenCliClient
+from mle.clients.llm_factory import get_llm_client, get_reviewer_llm_client
+from mle.core.config import get_settings, effective_exa_search_timeout_seconds
 from mle.schemas.leads import LeadRead
 from mle.schemas.opportunities import OPPORTUNITY_STAGE_KEYS
 
@@ -936,6 +941,65 @@ async def get_opportunity(opportunity_id: UUID) -> OpportunityResponse:
             _raise_not_found("Oportunidad")
         owner = await _load_owner_user(session, opp)
         return _opportunity_to_response(opp, owner=owner, created=False)
+
+
+@protected_router.post("/opportunities/{opportunity_id}/enrich", response_model=OpportunityEnrichResponse)
+async def enrich_opportunity(opportunity_id: UUID) -> OpportunityEnrichResponse:
+    """Enriquece un opportunity buscando contactos (email, teléfono, etc.) en la web."""
+    async with async_session_factory() as session:
+        opp_repo = OpportunitiesRepository(session)
+        opp = await opp_repo.get_by_id(opportunity_id)
+        if opp is None:
+            _raise_not_found("Oportunidad")
+
+        country = ""
+        if opp.job_id:
+            jobs_repo = JobsRepository(session)
+            job = await jobs_repo.get_by_id(opp.job_id)
+            if job is not None:
+                country = getattr(job, "country", "") or ""
+
+    lead = LeadCore(
+        full_name=opp.title or "",
+        specialty=opp.specialty or "",
+        city=opp.city or "",
+        country=country,
+        primary_source_url=opp.source_url or "",
+    )
+
+    st = get_settings()
+    exa_client = ExaClient(
+        api_key=st.exa_api_key,
+        timeout_seconds=effective_exa_search_timeout_seconds(st),
+    )
+    opencli = OpenCliClient(st)
+    proposer = get_llm_client(st)
+    reviewer = get_reviewer_llm_client(st)
+
+    result = await enrich_lead_contacts(
+        lead,
+        exa_client=exa_client,
+        opencli=opencli,
+        proposer=proposer,
+        reviewer=reviewer,
+        settings=st,
+    )
+
+    return OpportunityEnrichResponse(
+        status=result.status,
+        message=result.message,
+        email=result.email,
+        phone=result.phone,
+        whatsapp=result.whatsapp,
+        address=result.address,
+        schedule_text=result.schedule_text,
+        website=result.website,
+        facebook_url=result.facebook_url,
+        instagram_url=result.instagram_url,
+        linkedin_url=result.linkedin_url,
+        description=result.description,
+        citations=result.citations,
+    )
 
 
 @protected_router.patch("/opportunities/{opportunity_id}", response_model=OpportunityResponse)

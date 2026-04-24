@@ -15,17 +15,20 @@ import {
   Phone,
   Plus,
   Presentation,
+  Search,
   Trash2,
 } from "lucide-react";
 
 import {
   deleteOpportunity,
+  enrichOpportunity,
   getSearchJobStatus,
   getOpportunity,
   patchOpportunity,
   postOpportunityBitacora,
   putOpportunityContacts,
   summarizeProfile,
+  type OpportunityEnrichResult,
 } from "../../../api";
 import { usePermissions } from "../../../auth/usePermissions";
 import { mergeProfileAboutText } from "../../../lib/utils";
@@ -104,6 +107,13 @@ function BitacoraStageIcon({ stage }: { stage: string }): JSX.Element {
 const CONTACT_KINDS: OpportunityContactKind[] = ["email", "phone", "whatsapp", "linkedin", "other"];
 const OUTCOMES: OpportunityResponseOutcome[] = ["pending", "positive", "negative"];
 
+const ENRICH_STAGES = [
+  "Buscando información del perfil en la web...",
+  "Consultando Google Maps y Knowledge Panel...",
+  "Visitando páginas personales y redes sociales...",
+  "Verificando datos con inteligencia artificial...",
+];
+
 export function OpportunityDetailPage(): JSX.Element {
   const { opportunityId = "" } = useParams();
   const navigate = useNavigate();
@@ -119,6 +129,8 @@ export function OpportunityDetailPage(): JSX.Element {
   const [locationDraft, setLocationDraft] = useState("");
   const [cvDirty, setCvDirty] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [enrichModalOpen, setEnrichModalOpen] = useState(false);
+  const [enrichStageIdx, setEnrichStageIdx] = useState(0);
   const bitacoraScrollRef = useRef<HTMLDivElement>(null);
   const bitacoraTextareaRef = useRef<HTMLTextAreaElement>(null);
   const aboutTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -245,6 +257,18 @@ export function OpportunityDetailPage(): JSX.Element {
       setContactsDirty(false);
     },
   });
+
+  const enrichMut = useMutation<OpportunityEnrichResult>({
+    mutationFn: () => enrichOpportunity(opportunityId),
+  });
+
+  useEffect(() => {
+    if (!enrichMut.isPending) return;
+    const timer = setInterval(() => {
+      setEnrichStageIdx((i) => Math.min(i + 1, ENRICH_STAGES.length - 1));
+    }, 3500);
+    return () => clearInterval(timer);
+  }, [enrichMut.isPending]);
 
   const stageIndex = useMemo(() => {
     if (!data) return 0;
@@ -600,9 +624,23 @@ export function OpportunityDetailPage(): JSX.Element {
       <Card className="panel opportunity-card opportunity-bento-card opportunity-contacts-card">
         <div className="opportunity-panel-head">
           <h2 className="opportunity-card-title">Contactos</h2>
-          <Button type="button" className="workspace-tool-btn" onClick={() => addContactRow()}>
-            <Plus size={16} aria-hidden /> Añadir
-          </Button>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <Button
+              type="button"
+              className="workspace-tool-btn"
+              onClick={() => {
+                setEnrichModalOpen(true);
+                setEnrichStageIdx(0);
+                enrichMut.reset();
+                enrichMut.mutate();
+              }}
+            >
+              <Search size={16} aria-hidden /> Enriquecer
+            </Button>
+            <Button type="button" className="workspace-tool-btn" onClick={() => addContactRow()}>
+              <Plus size={16} aria-hidden /> Añadir
+            </Button>
+          </div>
         </div>
         {contactsDraft.length === 0 ? (
           <p className="muted-text">Aún no hay contactos. Añade correos, teléfonos u otros canales.</p>
@@ -808,6 +846,117 @@ export function OpportunityDetailPage(): JSX.Element {
         )}
 
       </div>
+
+      {enrichModalOpen && (
+        <div
+          className="enrich-modal-overlay"
+          onClick={() => { if (!enrichMut.isPending) setEnrichModalOpen(false); }}
+        >
+          <div className="enrich-modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="enrich-modal-header">
+              <h3 className="enrich-modal-title">Búsqueda de contactos</h3>
+              {!enrichMut.isPending && (
+                <button
+                  type="button"
+                  className="enrich-modal-close"
+                  aria-label="Cerrar"
+                  onClick={() => setEnrichModalOpen(false)}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {enrichMut.isPending && (
+              <div className="enrich-modal-loading">
+                <Loader2 className="spin" size={32} aria-hidden />
+                <p className="enrich-modal-stage">{ENRICH_STAGES[enrichStageIdx]}</p>
+              </div>
+            )}
+
+            {enrichMut.isError && (
+              <p className="error-text" style={{ padding: "1rem" }}>
+                Error al buscar. Intenta de nuevo.
+              </p>
+            )}
+
+            {enrichMut.isSuccess && enrichMut.data && (() => {
+              const r = enrichMut.data;
+              const found: Array<{ kind: OpportunityContactKind | "other"; label: string; value: string; source?: string }> = [
+                { kind: "email",    label: "Email",      value: r.email },
+                { kind: "phone",    label: "Teléfono",   value: r.phone },
+                { kind: "whatsapp", label: "WhatsApp",   value: r.whatsapp },
+                { kind: "linkedin", label: "LinkedIn",   value: r.linkedin_url },
+                { kind: "other",    label: "Dirección",  value: r.address },
+                { kind: "other",    label: "Sitio web",  value: r.website },
+                { kind: "other",    label: "Facebook",   value: r.facebook_url },
+                { kind: "other",    label: "Instagram",  value: r.instagram_url },
+              ].filter((x) => x.value.trim() !== "");
+
+              return (
+                <div className="enrich-modal-results">
+                  {found.length === 0 ? (
+                    <p className="muted-text" style={{ padding: "0.5rem 0" }}>
+                      No se encontró información de contacto verificada.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="enrich-modal-summary">{found.length} dato{found.length !== 1 ? "s" : ""} encontrado{found.length !== 1 ? "s" : ""}</p>
+                      <ul className="enrich-modal-contact-list">
+                        {found.map((item, i) => (
+                          <li key={i} className="enrich-modal-contact-row">
+                            <span className="enrich-modal-contact-label">{item.label}</span>
+                            <span className="enrich-modal-contact-value">{item.value}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      {r.citations.length > 0 && (
+                        <details className="enrich-modal-sources">
+                          <summary>Fuentes ({r.citations.length})</summary>
+                          <ul>
+                            {r.citations.map((c, i) => (
+                              <li key={i}>
+                                <a href={c.url} target="_blank" rel="noreferrer" className="enrich-modal-source-link">
+                                  {c.url}
+                                </a>
+                                {c.source === "direct_regex" && <span className="enrich-modal-source-tag">extracción directa</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                      <Button
+                        type="button"
+                        className="cta-button"
+                        style={{ marginTop: "1rem", width: "100%" }}
+                        onClick={() => {
+                          const newContacts = found
+                            .filter((item) => !contactsDraft.some((c) => c.value.toLowerCase().trim() === item.value.toLowerCase().trim()))
+                            .map((item, i) => ({
+                              id: `enrich-${Date.now()}-${i}`,
+                              kind: item.kind as OpportunityContactKind,
+                              value: item.value,
+                              note: null,
+                              role: null,
+                              is_primary: contactsDraft.length === 0 && i === 0,
+                            }));
+                          if (newContacts.length > 0) {
+                            setContactsDraft((prev) => [...prev, ...newContacts]);
+                            setContactsDirty(true);
+                          }
+                          setEnrichModalOpen(false);
+                        }}
+                      >
+                        Aplicar contactos encontrados
+                      </Button>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
