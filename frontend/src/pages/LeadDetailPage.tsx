@@ -1,10 +1,9 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { Check, ExternalLink, Sparkles } from "lucide-react";
+import { Check, ExternalLink } from "lucide-react";
 
-import { deepEnrichLead, getLeadDetail } from "../api";
-import { Button } from "../components/ui/button";
+import { getLeadDetail } from "../api";
 import { Card } from "../components/ui/card";
 import type { LeadSourceCitation } from "../types";
 
@@ -60,24 +59,11 @@ function profileInitial(name: string): string {
 export function LeadDetailPage(): JSX.Element {
   const { leadId = "" } = useParams();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const [deepError, setDeepError] = useState<string | null>(null);
 
   const leadDetailQuery = useQuery({
     queryKey: ["lead-detail", leadId],
     queryFn: () => getLeadDetail(leadId),
     enabled: Boolean(leadId),
-  });
-
-  const deepEnrichMutation = useMutation({
-    mutationFn: () => deepEnrichLead(leadId),
-    onSuccess: (updated) => {
-      setDeepError(null);
-      queryClient.setQueryData(["lead-detail", leadId], updated);
-    },
-    onError: (error: Error) => {
-      setDeepError(error.message);
-    },
   });
 
   const citations = useMemo(() => {
@@ -103,9 +89,11 @@ export function LeadDetailPage(): JSX.Element {
   const lead = leadDetailQuery.data;
   const description =
     lead.score_reasoning?.trim() ||
-    "Aún no hay un resumen de relevancia. Puedes ejecutar el enriquecimiento para buscar evidencia verificable en la web (perfiles públicos, directorios, etc.).";
+    "Aún no hay un resumen de relevancia para este lead.";
 
-  const hasContact = Boolean(lead.email || lead.whatsapp || lead.linkedin_url);
+  const hasContact = Boolean(
+    lead.email || lead.whatsapp || lead.linkedin_url || lead.phone || lead.address,
+  );
 
   return (
     <section className="lead-detail-page lead-detail-page--two-col">
@@ -114,12 +102,6 @@ export function LeadDetailPage(): JSX.Element {
           Volver a la lista
         </button>
       </nav>
-
-      {deepError ? (
-        <div className="panel error-text lead-detail-inline-alert" role="alert">
-          {deepError}
-        </div>
-      ) : null}
 
       <div className="lead-detail-grid lead-detail-grid--proposal-b">
         <div className="lead-detail-main">
@@ -181,9 +163,7 @@ export function LeadDetailPage(): JSX.Element {
                   ))}
                 </ul>
               ) : (
-                <p className="muted-text">
-                  Sin citas estructuradas todavía. Tras enriquecer la oportunidad pueden aparecer enlaces verificables aquí.
-                </p>
+                <p className="muted-text">Sin citas estructuradas para este lead.</p>
               )}
             </div>
           </details>
@@ -209,41 +189,15 @@ export function LeadDetailPage(): JSX.Element {
         </div>
 
         <aside className="lead-detail-sidebar" aria-label="Contacto y acciones">
-          <Card className="panel lead-detail-enrich-card">
-            <div className="lead-detail-enrich-icon" aria-hidden>
-              <Sparkles size={22} />
-            </div>
-            <h2 className="lead-detail-enrich-title">Enriquecer esta oportunidad</h2>
-            <p className="muted-text lead-detail-enrich-copy">
-              Ejecuta una búsqueda ampliada con IA sobre la web para localizar correo, WhatsApp, LinkedIn y otras pistas
-              públicas. Más adelante podrás orientar el agente hacia Instagram u otras redes.
-            </p>
-            <Button
-              className="cta-button lead-detail-enrich-cta"
-              type="button"
-              disabled={deepEnrichMutation.isPending || !leadId}
-              onClick={() => {
-                setDeepError(null);
-                deepEnrichMutation.mutate();
-              }}
-            >
-              {deepEnrichMutation.isPending ? "Búsqueda en curso…" : "Ejecutar búsqueda extensiva"}
-            </Button>
-            {lead.enrichment_message ? (
-              <p className="lead-detail-enrich-status muted-text">
-                <strong>Última ejecución:</strong> {lead.enrichment_message}
-                {lead.enrichment_status ? ` (${lead.enrichment_status})` : null}
-              </p>
-            ) : null}
-          </Card>
-
           <Card className="panel lead-detail-card lead-detail-contact-card">
             <h2 className="lead-detail-section-title">Contacto</h2>
-            <p className="muted-text lead-detail-card-hint">Solo datos presentes en el registro o añadidos tras enriquecer.</p>
+            <p className="muted-text lead-detail-card-hint">
+              Datos extraídos automáticamente por el pipeline (Exa + OpenCLI).
+            </p>
             <dl className="lead-contact-dl">
               <div className="lead-contact-row">
                 <dt>Correo</dt>
-                <dd>{lead.email ? <a href={`mailto:${lead.email}`}>{lead.email}</a> : <span className="muted-text">Sin dato — enriquecer</span>}</dd>
+                <dd>{lead.email ? <a href={`mailto:${lead.email}`}>{lead.email}</a> : <span className="muted-text">Sin dato</span>}</dd>
               </div>
               <div className="lead-contact-row">
                 <dt>WhatsApp</dt>
@@ -253,7 +207,17 @@ export function LeadDetailPage(): JSX.Element {
                       {lead.whatsapp}
                     </a>
                   ) : (
-                    <span className="muted-text">Sin dato — enriquecer</span>
+                    <span className="muted-text">Sin dato</span>
+                  )}
+                </dd>
+              </div>
+              <div className="lead-contact-row">
+                <dt>Teléfono</dt>
+                <dd>
+                  {lead.phone ? (
+                    <a href={`tel:${lead.phone.replace(/\s+/g, "")}`}>{lead.phone}</a>
+                  ) : (
+                    <span className="muted-text">Sin dato</span>
                   )}
                 </dd>
               </div>
@@ -266,9 +230,17 @@ export function LeadDetailPage(): JSX.Element {
                       <ExternalLink size={14} aria-hidden />
                     </a>
                   ) : (
-                    <span className="muted-text">Sin dato — enriquecer</span>
+                    <span className="muted-text">Sin dato</span>
                   )}
                 </dd>
+              </div>
+              <div className="lead-contact-row lead-contact-row--block">
+                <dt>Dirección</dt>
+                <dd>{lead.address ? <span>{lead.address}</span> : <span className="muted-text">Sin dato</span>}</dd>
+              </div>
+              <div className="lead-contact-row lead-contact-row--block">
+                <dt>Horario</dt>
+                <dd>{lead.schedule_text ? <span>{lead.schedule_text}</span> : <span className="muted-text">Sin dato</span>}</dd>
               </div>
               <div className="lead-contact-row">
                 <dt>Fuente principal</dt>
@@ -285,7 +257,7 @@ export function LeadDetailPage(): JSX.Element {
               </div>
             </dl>
             {!hasContact ? (
-              <p className="lead-inline-note">Aún no hay canales de contacto verificables. Usa el enriquecimiento para intentar localizarlos.</p>
+              <p className="lead-inline-note">El pipeline no encontró contactos verificables en las fuentes indexadas.</p>
             ) : null}
           </Card>
 

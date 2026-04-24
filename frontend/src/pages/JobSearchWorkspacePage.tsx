@@ -1,24 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-
-const WORKSPACE_PROCESSING_TIPS = [
-  "Buscando perfiles que coincidan con tu consulta…",
-  "Filtrando resultados por ubicación y rol…",
-  "Esto puede tardar un poco si pedimos mucha calidad; no cierres la pestaña.",
-  "Sincronizando con el motor de búsqueda…",
-];
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { ChevronRight, Download, Loader2, Mail, Phone, Linkedin, MessageCircle } from "lucide-react";
 
 import {
+  clarifySearchJob,
   downloadLeadsCsvFile,
+  getDirectory,
   getSearchJobStatus,
-  interpretProfileTexts,
   listLeads,
+  listOpportunities,
   loadMoreExaResults,
 } from "../api";
 import { Button } from "../components/ui/button";
-import { Card } from "../components/ui/card";
 import type { ExaCategoryChoice, SearchFocus } from "../types";
 
 export interface JobSearchLocationState {
@@ -30,35 +24,37 @@ export interface JobSearchLocationState {
   exaCriteria?: string;
 }
 
-interface ParsedProfile {
-  normalized_name?: string | null;
-  normalized_company?: string | null;
-  normalized_specialty?: string | null;
+function formatRelative(iso: string | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const ts = d.getTime();
+  if (Number.isNaN(ts)) return "";
+  const diffSec = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+  if (diffSec < 60) return `hace ${diffSec} s`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `hace ${diffMin} min`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `hace ${diffH} h`;
+  const diffD = Math.floor(diffH / 24);
+  return `hace ${diffD} día${diffD > 1 ? "s" : ""}`;
 }
 
-/** Evita salto de layout al cambiar de página: mientras llega interpret, no mezclar fallback corto con texto normalizado largo. */
-function WorkspaceInterpretCellSkeleton({ variant }: { variant: "profile" | "line" | "block" }): JSX.Element {
-  if (variant === "profile") {
-    return (
-      <div className="workspace-table-cell-skeleton workspace-table-cell-skeleton--profile" aria-hidden>
-        <span className="workspace-skeleton-line workspace-skeleton-line--fluid" />
-        <span className="workspace-skeleton-line workspace-skeleton-line--fluid workspace-skeleton-line--narrow" />
-      </div>
-    );
-  }
-  if (variant === "block") {
-    return (
-      <div className="workspace-table-cell-skeleton workspace-table-cell-skeleton--block" aria-hidden>
-        <span className="workspace-skeleton-line workspace-skeleton-line--fluid" />
-        <span className="workspace-skeleton-line workspace-skeleton-line--fluid workspace-skeleton-line--mid" />
-      </div>
-    );
-  }
-  return (
-    <div className="workspace-table-cell-skeleton workspace-table-cell-skeleton--single" aria-hidden>
-      <span className="workspace-skeleton-line workspace-skeleton-line--fluid" />
-    </div>
-  );
+interface RowData {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  email: string | null;
+  phone: string | null;
+  whatsapp: string | null;
+  linkedin: string | null;
+  stepLabel: string | null;
+  href: string;
+  enriched: boolean;
+}
+
+function initial(text: string): string {
+  const t = text.trim();
+  return t ? t.charAt(0).toUpperCase() : "?";
 }
 
 export function JobSearchWorkspacePage(): JSX.Element {
@@ -67,7 +63,8 @@ export function JobSearchWorkspacePage(): JSX.Element {
   const passedState = location.state as JobSearchLocationState | null;
   const queryClient = useQueryClient();
   const [tablePage, setTablePage] = useState(1);
-  const tablePageSize = 12;
+  const tablePageSize = 50;
+  const [workspaceClarifyReply, setWorkspaceClarifyReply] = useState("");
 
   const downloadCsvMutation = useMutation({
     mutationFn: () => downloadLeadsCsvFile(jobId, {}),
@@ -78,13 +75,14 @@ export function JobSearchWorkspacePage(): JSX.Element {
     queryFn: () => getSearchJobStatus(jobId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === "completed" || status === "error" ? false : 1500;
+      return status === "completed" || status === "error" ? false : 2000;
     },
     enabled: Boolean(jobId),
+    staleTime: 1000,
+    placeholderData: keepPreviousData,
   });
 
   const [exaMoreMessage, setExaMoreMessage] = useState<string | null>(null);
-  const [processingTipIndex, setProcessingTipIndex] = useState(0);
   const exaMoreMutation = useMutation({
     mutationFn: () => loadMoreExaResults(jobId, 40),
     onSuccess: (data) => {
@@ -92,18 +90,26 @@ export function JobSearchWorkspacePage(): JSX.Element {
         setExaMoreMessage(data.error || "No se pudieron cargar más resultados");
         return;
       }
-      setExaMoreMessage(
-        data.added_count > 0
-          ? `Se añadieron ${data.added_count} resultado(s) nuevos (${data.total_count} en total).`
-          : "No hubo URLs nuevas; Exa devolvió solo resultados ya listados.",
-      );
+      setExaMoreMessage(null);
       void queryClient.invalidateQueries({ queryKey: ["job-status", jobId] });
     },
     onError: (error: Error) => setExaMoreMessage(error.message),
   });
 
+  const clarifyWorkspaceMutation = useMutation({
+    mutationFn: (reply: string) => clarifySearchJob(jobId, { reply }),
+    onSuccess: () => {
+      setWorkspaceClarifyReply("");
+      void queryClient.invalidateQueries({ queryKey: ["job-status", jobId] });
+    },
+  });
+
   const jobStatus = jobStatusQuery.data?.status;
-  const isProcessing = jobStatus === "pending" || jobStatus === "running";
+  const awaitingClarification = Boolean(
+    jobStatusQuery.data?.awaiting_clarification && jobStatus === "pending",
+  );
+  const isProcessing =
+    (jobStatus === "pending" || jobStatus === "running") && !awaitingClarification;
   const pipelineMode = jobStatusQuery.data?.pipeline_mode ?? null;
   const searchOnlyDemo =
     pipelineMode === "presearch_and_search_only" ||
@@ -113,342 +119,343 @@ export function JobSearchWorkspacePage(): JSX.Element {
   const leadsQuery = useQuery({
     queryKey: ["leads", jobId, "workspace"],
     queryFn: () => listLeads(jobId, { pageSize: 100 }),
-    enabled: Boolean(jobId),
-    refetchInterval: isProcessing ? 2500 : false,
+    enabled: Boolean(jobId) && !isProcessing && !searchOnlyDemo,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
-
-  useEffect(() => {
-    if (jobStatus === "completed") void leadsQuery.refetch();
-  }, [jobStatus, leadsQuery]);
-
   const persistedLeads = leadsQuery.data?.items ?? [];
 
-  const awaitingJobPayload = jobStatusQuery.isLoading || (!jobStatusQuery.data && jobStatusQuery.isFetching);
-  const showTableSkeleton =
-    awaitingJobPayload ||
-    (searchOnlyDemo && isProcessing) ||
-    (jobStatus === "completed" && !searchOnlyDemo && leadsQuery.isLoading);
+  const jobOppsQuery = useQuery({
+    queryKey: ["job-opportunities", jobId],
+    queryFn: () => listOpportunities({ job_id: jobId }),
+    enabled: Boolean(jobId) && !isProcessing,
+    staleTime: 30_000,
+  });
 
-  const totalRows = searchOnlyDemo ? previewRows.length : persistedLeads.length;
+  const directoryId = (jobStatusQuery.data as unknown as { directory_id?: string })?.directory_id;
+  const directoryQuery = useQuery({
+    queryKey: ["directory", directoryId],
+    queryFn: () => getDirectory(directoryId!),
+    enabled: Boolean(directoryId),
+    staleTime: 60_000,
+  });
+
+  const stepNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of directoryQuery.data?.steps ?? []) {
+      map.set(s.id, s.name);
+    }
+    return map;
+  }, [directoryQuery.data]);
+
+  const oppByPreviewIndex = useMemo(() => {
+    const map = new Map<number, { stepId: string | null }>();
+    for (const opp of jobOppsQuery.data?.items ?? []) {
+      if (opp.exa_preview_index != null) {
+        map.set(opp.exa_preview_index, { stepId: opp.current_step_id });
+      }
+    }
+    return map;
+  }, [jobOppsQuery.data?.items]);
+
+  // Normaliza filas (preview o persisted) a una shape única
+  const rows: RowData[] = useMemo(() => {
+    if (searchOnlyDemo) {
+      return previewRows.map((row) => {
+        type PreviewExt = typeof row & {
+          email?: string | null;
+          phone?: string | null;
+          whatsapp?: string | null;
+          linkedin_url?: string | null;
+          enrichment_status?: string | null;
+        };
+        const r = row as PreviewExt;
+        const idx = r.index;
+        const opp = oppByPreviewIndex.get(idx);
+        const stepName = opp?.stepId ? stepNameById.get(opp.stepId) : null;
+        return {
+          id: `preview-${idx}`,
+          title: (r.title ?? "").trim() || "Sin título",
+          subtitle: [r.specialty, r.city].filter(Boolean).join(" · ") || null,
+          email: r.email ?? null,
+          phone: r.phone ?? null,
+          whatsapp: r.whatsapp ?? null,
+          linkedin: r.linkedin_url ?? null,
+          stepLabel: stepName ?? null,
+          href: `/jobs/${jobId}/result/${idx}`,
+          enriched: r.enrichment_status === "enriched",
+        };
+      });
+    }
+    return persistedLeads.map((lead) => {
+      const hasAny = Boolean(lead.email || lead.whatsapp || lead.linkedin_url || lead.phone);
+      return {
+        id: lead.lead_id,
+        title: lead.full_name || "Sin título",
+        subtitle: [lead.specialty, lead.city].filter(Boolean).join(" · ") || null,
+        email: lead.email,
+        phone: lead.phone,
+        whatsapp: lead.whatsapp,
+        linkedin: lead.linkedin_url,
+        stepLabel: null,
+        href: `/leads/${lead.lead_id}`,
+        enriched: hasAny,
+      };
+    });
+  }, [searchOnlyDemo, previewRows, persistedLeads, jobId, oppByPreviewIndex, stepNameById]);
+
+  const totalRows = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalRows / tablePageSize));
   const currentPage = Math.min(tablePage, totalPages);
   const offset = (currentPage - 1) * tablePageSize;
-  const paginatedPreviewRows = previewRows.slice(offset, offset + tablePageSize);
-  const paginatedLeads = persistedLeads.slice(offset, offset + tablePageSize);
+  const paginated = rows.slice(offset, offset + tablePageSize);
 
   useEffect(() => {
     setTablePage(1);
-    setProcessingTipIndex(0);
   }, [jobId, searchOnlyDemo]);
 
   useEffect(() => {
-    if (!showTableSkeleton) return undefined;
-    const timer = window.setInterval(() => {
-      setProcessingTipIndex((i) => (i + 1) % WORKSPACE_PROCESSING_TIPS.length);
-    }, 2800);
-    return () => window.clearInterval(timer);
-  }, [showTableSkeleton]);
-
-  const profileTexts = useMemo(() => {
-    if (searchOnlyDemo) {
-      return paginatedPreviewRows.map((row) => row.title?.trim()).filter(Boolean) as string[];
-    }
-    return paginatedLeads
-      .map((lead) => `${lead.full_name || ""} | ${lead.specialty || ""}`.trim())
-      .filter(Boolean);
-  }, [searchOnlyDemo, paginatedPreviewRows, paginatedLeads]);
-
-  const parsedProfilesQuery = useQuery({
-    queryKey: ["profile-interpret", jobId, ...profileTexts],
-    queryFn: () => interpretProfileTexts(profileTexts),
-    enabled: profileTexts.length > 0,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const parsedProfilesMap = useMemo(() => {
-    const map = new Map<string, ParsedProfile>();
-    for (const item of parsedProfilesQuery.data?.items ?? []) {
-      map.set(item.source_text, item);
-    }
-    return map;
-  }, [parsedProfilesQuery.data?.items]);
-
-  /** Solo `isPending`: si usamos `isFetching`, un refetch en segundo plano vaciaría celdas ya resueltas. */
-  const pageInterpretLoading =
-    !showTableSkeleton && profileTexts.length > 0 && parsedProfilesQuery.isPending;
+    setWorkspaceClarifyReply("");
+  }, [jobId]);
 
   const searchLabel =
-    jobStatusQuery.data?.query_text?.trim() || passedState?.searchLabel?.trim() || "búsqueda";
-  const workspaceTitle = `Búsqueda de ${searchLabel}`;
-  const createdAtLabel = new Date(jobStatusQuery.data?.updated_at ?? Date.now()).toLocaleDateString("es-HN", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  });
+    jobStatusQuery.data?.query_text?.trim() || passedState?.searchLabel?.trim() || "Búsqueda";
+  const createdAt = jobStatusQuery.data?.updated_at;
 
-  const getParsedValues = (
-    sourceText: string,
-    fallbackName: string,
-    fallbackSpecialty: string,
-  ): { name: string; company: string; specialty: string } => {
-    const parsed = parsedProfilesMap.get(sourceText);
-    return {
-      name: parsed?.normalized_name?.trim() || fallbackName || "—",
-      company: parsed?.normalized_company?.trim() || "—",
-      specialty: parsed?.normalized_specialty?.trim() || fallbackSpecialty || "—",
-    };
-  };
+  const statusLabel =
+    awaitingClarification ? "Aclaración pendiente" :
+    jobStatus === "completed" ? "Completada" :
+    jobStatus === "error" ? "Error" :
+    "En vivo";
+
+  const statusTone =
+    awaitingClarification ? "running" :
+    jobStatus === "completed" ? "completed" :
+    jobStatus === "error" ? "error" : "running";
 
   return (
-    <div className="search-workspace search-workspace--v2 search-workspace--single-column">
-      <Card className="search-workspace-job-card panel">
-        <div className="search-workspace-job-main">
-          <div className="search-workspace-job-title-row">
-            <h2 className="search-workspace-job-title">{workspaceTitle}</h2>
-            {isProcessing ? (
-              <span className="search-workspace-status-badge" aria-busy="true">
-                <Loader2 className="spin search-workspace-spinner" aria-hidden />
-                Procesando...
-              </span>
-            ) : null}
-          </div>
-          <p className="search-workspace-job-meta muted-text">Fecha de búsqueda: {createdAtLabel}</p>
-        </div>
-        <div className="search-workspace-job-actions">
-          {jobStatus === "completed" && jobId && !searchOnlyDemo ? (
-            <Button
-              type="button"
-              className="cta-button search-workspace-export-btn"
-              disabled={downloadCsvMutation.isPending}
-              onClick={() => downloadCsvMutation.mutate()}
-            >
-              {downloadCsvMutation.isPending ? "Generando..." : "Exportar"}
-            </Button>
+    <section className="workspace-v3">
+      <nav className="workspace-v3-breadcrumb" aria-label="Navegación">
+        {directoryQuery.data ? (
+          <>
+            <Link to="/directories" className="workspace-v3-crumb">Directorios</Link>
+            <ChevronRight size={12} aria-hidden />
+            <Link to={`/directories/${directoryQuery.data.id}`} className="workspace-v3-crumb">
+              {directoryQuery.data.name}
+            </Link>
+            <ChevronRight size={12} aria-hidden />
+            <span className="workspace-v3-crumb workspace-v3-crumb--current">Búsqueda</span>
+          </>
+        ) : (
+          <Link to="/search" className="workspace-v3-crumb">Buscar</Link>
+        )}
+      </nav>
+
+      <header className="workspace-v3-head">
+        <h1 className="workspace-v3-query">{searchLabel}</h1>
+        <div className="workspace-v3-status-row">
+          <span className={`workspace-v3-dot workspace-v3-dot--${statusTone}`} aria-hidden />
+          <span className="workspace-v3-status-label">{statusLabel}</span>
+          <span className="workspace-v3-sep">·</span>
+          <span className="workspace-v3-count">{totalRows} resultado{totalRows === 1 ? "" : "s"}</span>
+          {createdAt ? (
+            <>
+              <span className="workspace-v3-sep">·</span>
+              <span className="muted-text">{formatRelative(createdAt)}</span>
+            </>
           ) : null}
-        </div>
-      </Card>
-
-      <section className="search-workspace-metrics-grid search-workspace-metrics-grid--single">
-        <article className="panel workspace-metric-card">
-          <p className="workspace-metric-label">Resultados encontrados</p>
-          <strong className="workspace-metric-value">{totalRows}</strong>
-        </article>
-      </section>
-
-      <Card
-        className={`search-workspace-main panel${isProcessing && jobStatusQuery.isFetching ? " search-workspace-main--live-fetch" : ""}`}
-      >
-        {exaMoreMessage ? (
-          <div className="workspace-flash-message" role="status">
-            {exaMoreMessage}
-          </div>
-        ) : null}
-
-        {showTableSkeleton ? (
-          <div className="search-workspace-live-block" aria-live="polite" aria-busy="true">
-            <div className="search-workspace-live-track" aria-hidden>
-              <span className="search-workspace-live-dot" />
-              <span className="search-workspace-live-dot search-workspace-live-dot--delay1" />
-              <span className="search-workspace-live-dot search-workspace-live-dot--delay2" />
-            </div>
-            <p className="search-workspace-live-text">{WORKSPACE_PROCESSING_TIPS[processingTipIndex]}</p>
-            {jobStatusQuery.isFetching ? (
-              <p className="search-workspace-live-sub muted-text">Actualizando estado del trabajo…</p>
-            ) : null}
-          </div>
-        ) : null}
-
-        <div className="search-workspace-toolbar search-workspace-toolbar--bulk">
-          <div className="search-workspace-toolbar-left search-workspace-toolbar-left--bulk">
-            {searchOnlyDemo && jobStatus === "completed" && previewRows.length > 0 ? (
+          <div className="workspace-v3-actions">
+            {jobStatus === "completed" && searchOnlyDemo && previewRows.length > 0 ? (
               <Button
                 type="button"
-                variant="outline"
-                className="workspace-tool-btn workspace-tool-btn--primary"
+                variant="ghost"
+                size="sm"
                 disabled={exaMoreMutation.isPending}
                 onClick={() => {
                   setExaMoreMessage(null);
                   exaMoreMutation.mutate();
                 }}
               >
-                {exaMoreMutation.isPending ? "Cargando..." : "Cargar más resultados"}
+                {exaMoreMutation.isPending ? "Cargando…" : "Cargar más"}
+              </Button>
+            ) : null}
+            {jobStatus === "completed" && !searchOnlyDemo ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={downloadCsvMutation.isPending}
+                onClick={() => downloadCsvMutation.mutate()}
+              >
+                <Download size={13} aria-hidden />
+                {downloadCsvMutation.isPending ? "Generando…" : "Exportar"}
               </Button>
             ) : null}
           </div>
         </div>
+      </header>
 
-        <div className="search-workspace-table-wrap">
-          <table className="search-workspace-table search-workspace-table--card-rows">
-            <thead>
-              <tr>
-                <th scope="col" className="workspace-col-avatar"> </th>
-                <th scope="col">Perfil</th>
-                <th scope="col" className="workspace-card-th-hide-sm">Empresa / rol</th>
-                <th scope="col" className="workspace-card-th-hide-sm">Especialidad</th>
-                <th scope="col" className="workspace-card-th-hide-sm">Ubicación</th>
-                <th scope="col">Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {showTableSkeleton
-                ? Array.from({ length: tablePageSize }).map((_, index) => (
-                    <tr key={`sk-loading-${index}`} className="workspace-lead-card-row workspace-row-skeleton">
-                      <td><span className="workspace-skeleton-avatar" /></td>
-                      <td>
-                        <div className="workspace-skeleton-stack">
-                          <span className="workspace-skeleton-line workspace-skeleton-line--fluid" />
-                          <span className="workspace-skeleton-line workspace-skeleton-line--fluid workspace-skeleton-line--narrow" />
-                        </div>
-                      </td>
-                      <td>
-                        <div className="workspace-skeleton-stack">
-                          <span className="workspace-skeleton-line workspace-skeleton-line--fluid" />
-                        </div>
-                      </td>
-                      <td>
-                        <div className="workspace-skeleton-stack">
-                          <span className="workspace-skeleton-line workspace-skeleton-line--fluid workspace-skeleton-line--mid" />
-                          <span className="workspace-skeleton-line workspace-skeleton-line--fluid workspace-skeleton-line--narrow" />
-                        </div>
-                      </td>
-                      <td>
-                        <div className="workspace-skeleton-stack">
-                          <span className="workspace-skeleton-line workspace-skeleton-line--fluid workspace-skeleton-line--tiny-width" />
-                        </div>
-                      </td>
-                      <td>
-                        <span className="workspace-skeleton-pill" />
-                      </td>
-                    </tr>
-                  ))
-                : null}
-              {!showTableSkeleton && jobStatus === "error" ? (
-                <tr className="workspace-table-row-message">
-                  <td colSpan={6} className="workspace-error-cell">
-                    El job falló. <Link to="/search" className="link-button">Volver a buscar</Link>
-                  </td>
-                </tr>
-              ) : null}
+      <div
+        className={`workspace-v3-progress${
+          (isProcessing || jobStatusQuery.isFetching) && !awaitingClarification ? " is-active" : ""
+        }`}
+        aria-hidden
+      />
 
-              {!showTableSkeleton && jobStatus !== "error" && searchOnlyDemo
-                ? paginatedPreviewRows.map((row) => {
-                    const sourceText = row.title?.trim() || "";
-                    const parsed = getParsedValues(sourceText, row.title || "Sin título", row.specialty || "");
-                    const initial = (pageInterpretLoading ? row.title || "?" : parsed.name).charAt(0).toUpperCase() || "?";
-                    return (
-                      <tr key={`exa-${row.index}`} className="workspace-lead-card-row">
-                        <td className="workspace-card-td-avatar">
-                          <span className="workspace-avatar-placeholder" aria-hidden>
-                            {initial}
-                          </span>
-                        </td>
-                        <td className="workspace-card-td-name">
-                          <div className="workspace-card-name-block">
-                            {pageInterpretLoading ? (
-                              <WorkspaceInterpretCellSkeleton variant="profile" />
-                            ) : (
-                              <strong className="workspace-card-name-title">{parsed.name}</strong>
-                            )}
-                          </div>
-                        </td>
-                        <td className="workspace-card-td-hide-sm">
-                          {pageInterpretLoading ? <WorkspaceInterpretCellSkeleton variant="line" /> : parsed.company}
-                        </td>
-                        <td className="workspace-card-td-hide-sm">
-                          {pageInterpretLoading ? <WorkspaceInterpretCellSkeleton variant="block" /> : parsed.specialty}
-                        </td>
-                        <td className="workspace-card-td-hide-sm">{(row.city ?? "").trim() || "—"}</td>
-                        <td className="workspace-card-td-action">
-                          <Link to={`/jobs/${jobId}/result/${row.index}`} className="cta-button workspace-row-cta">
-                            Ver Lead
-                          </Link>
-                        </td>
-                      </tr>
-                    );
-                  })
-                : null}
+      {jobStatusQuery.isError ? (
+        <p className="error-text workspace-v3-inline-error" role="alert">
+          {jobStatusQuery.error instanceof Error
+            ? jobStatusQuery.error.message
+            : "No se pudo consultar el estado del trabajo."}
+        </p>
+      ) : null}
 
-              {!showTableSkeleton && jobStatus !== "error" && !searchOnlyDemo
-                ? paginatedLeads.map((lead) => {
-                    const sourceText = `${lead.full_name || ""} | ${lead.specialty || ""}`.trim();
-                    const parsed = getParsedValues(sourceText, lead.full_name, lead.specialty || "");
-                    const initial = (pageInterpretLoading ? lead.full_name || "?" : parsed.name).charAt(0).toUpperCase() || "?";
-                    return (
-                      <tr key={lead.lead_id} className="workspace-lead-card-row">
-                        <td className="workspace-card-td-avatar">
-                          <span className="workspace-avatar-placeholder" aria-hidden>
-                            {initial}
-                          </span>
-                        </td>
-                        <td className="workspace-card-td-name">
-                          <div className="workspace-card-name-block">
-                            {pageInterpretLoading ? (
-                              <WorkspaceInterpretCellSkeleton variant="profile" />
-                            ) : (
-                              <strong className="workspace-card-name-title">{parsed.name}</strong>
-                            )}
-                          </div>
-                        </td>
-                        <td className="workspace-card-td-hide-sm">
-                          {pageInterpretLoading ? <WorkspaceInterpretCellSkeleton variant="line" /> : parsed.company}
-                        </td>
-                        <td className="workspace-card-td-hide-sm">
-                          {pageInterpretLoading ? <WorkspaceInterpretCellSkeleton variant="block" /> : parsed.specialty}
-                        </td>
-                        <td className="workspace-card-td-hide-sm">{lead.city || "—"}</td>
-                        <td className="workspace-card-td-action">
-                          <Link className="cta-button workspace-row-cta" to={`/leads/${lead.lead_id}`}>
-                            Ver Lead
-                          </Link>
-                        </td>
-                      </tr>
-                    );
-                  })
-                : null}
+      {exaMoreMessage ? <p className="error-text workspace-v3-inline-error">{exaMoreMessage}</p> : null}
 
-              {!showTableSkeleton && jobStatus === "completed" && searchOnlyDemo && previewRows.length === 0 ? (
-                <tr className="workspace-table-row-message">
-                  <td colSpan={6} className="workspace-empty-cell">La búsqueda terminó sin resultados en la vista previa.</td>
-                </tr>
-              ) : null}
-              {!showTableSkeleton && jobStatus === "completed" && !searchOnlyDemo && persistedLeads.length === 0 ? (
-                <tr className="workspace-table-row-message">
-                  <td colSpan={6} className="workspace-empty-cell">No hay filas guardadas para este job.</td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-
-        {!showTableSkeleton && totalRows > 0 ? (
-          <div className="workspace-table-pagination">
+      <div className="workspace-v3-list-wrap">
+        {awaitingClarification ? (
+          <div className="workspace-v3-empty workspace-v3-clarify-panel" role="region" aria-label="Aclaración">
+            <p className="muted-text" style={{ marginBottom: "0.5rem" }}>
+              <strong style={{ color: "var(--color-text, #1c2b33)" }}>El plan de búsqueda necesita un dato más.</strong>
+            </p>
+            <p className="muted-text">{jobStatusQuery.data?.clarifying_question}</p>
+            <label className="search-clarify-label" htmlFor="workspace-clarify-reply" style={{ marginTop: "0.5rem" }}>
+              Tu respuesta
+            </label>
+            <textarea
+              id="workspace-clarify-reply"
+              className="search-clarify-textarea workspace-v3-clarify-textarea"
+              value={workspaceClarifyReply}
+              onChange={(e) => setWorkspaceClarifyReply(e.target.value)}
+              rows={4}
+              maxLength={500}
+              placeholder="Escribe la aclaración y continúa la búsqueda."
+            />
+            {clarifyWorkspaceMutation.isError ? (
+              <p className="error-text" role="alert">
+                {clarifyWorkspaceMutation.error instanceof Error
+                  ? clarifyWorkspaceMutation.error.message
+                  : "No se pudo enviar la aclaración."}
+              </p>
+            ) : null}
             <Button
               type="button"
-              variant="outline"
-              className="workspace-pagination-btn"
-              disabled={currentPage <= 1}
-              onClick={() => setTablePage((value) => Math.max(1, value - 1))}
+              className="cta-button"
+              disabled={
+                clarifyWorkspaceMutation.isPending || workspaceClarifyReply.trim().length < 1
+              }
+              onClick={() => clarifyWorkspaceMutation.mutate(workspaceClarifyReply.trim())}
             >
-              Anterior
-            </Button>
-            <span className="workspace-table-pagination-label muted-text">Página {currentPage} de {totalPages}</span>
-            <Button
-              type="button"
-              variant="outline"
-              className="workspace-pagination-btn"
-              disabled={currentPage >= totalPages}
-              onClick={() => setTablePage((value) => Math.min(totalPages, value + 1))}
-            >
-              Siguiente
+              {clarifyWorkspaceMutation.isPending ? (
+                <>
+                  <Loader2 className="spin" size={16} aria-hidden />
+                  Enviando…
+                </>
+              ) : (
+                "Continuar búsqueda"
+              )}
             </Button>
           </div>
-        ) : null}
+        ) : jobStatus === "error" ? (
+          <div className="workspace-v3-empty workspace-v3-failure" role="alert">
+            <p className="error-text">
+              <strong>No se pudo completar la búsqueda.</strong>
+            </p>
+            {jobStatusQuery.data?.error_message ? (
+              <p className="muted-text workspace-v3-failure-detail">{jobStatusQuery.data.error_message}</p>
+            ) : (
+              <p className="muted-text">Revisa los logs del backend o vuelve a intentar más tarde.</p>
+            )}
+          </div>
+        ) : isProcessing && rows.length === 0 ? (
+          <p className="workspace-v3-empty muted-text">Esperando resultados…</p>
+        ) : rows.length === 0 ? (
+          <p className="workspace-v3-empty muted-text">Sin coincidencias.</p>
+        ) : (
+          <ul className="workspace-v3-list">
+            {paginated.map((row) => (
+              <li key={row.id} className="workspace-v3-row">
+                <Link to={row.href} className="workspace-v3-row-link">
+                  <span className="workspace-v3-avatar" aria-hidden>{initial(row.title)}</span>
+                  <div className="workspace-v3-row-main">
+                    <div className="workspace-v3-row-title-line">
+                      <strong className="workspace-v3-row-title">{row.title}</strong>
+                      {row.enriched ? (
+                        <span className="workspace-v3-enriched" aria-label="Enriquecido" title="Enriquecido">
+                          ✓
+                        </span>
+                      ) : null}
+                    </div>
+                    {row.subtitle ? (
+                      <span className="workspace-v3-row-sub muted-text">{row.subtitle}</span>
+                    ) : null}
+                  </div>
+                  <div className="workspace-v3-row-chips" onClick={(e) => e.preventDefault()}>
+                    <span
+                      className={`workspace-v3-chip${row.email ? " is-on" : ""}`}
+                      title={row.email || "Sin correo"}
+                      aria-label={row.email ? `Correo: ${row.email}` : "Sin correo"}
+                    >
+                      <Mail size={13} aria-hidden />
+                    </span>
+                    <span
+                      className={`workspace-v3-chip${row.phone ? " is-on" : ""}`}
+                      title={row.phone || "Sin teléfono"}
+                      aria-label={row.phone ? `Teléfono: ${row.phone}` : "Sin teléfono"}
+                    >
+                      <Phone size={13} aria-hidden />
+                    </span>
+                    <span
+                      className={`workspace-v3-chip${row.whatsapp ? " is-on" : ""}`}
+                      title={row.whatsapp || "Sin WhatsApp"}
+                      aria-label={row.whatsapp ? `WhatsApp: ${row.whatsapp}` : "Sin WhatsApp"}
+                    >
+                      <MessageCircle size={13} aria-hidden />
+                    </span>
+                    <span
+                      className={`workspace-v3-chip${row.linkedin ? " is-on" : ""}`}
+                      title={row.linkedin || "Sin LinkedIn"}
+                      aria-label={row.linkedin ? "LinkedIn disponible" : "Sin LinkedIn"}
+                    >
+                      <Linkedin size={13} aria-hidden />
+                    </span>
+                  </div>
+                  {row.stepLabel ? (
+                    <span className="workspace-v3-row-step">{row.stepLabel}</span>
+                  ) : null}
+                  <ChevronRight size={14} aria-hidden className="workspace-v3-row-chevron" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
-        {parsedProfilesQuery.isError ? (
-          <p className="muted-text workspace-expand-error">No se pudo interpretar todos los perfiles; se muestran valores base.</p>
-        ) : null}
-        {leadsQuery.isError ? <p className="error-text workspace-table-error">No se pudieron cargar las oportunidades.</p> : null}
-      </Card>
-    </div>
+      {totalRows > tablePageSize ? (
+        <div className="workspace-v3-pagination">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={currentPage <= 1}
+            onClick={() => setTablePage((v) => Math.max(1, v - 1))}
+          >
+            Anterior
+          </Button>
+          <span className="muted-text workspace-v3-pagination-label">
+            {currentPage} / {totalPages}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={currentPage >= totalPages}
+            onClick={() => setTablePage((v) => Math.min(totalPages, v + 1))}
+          >
+            Siguiente
+          </Button>
+        </div>
+      ) : null}
+    </section>
   );
 }

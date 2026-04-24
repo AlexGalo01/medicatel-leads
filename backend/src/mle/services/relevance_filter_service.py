@@ -1,12 +1,15 @@
-"""Filtrado post-Exa por relevancia (ubicación / intención) con Gemini y heurística ligera."""
+"""Filtrado post-Exa por relevancia (ubicación, intención y tipo de entidad people/company) con Gemini."""
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Protocol
 
+from mle.core.config import get_settings
 from mle.services.country_iso_resolution import (
+    blob_has_target_country_markers,
     extract_parenthesized_iso_codes,
     first_matching_non_target_country_iso,
 )
@@ -19,6 +22,112 @@ logger = logging.getLogger(__name__)
 
 # Calidad sobre latencia: lotes pequeños para mejor precisión del modelo
 DEFAULT_CHUNK_SIZE = 8
+DEFAULT_CONFIDENCE_THRESHOLD = 6
+
+
+def _exa_category_entity_rules(exa_category: str | None) -> str:
+    """Bloque de prompt: alinear con category people/company de Exa (resultados puros de persona u organización)."""
+    c = (exa_category or "").strip().lower()
+    if c == "people":
+        return (
+            "Reglas estrictas de tipo de entidad (búsqueda Exa: modo PERSONAS / people):\n"
+            "- match=true si el sujeto principal del resultado es una PERSONA: perfil de individuo, nombre propio, "
+            "rol 'X at [organización]', URL tipo linkedin.com/in/ de persona, etc.\n"
+            "- match=false si el sujeto es esencialmente una EMPRESA, HOSPITAL, CLÍNICA, MARCA u ORGANIZACIÓN sin lead "
+            "persona: landing corporativa, ficha de institución, linkedin.com/company/ sin individuo, directorio de "
+            "empresas, páginas 'nosotros' de marca.\n"
+            "- Caso híbrido (ej. clínica): match=true si título o excerpt identifica claramente a una persona; si solo "
+            "aparece la entidad, match=false.\n"
+            "Combina: match final true solo si cumple ubicación (reglas de geo) y este criterio de entidad.\n"
+        )
+    if c == "company":
+        return (
+            "Reglas estrictas de tipo de entidad (búsqueda Exa: modo EMPRESAS / company):\n"
+            "- match=true si el sujeto principal es una ORGANIZACIÓN: web corporativa, ficha de negocio, "
+            "linkedin.com/company/ o equivalente, hospital/clínica/marca como entidad a prospectar.\n"
+            "- match=false para perfiles de INDIVIDUO (p. ej. linkedin.com/in/) cuando el foco de la búsqueda es la "
+            "entidad, no un profesional aislado.\n"
+            "- match=true aun haya nombres propios en el texto, si el resultado es claramente la ficha o sede de la entidad; "
+            "si es básicamente un CV personal, match=false.\n"
+            "Combina: match final true solo si cumple ubicación (reglas de geo) y este criterio de entidad.\n"
+        )
+    return ""
+
+
+def _professional_intent_rules_block(user_query: str, role_or_stack_hint: str | None) -> str:
+    """Bloque de prompt: alineación obligatoria con la intención de búsqueda del usuario."""
+    hint = (role_or_stack_hint or "").strip()
+    search_term = hint or user_query.strip()
+    if not search_term:
+        return ""
+    return (
+        f"*** REGLA PRINCIPAL — OBLIGATORIA — Alineación con la intención de búsqueda ***\n"
+        f"El usuario busca EXACTAMENTE: \"{search_term}\"\n"
+        f"DEBES verificar que cada resultado sea DIRECTAMENTE del sector/rubro/profesión \"{search_term}\".\n"
+        f"- match=true SOLO si título o excerpt demuestran que el resultado ES una {search_term} "
+        f"o está directamente relacionado con {search_term}.\n"
+        f"- match=false INMEDIATAMENTE si el resultado es de OTRO sector, rubro o actividad. "
+        f"Ejemplos de descarte obligatorio: una papelería NO es una clínica; un hotel NO es un "
+        f"consultorio; una ferretería NO es un hospital; una tienda de ropa NO es un laboratorio. "
+        f"NO importa si coincide geográficamente, si NO es del rubro buscado → match=false.\n"
+        f"- El nombre comercial por sí solo NO prueba nada. \"Clínica Bella Vista\" podría ser "
+        f"un salón de belleza. Verifica en el excerpt que realmente ofrece servicios de {search_term}.\n"
+        f"- Si no puedes confirmar con certeza que el resultado es de {search_term}, match=false y confidence=1.\n"
+    )
+
+
+def _sector_intent_rules_block(user_query: str) -> str:
+    """Refuerzo genérico de alineación sectorial (sin keywords hardcodeados)."""
+    return (
+        "*** Refuerzo ESTRICTO de alineación sectorial ***\n"
+        "- ANTE CUALQUIER DUDA sobre si el resultado pertenece al sector buscado → match=false.\n"
+        "- NO dar beneficio de la duda NUNCA. La carga de la prueba está en el resultado: "
+        "si el título y excerpt no demuestran CLARAMENTE que es del sector buscado, es match=false.\n"
+        "- Papelerías, hoteles, ferreterías, restaurantes, tiendas, bancos, inmobiliarias, etc. "
+        "son match=false cuando se buscan clínicas, médicos, hospitales, o cualquier otro rubro distinto.\n"
+        "- confidence debe ser 1-3 si tienes cualquier duda sobre la alineación sectorial.\n"
+    )
+
+
+def _heuristic_sede_extranjera_sin_senal_local(blob: str, target_iso: str) -> bool:
+    """
+    Heurística: sede/razón social fuera del país (p. ej. India + Private Limited) sin menciones al país objetivo.
+    Complementa códigos (XX) entre paréntesis cuando el snippet de Exa no trae (IN) pero sí texto indio.
+    """
+    t = target_iso.strip().upper()
+    if t == "IN":
+        return False
+    if blob_has_target_country_markers(blob, t):
+        return False
+    bl = blob.lower()
+    if f"({t.lower()})" in bl:
+        return False
+    if re.search(
+        r"\b(india|bangalore|bengaluru|mumbai|bombay|hyderabad|new delhi|gurgaon|gurugram|noida|chennai|pune|kolkata)\b",
+        bl,
+    ) and re.search(r"private limited|pvt\.?\s*ltd|ltd\.\s*company|limited liability", bl):
+        return True
+    if "private limited" in bl and re.search(r"\b(india|indian)\b", bl):
+        return True
+    return False
+
+
+def _heuristic_drop_reason(item: dict[str, Any], target_iso: str | None) -> str | None:
+    """Razón de descarte heurístico, o None si el ítem pasa a revisión con Gemini / se conserva."""
+    if not target_iso or len(target_iso) != 2:
+        return None
+    t = target_iso.strip().upper()
+    blob = _full_profile_blob(item)
+    codes = extract_parenthesized_iso_codes(blob)
+    if codes:
+        primary = codes[-1].upper()
+        if primary != t:
+            return "Ubicación (código ISO en el perfil) no coincide con el país objetivo."
+    if first_matching_non_target_country_iso(blob, target_iso):
+        return "El texto describe otro país distinto al objetivo."
+    if _heuristic_sede_extranjera_sin_senal_local(blob, t):
+        return "Sede o registro foráneo (p. ej. India) sin señal clara del país objetivo en el texto."
+    return None
 
 
 def _highlights_blob(item: dict[str, Any]) -> str:
@@ -36,12 +145,31 @@ def _highlights_blob(item: dict[str, Any]) -> str:
     return str(item.get("text", "") or "")
 
 
+def _subpages_text_blob(item: dict[str, Any]) -> str:
+    """Concatena texto/highlights de subpáginas crawleadas por Exa (subpages: N)."""
+    subs = item.get("subpages")
+    if not isinstance(subs, list):
+        return ""
+    parts: list[str] = []
+    for sp in subs:
+        if not isinstance(sp, dict):
+            continue
+        t = sp.get("text")
+        if isinstance(t, str) and t.strip():
+            parts.append(t.strip())
+        hl = sp.get("highlights")
+        if isinstance(hl, list):
+            parts.append(" ".join(str(x) for x in hl if x))
+    return " ".join(parts)
+
+
 def _full_profile_blob(item: dict[str, Any]) -> str:
-    """Concatena campos que Exa suele devolver para ubicación y rol."""
+    """Concatena campos que Exa suele devolver para ubicación y rol, incluyendo texto completo y subpáginas."""
     parts = [
         str(item.get("title", "") or ""),
         str(item.get("text", "") or ""),
         _highlights_blob(item),
+        _subpages_text_blob(item),
     ]
     for key in ("snippet", "summary", "description", "subtitle"):
         v = item.get(key)
@@ -50,7 +178,9 @@ def _full_profile_blob(item: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def _excerpt(item: dict[str, Any], max_len: int = 900) -> str:
+def _excerpt(item: dict[str, Any], max_len: int | None = None) -> str:
+    if max_len is None:
+        max_len = get_settings().relevance_filter_excerpt_max_chars
     parts = [
         str(item.get("title", "") or ""),
         str(item.get("url", "") or ""),
@@ -88,23 +218,7 @@ def filter_exa_list_heuristic_only(
 
 
 def _heuristic_should_drop(item: dict[str, Any], target_iso: str | None) -> bool:
-    """
-    Descarta sin LLM cuando:
-    - El último código (XX) entre paréntesis (típico LinkedIn: ciudad, país (ISO)) difiere del objetivo, o
-    - No hay señales del país objetivo pero sí mención explícita de otro país (palabra completa).
-    """
-    if not target_iso or len(target_iso) != 2:
-        return False
-    t = target_iso.strip().upper()
-    blob = _full_profile_blob(item)
-    codes = extract_parenthesized_iso_codes(blob)
-    if codes:
-        primary = codes[-1].upper()
-        if primary != t:
-            return True
-    if first_matching_non_target_country_iso(blob, t):
-        return True
-    return False
+    return _heuristic_drop_reason(item, target_iso) is not None
 
 
 def _compact_items_for_chunk(
@@ -118,7 +232,10 @@ def _compact_items_for_chunk(
     return out
 
 
-def _parse_verdicts(parsed: dict[str, Any]) -> dict[int, bool]:
+def _parse_verdicts(
+    parsed: dict[str, Any],
+    confidence_threshold: int = DEFAULT_CONFIDENCE_THRESHOLD,
+) -> dict[int, bool]:
     verdicts = parsed.get("verdicts")
     if not isinstance(verdicts, list):
         return {}
@@ -137,6 +254,14 @@ def _parse_verdicts(parsed: dict[str, Any]) -> dict[int, bool]:
             out[idx] = True
         elif str(match).lower() in ("false", "0", "no"):
             out[idx] = False
+        # Apply confidence threshold: low-confidence matches become rejections
+        if out.get(idx) is True:
+            try:
+                confidence = int(row.get("confidence", 10))
+            except (TypeError, ValueError):
+                confidence = 10
+            if confidence < confidence_threshold:
+                out[idx] = False
     return out
 
 
@@ -160,34 +285,33 @@ async def filter_exa_raw_results_by_relevance(
         target_iso = None
 
     heuristic_drop: set[int] = set()
+    reasons: dict[int, str] = {}
     for i, item in enumerate(raw_results):
         if not isinstance(item, dict):
             continue
-        if _heuristic_should_drop(item, target_iso):
+        drop_reason = _heuristic_drop_reason(item, target_iso)
+        if drop_reason:
             heuristic_drop.add(i)
+            reasons[i] = drop_reason
 
     pending_indices = [i for i in range(len(raw_results)) if i not in heuristic_drop]
     match_by_index: dict[int, bool] = {i: False for i in heuristic_drop}
-    reasons: dict[int, str] = {}
-    for i in heuristic_drop:
-        item = raw_results[i]
-        blob = _full_profile_blob(item) if isinstance(item, dict) else ""
-        codes = extract_parenthesized_iso_codes(blob)
-        if codes and codes[-1].upper() != str(target_iso or "").upper():
-            reasons[i] = "Ubicación (código ISO en el perfil) no coincide con el país objetivo."
-        elif first_matching_non_target_country_iso(blob, target_iso):
-            reasons[i] = "El texto describe otro país distinto al objetivo."
-        else:
-            reasons[i] = "Ubicación explícita en el texto no coincide con el país objetivo."
 
     if pending_indices:
-        criteria_compact = {
+        exa_cat = relevance_criteria.get("exa_category")
+        exa_cat_s = str(exa_cat).strip().lower() if exa_cat is not None else ""
+        if exa_cat_s not in ("people", "company"):
+            exa_cat_s = ""
+
+        criteria_compact: dict[str, Any] = {
             "country_iso2": relevance_criteria.get("country_iso2"),
             "city": relevance_criteria.get("city"),
             "country_text": relevance_criteria.get("country_text"),
             "role_or_stack_hint": relevance_criteria.get("role_or_stack_hint"),
             "normalized_location": relevance_criteria.get("normalized_location"),
         }
+        if exa_cat_s:
+            criteria_compact["exa_category"] = exa_cat_s
         try:
             for start in range(0, len(pending_indices), chunk_size):
                 chunk_idx = pending_indices[start : start + chunk_size]
@@ -206,15 +330,27 @@ async def filter_exa_raw_results_by_relevance(
                     geo_rules += (
                         "- Ejemplo: usuario pide Honduras; candidato en Cairo, Egypt (EG) → match=false.\n"
                     )
+                entity_rules = _exa_category_entity_rules(exa_cat_s or None)
+                sector_rules = _sector_intent_rules_block(user_query)
+                professional_rules = _professional_intent_rules_block(
+                    user_query, criteria_compact.get("role_or_stack_hint"),
+                )
                 prompt = (
                     "Eres un validador estricto de relevancia para prospección B2B.\n"
                     f"Consulta original del usuario (máxima prioridad): {user_query}\n"
                     f"Criterios (JSON): {json.dumps(criteria_compact, ensure_ascii=False)}\n"
+                    f"{professional_rules}"
                     f"{geo_rules}"
+                    f"{entity_rules}"
+                    f"{sector_rules}"
                     "Cada ítem tiene index (posición global en la lista original), title, url, excerpt.\n"
-                    "Decide si el resultado cumple la intención geográfica y profesional del usuario.\n"
+                    "Para CADA ítem pregúntate: ¿Este resultado ES realmente del sector/rubro/profesión que busca el usuario? "
+                    "Si la respuesta no es un SÍ claro → match=false.\n"
                     "Devuelve SOLO JSON con la forma exacta:\n"
-                    '{"verdicts":[{"index":0,"match":true,"reason_es":"breve"}]}\n'
+                    '{"verdicts":[{"index":0,"match":true,"confidence":8,"reason_es":"breve"}]}\n'
+                    "- confidence (entero 0-10): qué tan seguro estás de que el resultado ES del sector buscado. "
+                    "10 = 100% seguro que sí es. 1-3 = dudoso o parece ser de otro sector. "
+                    "Si confidence < 6, el resultado será descartado automáticamente.\n"
                     "Debes incluir un veredicto por cada index enviado (un objeto por index).\n"
                     f"Ítems: {json.dumps(items_payload, ensure_ascii=False)}"
                 )
@@ -262,6 +398,10 @@ async def filter_exa_raw_results_by_relevance(
                 }
             )
 
+    exa_for_meta = str(relevance_criteria.get("exa_category") or "").strip().lower()
+    if exa_for_meta not in ("people", "company"):
+        exa_for_meta = ""
+
     meta: dict[str, Any] = {
         "relevance_filter_kept": len(kept),
         "relevance_filter_dropped": len(discarded_meta),
@@ -269,4 +409,6 @@ async def filter_exa_raw_results_by_relevance(
         "relevance_filter_discarded_sample": discarded_meta[:40],
         "relevance_filter_mode": "applied",
     }
+    if exa_for_meta:
+        meta["relevance_filter_exa_category"] = exa_for_meta
     return kept, meta

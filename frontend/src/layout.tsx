@@ -1,11 +1,13 @@
-import { Briefcase, ListChecks, LogOut, Search, UserCog } from "lucide-react";
+import { Briefcase, FolderKanban, LogOut, Search, UserCog } from "lucide-react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { useAuth } from "./auth/AuthContext";
+import { usePermissions } from "./auth/usePermissions";
 import { Button } from "./components/ui/button";
 
 export function AppLayout(): JSX.Element {
   const { user, logout } = useAuth();
+  const { canSearch, isAdmin } = usePermissions();
   const navigate = useNavigate();
 
   return (
@@ -13,28 +15,29 @@ export function AppLayout(): JSX.Element {
       <aside className="app-sidebar" aria-label="Navegación principal">
         <div className="app-sidebar-brand ui-card">
           <span className="app-sidebar-brand-badge" aria-hidden>
-            M
+            AI
           </span>
           <div className="app-sidebar-brand-copy">
-            <strong>Medicatel CRM</strong>
-            <span>Lead Finder</span>
+            <strong>AI CRM</strong>
           </div>
         </div>
 
         <nav className="app-sidebar-nav">
-          <NavLink to="/search" className={({ isActive }) => `app-sidebar-link ui-nav-link${isActive ? " is-active" : ""}`}>
-            <Search size={16} aria-hidden />
-            <span>Search</span>
-          </NavLink>
-          <NavLink to="/busquedas" className={({ isActive }) => `app-sidebar-link ui-nav-link${isActive ? " is-active" : ""}`}>
-            <ListChecks size={16} aria-hidden />
-            <span>Búsquedas</span>
+          {canSearch && (
+            <NavLink to="/search" className={({ isActive }) => `app-sidebar-link ui-nav-link${isActive ? " is-active" : ""}`}>
+              <Search size={16} aria-hidden />
+              <span>Search</span>
+            </NavLink>
+          )}
+          <NavLink to="/directories" className={({ isActive }) => `app-sidebar-link ui-nav-link${isActive ? " is-active" : ""}`}>
+            <FolderKanban size={16} aria-hidden />
+            <span>Directorios</span>
           </NavLink>
           <NavLink to="/opportunities" className={({ isActive }) => `app-sidebar-link ui-nav-link${isActive ? " is-active" : ""}`}>
             <Briefcase size={16} aria-hidden />
             <span>Oportunidades</span>
           </NavLink>
-          {user?.role === "admin" ? (
+          {isAdmin && (
             <NavLink
               to="/admin/users"
               className={({ isActive }) => `app-sidebar-link ui-nav-link${isActive ? " is-active" : ""}`}
@@ -42,7 +45,7 @@ export function AppLayout(): JSX.Element {
               <UserCog size={16} aria-hidden />
               <span>Usuarios</span>
             </NavLink>
-          ) : null}
+          )}
         </nav>
         <div className="app-sidebar-user" aria-label="Usuario actual">
           <span className="app-sidebar-user-name" title={user?.email ?? ""}>

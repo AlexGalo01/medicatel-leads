@@ -179,12 +179,14 @@ async def _exa_evidence(
 async def _opencli_evidence(
     opencli: OpenCliClient,
     lead: LeadCore,
+    prefetched_maps: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Lanza adapters OpenCLI en paralelo y retorna dict por fuente.
 
     Para empresas: query simplificada (solo nombre + ciudad).
     Para personas: query completa (nombre + especialidad + ciudad).
     Para empresas: Facebook e Instagram siempre habilitados.
+    Si prefetched_maps está disponible, usa esos datos en lugar de llamar a Google Maps.
     """
     if not opencli.enabled:
         return {}
@@ -206,10 +208,19 @@ async def _opencli_evidence(
             name_query = f"{name_query} {lead.city}".strip()
         google_q = maps_q = name_query
 
-    tasks = {
-        "google_search": opencli.google_search(google_q),
-        "google_maps": opencli.google_maps(maps_q),
-    }
+    out: dict[str, Any] = {}
+
+    # Si ya tenemos datos de Google Maps prefetched, usarlos directamente
+    if prefetched_maps and isinstance(prefetched_maps, dict):
+        out["google_maps"] = prefetched_maps
+        tasks = {
+            "google_search": opencli.google_search(google_q),
+        }
+    else:
+        tasks = {
+            "google_search": opencli.google_search(google_q),
+            "google_maps": opencli.google_maps(maps_q),
+        }
 
     # Doctoralia solo para personas
     if not is_company:
@@ -225,7 +236,6 @@ async def _opencli_evidence(
     keys = list(tasks.keys())
     values = await asyncio.gather(*tasks.values(), return_exceptions=True)
 
-    out: dict[str, Any] = {}
     for k, v in zip(keys, values, strict=False):
         if isinstance(v, Exception):
             logger.info("OpenCLI %s levantó excepción: %s", k, v)
@@ -365,15 +375,17 @@ async def enrich_lead_contacts(
     proposer: GeminiClient,
     reviewer: GeminiClient,
     settings: Settings | None = None,
+    prefetched_maps: dict[str, Any] | None = None,
 ) -> EnrichmentResult:
     """Enriquece un lead con Exa (evidencia textual) + OpenCLI (contactos estructurados) + Gemini reviewer.
 
     Función pura: no persiste en DB. El caller decide qué hacer con el resultado.
+    Si prefetched_maps está disponible, usa esos datos en lugar de llamar a Google Maps de nuevo.
     """
     st = settings or get_settings()
 
     exa_task = _exa_evidence(exa_client, lead, st)
-    opencli_task = _opencli_evidence(opencli, lead)
+    opencli_task = _opencli_evidence(opencli, lead, prefetched_maps=prefetched_maps)
     (exa_results, evidence), opencli_results = await asyncio.gather(exa_task, opencli_task)
 
     opencli_merged = _merge_opencli_contacts(opencli_results)

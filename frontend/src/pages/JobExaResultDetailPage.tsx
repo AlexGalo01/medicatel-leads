@@ -11,7 +11,7 @@ import {
 } from "../api";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
-import { mergeProfileAboutText } from "../lib/utils";
+import { mergeAbortSignals, mergeProfileAboutText } from "../lib/utils";
 import type { ExaResultPreviewItem } from "../types";
 
 function hostLabel(url: string): string {
@@ -60,6 +60,23 @@ function inferLocationFromText(city: string, title: string, snippet: string): st
   return from?.[1]?.trim() || "";
 }
 
+/** Evita espera infinita si el backend no responde (p. ej. Gemini colgado). */
+const PROFILE_SUMMARY_TIMEOUT_MS = 90_000;
+
+function profileSummaryErrorMessage(err: unknown): string {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return "El resumen con IA tardó demasiado o se canceló. Puedes recargar la página o revisar el backend.";
+  }
+  if (err instanceof Error) {
+    const m = err.message;
+    if (/abort/i.test(m) || m.includes("The user aborted")) {
+      return "El resumen con IA tardó demasiado o se canceló. Puedes recargar la página o revisar el backend.";
+    }
+    return m;
+  }
+  return "No se pudo generar el resumen con IA. Se muestran los datos del resultado.";
+}
+
 export function JobExaResultDetailPage(): JSX.Element {
   const { jobId = "", resultIndex: resultIndexParam = "" } = useParams();
   const navigate = useNavigate();
@@ -103,6 +120,35 @@ export function JobExaResultDetailPage(): JSX.Element {
     },
   });
 
+  const profileSectionsQuery = useQuery({
+    queryKey: ["profile-sections", jobId, resultIndex],
+    queryFn: async ({ signal }) => {
+      const r = resultIndex != null ? findPreviewRow(jobQuery.data?.exa_results_preview, resultIndex) : undefined;
+      const titleQ = r?.title?.trim() || "Sin título";
+      const descriptionQ = r?.snippet?.trim() || "Abre la fuente para ver el contexto completo en la web.";
+      const specialtyQ = (r?.specialty ?? "").trim();
+      const cityQ = (r?.city ?? "").trim();
+      const timeoutCtrl = new AbortController();
+      const tid = window.setTimeout(() => timeoutCtrl.abort(), PROFILE_SUMMARY_TIMEOUT_MS);
+      try {
+        return await summarizeProfile(
+          {
+            title: titleQ,
+            specialty: specialtyQ || null,
+            city: cityQ || null,
+            snippet: descriptionQ || null,
+          },
+          { signal: mergeAbortSignals(signal, timeoutCtrl.signal) },
+        );
+      } finally {
+        window.clearTimeout(tid);
+      }
+    },
+    enabled: Boolean(jobId && resultIndex != null && jobQuery.isSuccess && jobQuery.data && row),
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+
   if (!jobId || resultIndex == null) {
     return <section className="panel error-text">Enlace de resultado no válido.</section>;
   }
@@ -115,23 +161,29 @@ export function JobExaResultDetailPage(): JSX.Element {
     return <section className="panel error-text">No se pudo cargar el trabajo de búsqueda.</section>;
   }
 
+  if (jobQuery.data.status === "error") {
+    return (
+      <section className="panel" style={{ padding: "1.5rem", maxWidth: 560 }}>
+        <p className="error-text" style={{ marginBottom: "0.75rem" }}>
+          <strong>Esta búsqueda terminó con error.</strong>
+        </p>
+        {jobQuery.data.error_message ? (
+          <p className="muted-text" style={{ whiteSpace: "pre-wrap", marginBottom: "1rem", fontSize: "0.95rem" }}>
+            {jobQuery.data.error_message}
+          </p>
+        ) : null}
+        <Link to={`/jobs/${jobId}`} className="link-button">
+          <ChevronLeft size={14} aria-hidden /> Volver a la búsqueda
+        </Link>
+      </section>
+    );
+  }
+
   const title = row?.title?.trim() || "Sin título";
   const url = row?.url?.trim() || "";
   const specialty = (row?.specialty ?? "").trim();
   const city = (row?.city ?? "").trim();
   const description = row?.snippet?.trim() || "Abre la fuente para ver el contexto completo en la web.";
-  const profileSectionsQuery = useQuery({
-    queryKey: ["profile-sections", jobId, resultIndex, title, specialty, city, description],
-    queryFn: () =>
-      summarizeProfile({
-        title,
-        specialty: specialty || null,
-        city: city || null,
-        snippet: description || null,
-      }),
-    enabled: Boolean(row),
-    staleTime: 5 * 60 * 1000,
-  });
 
   if (!row) {
     return (
@@ -187,17 +239,28 @@ export function JobExaResultDetailPage(): JSX.Element {
           <details className="panel lead-detail-accordion" open>
             <summary className="lead-detail-accordion-summary">Resumen</summary>
             <div className="lead-detail-accordion-body">
+              {profileSectionsQuery.isFetching ? (
+                <p className="lead-detail-ai-loading muted-text">
+                  <Loader2 className="spin" size={16} aria-hidden />
+                  Generando resumen con IA…
+                </p>
+              ) : null}
+              {profileSectionsQuery.isError ? (
+                <p className="error-text lead-detail-ai-error" role="alert">
+                  {profileSummaryErrorMessage(profileSectionsQuery.error)}
+                </p>
+              ) : null}
               <div className="lead-detail-summary-actions">
                 <button type="button" className="workspace-tool-btn" disabled>
-                  Enrichment (próximamente)
+                  Enriquecimiento (próximamente)
                 </button>
               </div>
               <div className="lead-detail-summary-cards">
                 <article className="lead-detail-summary-card">
-                  <h3>About</h3>
+                  <h3>Acerca de</h3>
                   <p>{aboutText}</p>
                 </article>
-                <article className="lead-detail-summary-card">
+                <article className="lead-detail-summary-card lead-detail-summary-card--experience">
                   <h3>Experiencia</h3>
                   {experiences.length > 0 ? (
                     <ul className="opportunity-summary-experience-list">
@@ -211,7 +274,7 @@ export function JobExaResultDetailPage(): JSX.Element {
                       ))}
                     </ul>
                   ) : (
-                    <p>{experienceFallback}</p>
+                    <p className="lead-detail-experience-fallback-text muted-text">{experienceFallback}</p>
                   )}
                 </article>
                 <article className="lead-detail-summary-card">
@@ -223,9 +286,6 @@ export function JobExaResultDetailPage(): JSX.Element {
                   <p>{normalizedCompany}</p>
                 </article>
               </div>
-              {profileSectionsQuery.isError ? (
-                <p className="muted-text lead-detail-description">No se pudo estructurar completamente con IA; se muestran datos base.</p>
-              ) : null}
             </div>
           </details>
 

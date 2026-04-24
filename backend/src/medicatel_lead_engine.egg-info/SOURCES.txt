@@ -15,13 +15,14 @@ src/mle/api/schemas.py
 src/mle/clients/__init__.py
 src/mle/clients/exa_client.py
 src/mle/clients/gemini_client.py
+src/mle/clients/opencli_client.py
 src/mle/core/__init__.py
 src/mle/core/config.py
 src/mle/db/__init__.py
 src/mle/db/base.py
 src/mle/db/models.py
 src/mle/nodes/__init__.py
-src/mle/nodes/contact_retry_node.py
+src/mle/nodes/auto_enrich_node.py
 src/mle/nodes/directory_persist_node.py
 src/mle/nodes/exa_webset_node.py
 src/mle/nodes/lead_purification_node.py
@@ -35,12 +36,14 @@ src/mle/observability/langsmith_setup.py
 src/mle/orchestration/__init__.py
 src/mle/orchestration/pipeline.py
 src/mle/repositories/__init__.py
+src/mle/repositories/directories_repository.py
 src/mle/repositories/directory_entries_repository.py
 src/mle/repositories/jobs_repository.py
 src/mle/repositories/leads_repository.py
 src/mle/repositories/opportunities_repository.py
 src/mle/repositories/users_repository.py
 src/mle/schemas/__init__.py
+src/mle/schemas/directories.py
 src/mle/schemas/jobs.py
 src/mle/schemas/leads.py
 src/mle/schemas/opportunities.py
@@ -78,3 +81,4 @@ tests/test_pipeline.py
 tests/test_profile_summary_service.py
 tests/test_query_expansion_service.py
 tests/test_relevance_filter_service.py
+tests/test_search_job_clarify_flow.py

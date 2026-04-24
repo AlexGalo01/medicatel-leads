@@ -6,7 +6,7 @@ from typing import Any
 from langsmith import traceable
 
 from mle.db.base import async_session_factory
-from mle.db.models import DirectoryEntry
+from mle.db.models import ExaRawEntry
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.repositories.directory_entries_repository import DirectoryEntriesRepository
 from mle.state.graph_state import LeadSearchGraphState
@@ -53,14 +53,14 @@ async def directory_persist_node(state: LeadSearchGraphState) -> dict[str, objec
     city = str(geo.get("city", ""))[:120] if geo else ""
     country = str(geo.get("country", ""))[:80] if geo else ""
 
-    entries: list[DirectoryEntry] = []
+    entries: list[ExaRawEntry] = []
     for raw in state.exa_raw_results:
         if not isinstance(raw, dict):
             continue
         url = str(raw.get("url", "")).strip()[:2000]
         title = str(raw.get("title", "")).strip()[:500]
         entries.append(
-            DirectoryEntry(
+            ExaRawEntry(
                 job_id=state.job_id,
                 display_title=title or url or "Sin titulo",
                 primary_url=url,

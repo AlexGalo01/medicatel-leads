@@ -1,6 +1,15 @@
 import type {
+  AdminCreateUserRequest,
+  AdminUpdateUserRequest,
   AdminUsersListResponse,
+  Directory,
+  DirectoryCreateRequest,
   DirectoryEntriesListResponse,
+  DirectoryListResponse,
+  DirectoryStep,
+  DirectoryStepCreate,
+  DirectoryStepUpdate,
+  DirectoryUpdateRequest,
   ExaMoreResultsResponse,
   LeadCrmUpdateRequest,
   LeadDetailResponse,
@@ -8,10 +17,12 @@ import type {
   LeadsExportResponse,
   LeadsListResponse,
   LoginResponse,
+  RegisterRequest,
   OpportunityCreateFromPreviewRequest,
   OpportunityListResponse,
   OpportunityProfileOverrides,
   OpportunityResponse,
+  OpportunityTerminatedOutcome,
   ProfileInterpretResponse,
   ProfileSummaryRequest,
   ProfileSummaryResponse,
@@ -22,7 +33,25 @@ import type {
   UserPublic,
 } from "./types";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const DEFAULT_API_ORIGIN = "http://localhost:8000";
+
+/**
+ * VITE_API_BASE_URL debe ser solo el origen (p. ej. `http://localhost:8000`).
+ * Si alguien pone el prefijo de API entero, evitamos `/api/v1/api/v1/...` (404 en FastAPI).
+ */
+function normalizeApiOrigin(envValue: string | undefined): string {
+  const raw = (envValue ?? DEFAULT_API_ORIGIN).trim();
+  if (!raw) {
+    return DEFAULT_API_ORIGIN;
+  }
+  const noTrailing = raw.replace(/\/+$/, "");
+  if (/\/api\/v1$/i.test(noTrailing)) {
+    return noTrailing.replace(/\/api\/v1$/i, "");
+  }
+  return noTrailing;
+}
+
+const apiBaseUrl = normalizeApiOrigin(import.meta.env.VITE_API_BASE_URL);
 
 export const TOKEN_STORAGE_KEY = "mle_access_token";
 
@@ -39,13 +68,53 @@ function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respons
   const headers = new Headers(init?.headers);
   const t = getAccessToken();
   if (t) headers.set("Authorization", `Bearer ${t}`);
+  // Auto Content-Type: application/json cuando mandamos un string como body (siempre JSON.stringify).
+  if (init?.body && typeof init.body === "string" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   return fetch(input, { ...init, headers });
+}
+
+function formatApiErrorMessage(status: number, bodyText: string): string {
+  const trimmed = bodyText.trim();
+  if (!trimmed) {
+    return `Error del servidor (${status}).`;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as { detail?: unknown };
+    const d = parsed.detail;
+    if (typeof d === "string") {
+      return d;
+    }
+    if (Array.isArray(d)) {
+      const msgs = d
+        .map((item) => {
+          if (item && typeof item === "object" && "msg" in item) {
+            return String((item as { msg?: string }).msg ?? "");
+          }
+          return typeof item === "string" ? item : JSON.stringify(item);
+        })
+        .filter(Boolean);
+      if (msgs.length) {
+        return msgs.join(" · ");
+      }
+    }
+    if (d && typeof d === "object" && d !== null && "message" in d) {
+      return String((d as { message?: string }).message);
+    }
+  } catch {
+    /* cuerpo no JSON */
+  }
+  if (trimmed.length > 400) {
+    return `${trimmed.slice(0, 397)}…`;
+  }
+  return trimmed;
 }
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const bodyText = await response.text();
-    throw new Error(`Error API (${response.status}): ${bodyText || "Sin detalle"}`);
+    throw new Error(formatApiErrorMessage(response.status, bodyText));
   }
   return (await response.json()) as T;
 }
@@ -59,12 +128,29 @@ export async function createSearchJob(payload: SearchJobCreateRequest): Promise<
   return parseJsonResponse<SearchJobCreateResponse>(response);
 }
 
+export async function clarifySearchJob(
+  jobId: string,
+  payload: { reply: string },
+): Promise<{ job_id: string; status: string }> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/search-jobs/${jobId}/clarify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseJsonResponse<{ job_id: string; status: string }>(response);
+}
+
 export async function getSearchJobStatus(jobId: string): Promise<SearchJobStatusResponse> {
   const response = await apiFetch(`${apiBaseUrl}/api/v1/search-jobs/${jobId}`);
   return parseJsonResponse<SearchJobStatusResponse>(response);
 }
 
-export async function listSearchJobs(params: { limit?: number; offset?: number; q?: string } = {}): Promise<SearchJobsListResponse> {
+export async function listSearchJobs(params: {
+  limit?: number;
+  offset?: number;
+  q?: string;
+  directory_id?: string;
+} = {}): Promise<SearchJobsListResponse> {
   const query = new URLSearchParams();
   if (typeof params.limit === "number") {
     query.set("limit", String(params.limit));
@@ -74,6 +160,9 @@ export async function listSearchJobs(params: { limit?: number; offset?: number; 
   }
   if (params.q?.trim()) {
     query.set("q", params.q.trim());
+  }
+  if (params.directory_id) {
+    query.set("directory_id", params.directory_id);
   }
   const response = await apiFetch(`${apiBaseUrl}/api/v1/search-jobs${query.toString() ? `?${query}` : ""}`);
   return parseJsonResponse<SearchJobsListResponse>(response);
@@ -97,11 +186,15 @@ export async function interpretProfileTexts(texts: string[]): Promise<ProfileInt
   return parseJsonResponse<ProfileInterpretResponse>(response);
 }
 
-export async function summarizeProfile(payload: ProfileSummaryRequest): Promise<ProfileSummaryResponse> {
+export async function summarizeProfile(
+  payload: ProfileSummaryRequest,
+  options?: { signal?: AbortSignal },
+): Promise<ProfileSummaryResponse> {
   const response = await apiFetch(`${apiBaseUrl}/api/v1/profiles/summary`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: options?.signal,
   });
   return parseJsonResponse<ProfileSummaryResponse>(response);
 }
@@ -172,13 +265,6 @@ export async function updateLeadCrm(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-  });
-  return parseJsonResponse<LeadDetailResponse>(response);
-}
-
-export async function deepEnrichLead(leadId: string): Promise<LeadDetailResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/leads/${leadId}/deep-enrich`, {
-    method: "POST",
   });
   return parseJsonResponse<LeadDetailResponse>(response);
 }
@@ -263,10 +349,24 @@ export async function createOpportunityFromPreview(
   return parseJsonResponse<OpportunityResponse>(response);
 }
 
-export async function listOpportunities(params: { stage?: string } = {}): Promise<OpportunityListResponse> {
+export async function listOpportunities(params: {
+  stage?: string;
+  job_id?: string;
+  directory_id?: string;
+  limit?: number;
+} = {}): Promise<OpportunityListResponse> {
   const query = new URLSearchParams();
   if (params.stage) {
     query.set("stage", params.stage);
+  }
+  if (params.job_id) {
+    query.set("job_id", params.job_id);
+  }
+  if (params.directory_id) {
+    query.set("directory_id", params.directory_id);
+  }
+  if (typeof params.limit === "number") {
+    query.set("limit", String(params.limit));
   }
   const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities?${query}`);
   return parseJsonResponse<OpportunityListResponse>(response);
@@ -335,6 +435,15 @@ export async function authLogin(email: string, password: string): Promise<LoginR
   return parseJsonResponse<LoginResponse>(response);
 }
 
+export async function authRegister(body: RegisterRequest): Promise<LoginResponse> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJsonResponse<LoginResponse>(response);
+}
+
 export async function authMe(): Promise<UserPublic> {
   const response = await apiFetch(`${apiBaseUrl}/api/v1/auth/me`);
   return parseJsonResponse<UserPublic>(response);
@@ -345,16 +454,185 @@ export async function listAdminUsers(): Promise<AdminUsersListResponse> {
   return parseJsonResponse<AdminUsersListResponse>(response);
 }
 
-export async function createAdminUser(body: {
-  email: string;
-  password: string;
-  display_name: string;
-  role: "admin" | "user";
-}): Promise<UserPublic> {
+export async function createAdminUser(body: AdminCreateUserRequest): Promise<UserPublic> {
   const response = await apiFetch(`${apiBaseUrl}/api/v1/admin/users`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   return parseJsonResponse<UserPublic>(response);
+}
+
+export async function updateAdminUser(
+  userId: string,
+  body: AdminUpdateUserRequest,
+): Promise<UserPublic> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/admin/users/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJsonResponse<UserPublic>(response);
+}
+
+export async function deleteAdminUser(userId: string): Promise<void> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/admin/users/${userId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: "Error al eliminar usuario" }));
+    throw new Error(err.detail || "Error al eliminar usuario");
+  }
+}
+
+export async function createManualOpportunity(body: {
+  title: string;
+  specialty?: string;
+  city?: string;
+  source_url?: string;
+  snippet?: string | null;
+}): Promise<OpportunityResponse> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities/manual`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseJsonResponse<OpportunityResponse>(response);
+}
+
+export async function deleteOpportunity(opportunityId: string): Promise<void> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/api/v1/opportunities/${opportunityId}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: "Error al eliminar oportunidad" }));
+    throw new Error(err.detail || "Error al eliminar oportunidad");
+  }
+}
+
+// ============================================================================
+// DIRECTORIES
+// ============================================================================
+
+export async function listDirectories(): Promise<DirectoryListResponse> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories`);
+  return parseJsonResponse<DirectoryListResponse>(response);
+}
+
+export async function getDirectory(directoryId: string): Promise<Directory> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories/${directoryId}`);
+  return parseJsonResponse<Directory>(response);
+}
+
+export async function createDirectory(payload: DirectoryCreateRequest): Promise<Directory> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return parseJsonResponse<Directory>(response);
+}
+
+export async function updateDirectory(
+  directoryId: string,
+  payload: DirectoryUpdateRequest,
+): Promise<Directory> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories/${directoryId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return parseJsonResponse<Directory>(response);
+}
+
+export async function deleteDirectory(directoryId: string): Promise<void> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories/${directoryId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: "Error al eliminar directorio" }));
+    throw new Error(err.detail || "Error al eliminar directorio");
+  }
+}
+
+export async function addDirectoryStep(
+  directoryId: string,
+  payload: DirectoryStepCreate,
+): Promise<DirectoryStep> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories/${directoryId}/steps`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return parseJsonResponse<DirectoryStep>(response);
+}
+
+export async function updateDirectoryStep(
+  directoryId: string,
+  stepId: string,
+  payload: DirectoryStepUpdate,
+): Promise<DirectoryStep> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/api/v1/directories/${directoryId}/steps/${stepId}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+  return parseJsonResponse<DirectoryStep>(response);
+}
+
+export async function reorderDirectorySteps(
+  directoryId: string,
+  stepIds: string[],
+): Promise<DirectoryStep[]> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/api/v1/directories/${directoryId}/steps/reorder`,
+    { method: "POST", body: JSON.stringify({ step_ids: stepIds }) },
+  );
+  return parseJsonResponse<DirectoryStep[]>(response);
+}
+
+export async function deleteDirectoryStep(
+  directoryId: string,
+  stepId: string,
+  moveItemsToStepId?: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/api/v1/directories/${directoryId}/steps/${stepId}`,
+    {
+      method: "DELETE",
+      body: JSON.stringify({ move_items_to_step_id: moveItemsToStepId ?? null }),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: "Error al eliminar step" }));
+    throw new Error(err.detail || "Error al eliminar step");
+  }
+}
+
+export async function moveOpportunityStep(
+  opportunityId: string,
+  direction: "forward" | "backward",
+): Promise<OpportunityResponse> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/api/v1/opportunities/${opportunityId}/step`,
+    { method: "PATCH", body: JSON.stringify({ direction }) },
+  );
+  return parseJsonResponse<OpportunityResponse>(response);
+}
+
+export async function terminateOpportunity(
+  opportunityId: string,
+  outcome: OpportunityTerminatedOutcome,
+  note?: string | null,
+): Promise<OpportunityResponse> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/api/v1/opportunities/${opportunityId}/terminate`,
+    { method: "POST", body: JSON.stringify({ outcome, note: note ?? null }) },
+  );
+  return parseJsonResponse<OpportunityResponse>(response);
+}
+
+export async function reopenOpportunity(opportunityId: string): Promise<OpportunityResponse> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/api/v1/opportunities/${opportunityId}/reopen`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+  return parseJsonResponse<OpportunityResponse>(response);
 }

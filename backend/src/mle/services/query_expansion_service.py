@@ -5,8 +5,8 @@ from typing import Any
 
 from langsmith import traceable
 
-from mle.clients.gemini_client import GeminiClient
 from mle.core.config import get_settings
+from mle.clients.llm_factory import get_llm_client
 from mle.schemas.search_plan import SearchPlan, search_plan_from_fallback
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ async def expand_user_search_query(
         return "", {"fallback": True, "reason": "empty_user_query"}, plan.model_dump_for_job()
 
     settings = get_settings()
-    client = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_model)
+    client = get_llm_client(settings)
     try:
         raw = await client.expand_search_plan(
             user_query=normalized_user,
@@ -85,7 +85,7 @@ async def expand_user_search_query(
         }
         if plan.clarifying_question:
             logger.info(
-                "Plan de busqueda sugiere aclaracion (se continua con main_query): %s",
+                "Plan de busqueda sugiere aclaracion (el job puede quedar en espera hasta POST /clarify): %s",
                 plan.clarifying_question,
             )
         return plan.main_query.strip(), expansion_meta, plan.model_dump_for_job()

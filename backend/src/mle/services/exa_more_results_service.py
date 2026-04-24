@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from mle.clients.exa_client import ExaClient
-from mle.core.config import get_settings
+from mle.core.config import effective_exa_search_timeout_seconds, get_settings
 from mle.db.base import async_session_factory
 from mle.nodes.exa_webset_node import (
     MAX_EXA_RESULTS_PER_CALL,
@@ -111,7 +111,7 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
         payload = _build_search_payload_for_query(minimal_planner, query, n)
         exa = ExaClient(
             api_key=settings.exa_api_key,
-            timeout_seconds=settings.exa_search_timeout_seconds,
+            timeout_seconds=effective_exa_search_timeout_seconds(settings),
         )
         try:
             response = await exa.search(payload)

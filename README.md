@@ -89,7 +89,7 @@ PYTHONPATH=src python3 -m mle.scripts.run_exa_node_demo
 - `DATABASE_URL`
 - `EXA_API_KEY`
 - `GOOGLE_API_KEY`
-- `GOOGLE_MODEL` (opcional, default: `gemini-1.5-flash-latest`)
+- `GOOGLE_MODEL` (opcional, default: `gemini-flash-latest`)
 - `LANGSMITH_TRACING`
 - `LANGSMITH_ENDPOINT`
 - `LANGSMITH_API_KEY`

@@ -104,5 +104,5 @@ Referencia del endpoint en uso:
 
 Variables opcionales recomendadas:
 
-- `GOOGLE_MODEL` (default: `gemini-1.5-flash-latest`)
+- `GOOGLE_MODEL` (default: `gemini-flash-latest`; evita `gemini-1.5-flash-latest`, retirado en la API)
 - `EXPORT_DIR` (default: `/app/exports` en Docker)

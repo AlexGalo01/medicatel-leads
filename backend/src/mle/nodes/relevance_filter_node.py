@@ -6,8 +6,8 @@ from typing import Any
 
 from langsmith import traceable
 
-from mle.clients.gemini_client import GeminiClient
 from mle.core.config import get_settings
+from mle.clients.llm_factory import get_llm_client
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.services.relevance_filter_service import filter_exa_raw_results_by_relevance
 from mle.state.graph_state import LeadSearchGraphState
@@ -46,19 +46,19 @@ async def relevance_filter_node(state: LeadSearchGraphState) -> dict[str, object
         rel = planner_output.get("relevance_criteria") if isinstance(planner_output.get("relevance_criteria"), dict) else {}
         rel = dict(rel)
         rel.setdefault("normalized_location", str(planner_output.get("normalized_location") or ""))
+        search_config = planner_output.get("search_config") if isinstance(planner_output.get("search_config"), dict) else {}
+        exa_cat = search_config.get("exa_category")
+        if exa_cat in ("people", "company"):
+            rel["exa_category"] = exa_cat
 
         settings = get_settings()
-        gemini = GeminiClient(
-            api_key=settings.google_api_key,
-            model_name=settings.google_model,
-            timeout_seconds=max(90.0, float(settings.exa_search_timeout_seconds)),
-        )
+        llm = get_llm_client(settings)
 
         filtered, meta = await filter_exa_raw_results_by_relevance(
             raw_results=raw,
             user_query=state.query_text,
             relevance_criteria=rel,
-            gemini_client=gemini,
+            gemini_client=llm,
         )
 
         logger.info(

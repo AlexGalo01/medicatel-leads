@@ -117,12 +117,18 @@ class OpportunitiesRepository:
         self,
         *,
         stage: str | None = None,
+        job_id: UUID | None = None,
+        directory_id: UUID | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[Opportunity]:
         q = select(Opportunity).order_by(Opportunity.updated_at.desc())
         if stage and stage in OPPORTUNITY_STAGE_KEYS:
             q = q.where(Opportunity.stage == stage)
+        if job_id is not None:
+            q = q.where(Opportunity.job_id == job_id)
+        if directory_id is not None:
+            q = q.where(Opportunity.directory_id == directory_id)
         q = q.offset(offset).limit(limit)
         r = await self.session.execute(q)
         return list(r.scalars().all())
@@ -176,6 +182,43 @@ class OpportunitiesRepository:
         await self.session.commit()
         await self.session.refresh(opp)
         return opp, True
+
+    async def create_manual(
+        self,
+        *,
+        title: str,
+        specialty: str = "",
+        city: str = "",
+        source_url: str = "",
+        snippet: str | None = None,
+        owner_user_id: UUID | None = None,
+    ) -> Opportunity:
+        now = datetime.now(timezone.utc)
+        initial_note = {
+            "at": now.isoformat(),
+            "stage": DEFAULT_OPPORTUNITY_STAGE,
+            "author": "sistema",
+            "text": "Oportunidad creada manualmente.",
+        }
+        opp = Opportunity(
+            job_id=None,
+            exa_preview_index=None,
+            title=title.strip()[:500] or "Sin título",
+            source_url=source_url.strip()[:2000],
+            snippet=snippet.strip()[:4000] if snippet else None,
+            specialty=specialty.strip()[:160],
+            city=city.strip()[:120],
+            stage=DEFAULT_OPPORTUNITY_STAGE,
+            contacts=[],
+            activity_timeline=[initial_note],
+            owner_user_id=owner_user_id,
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(opp)
+        await self.session.commit()
+        await self.session.refresh(opp)
+        return opp
 
     async def append_bitacora(
         self,

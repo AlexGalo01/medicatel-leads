@@ -90,6 +90,15 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
     normalized_location = ", ".join(p for p in (city_hint, country_hint) if p) or "No definida"
     planner_notes = "Plan de directorio: query principal y variaciones para Exa."
 
+    # Leer company_anchor si está presente (patrón de búsqueda de empleados)
+    company_anchor = None
+    company_anchor_raw = plan_dict.get("company_anchor")
+    if isinstance(company_anchor_raw, dict):
+        name = str(company_anchor_raw.get("company_name", "")).strip()
+        query = str(company_anchor_raw.get("anchor_query", "")).strip()
+        if name and query:
+            company_anchor = {"company_name": name, "anchor_query": query}
+
     country_iso2 = resolve_country_iso2_from_text(country_hint, city_hint, normalized_query)
     relevance_criteria = RelevanceCriteria(
         country_iso2=country_iso2,
@@ -106,6 +115,7 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
         relevance_criteria=relevance_criteria,
         contact_channels=channels,
         planner_notes=planner_notes,
+        company_anchor=company_anchor,
     )
 
 

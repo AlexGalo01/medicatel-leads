@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 
 import { useAuth } from "../auth/AuthContext";
@@ -62,7 +62,7 @@ export function LoginPage(): JSX.Element {
     <div className="auth-login-page">
       <Card className="panel auth-login-card">
         <h1 className="auth-login-title">Iniciar sesión</h1>
-        <p className="muted-text auth-login-sub">Medicatel CRM — Lead Finder</p>
+        <p className="muted-text auth-login-sub">AI CRM — Lead Finder</p>
         <form className="auth-login-form" onSubmit={onSubmit}>
           <label className="opportunity-field">
             <span>Correo</span>
@@ -90,6 +90,12 @@ export function LoginPage(): JSX.Element {
             Entrar
           </Button>
         </form>
+        <p className="muted-text" style={{ marginTop: "1rem", textAlign: "center", fontSize: "14px" }}>
+          ¿No tienes cuenta?{" "}
+          <Link to="/registro" className="link-button" style={{ display: "inline" }}>
+            Registrarse
+          </Link>
+        </p>
       </Card>
     </div>
   );

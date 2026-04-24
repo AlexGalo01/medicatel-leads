@@ -28,6 +28,9 @@ class SearchJobCreateRequest(BaseModel):
     search_focus: SearchFocusLiteral | None = None
     exa_category: ExaCategoryLiteral | None = None
     exa_criteria: str | None = Field(default=None, max_length=1200)
+    directory_id: UUID = Field(
+        description="Directorio destino donde irán las oportunidades generadas por esta búsqueda."
+    )
 
 
 class SearchJobCreateResponse(BaseModel):
@@ -35,6 +38,16 @@ class SearchJobCreateResponse(BaseModel):
     status: str
     created_at: datetime
     clarifying_question: str | None = None
+    requires_clarification: bool = False
+
+
+class ClarifySearchJobRequest(BaseModel):
+    reply: str = Field(min_length=1, max_length=500)
+
+
+class ClarifySearchJobResponse(BaseModel):
+    job_id: str
+    status: str
 
 
 class SearchJobListItemResponse(BaseModel):
@@ -43,6 +56,9 @@ class SearchJobListItemResponse(BaseModel):
     status: str
     created_at: datetime
     exa_category: str | None = None
+    directory_id: str | None = None
+    directory_name: str | None = None
+    error_message: str | None = None
 
 
 class SearchJobsListResponse(BaseModel):
@@ -67,6 +83,9 @@ class SearchJobStatusResponse(BaseModel):
     exa_category: str | None = None
     exa_criteria: str | None = None
     query_text: str | None = None
+    error_message: str | None = None
+    awaiting_clarification: bool = False
+    clarifying_question: str | None = None
 
 
 class ProfileInterpretRequest(BaseModel):
@@ -112,11 +131,19 @@ class UserPublic(BaseModel):
     email: str
     display_name: str
     role: str
+    permissions: list[str] = Field(default_factory=list)
+    is_active: bool = True
 
 
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=1, max_length=200)
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=200)
+    display_name: str = Field(min_length=1, max_length=160)
 
 
 class LoginResponse(BaseModel):
@@ -130,6 +157,15 @@ class AdminCreateUserRequest(BaseModel):
     password: str = Field(min_length=8, max_length=200)
     display_name: str = Field(min_length=1, max_length=160)
     role: Literal["admin", "user"] = "user"
+    permissions: list[str] = Field(default_factory=list)
+
+
+class AdminUpdateUserRequest(BaseModel):
+    email: str | None = Field(default=None, min_length=3, max_length=255)
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    role: Literal["admin", "user"] | None = None
+    is_active: bool | None = None
+    permissions: list[str] | None = None
 
 
 class AdminUsersListResponse(BaseModel):
@@ -234,8 +270,10 @@ class OpportunityContactPayload(BaseModel):
 
 class OpportunityResponse(BaseModel):
     opportunity_id: str
-    job_id: str
-    exa_preview_index: int
+    job_id: str | None = None
+    exa_preview_index: int | None = None
+    directory_id: str | None = None
+    current_step_id: str | None = None
     title: str
     source_url: str
     snippet: str | None = None
@@ -243,6 +281,9 @@ class OpportunityResponse(BaseModel):
     city: str
     stage: str
     response_outcome: str | None = None
+    terminated_at: datetime | None = None
+    terminated_outcome: str | None = None
+    terminated_note: str | None = None
     contacts: list[dict[str, Any]]
     activity_timeline: list[dict[str, Any]]
     profile_overrides: dict[str, Any] = Field(default_factory=dict)
@@ -254,12 +295,16 @@ class OpportunityResponse(BaseModel):
 
 class OpportunityListItemResponse(BaseModel):
     opportunity_id: str
-    job_id: str
-    exa_preview_index: int
+    job_id: str | None = None
+    exa_preview_index: int | None = None
+    directory_id: str | None = None
+    current_step_id: str | None = None
     title: str
     city: str
     stage: str
     response_outcome: str | None = None
+    terminated_at: datetime | None = None
+    terminated_outcome: str | None = None
     updated_at: datetime
     owner: OpportunityOwnerSnippet | None = None
 
@@ -271,6 +316,14 @@ class OpportunityListResponse(BaseModel):
 class OpportunityCreateFromPreviewRequest(BaseModel):
     job_id: UUID
     exa_preview_index: int = Field(ge=1)
+
+
+class OpportunityCreateManualRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    specialty: str = Field(default="", max_length=160)
+    city: str = Field(default="", max_length=120)
+    source_url: str = Field(default="", max_length=2000)
+    snippet: str | None = Field(default=None, max_length=4000)
 
 
 class OpportunityProfileCvPatch(BaseModel):

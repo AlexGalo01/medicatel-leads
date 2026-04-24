@@ -7,9 +7,9 @@ from typing import Any
 
 from langsmith import traceable
 
-from mle.clients.gemini_client import GeminiClient
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.core.config import get_settings
+from mle.clients.llm_factory import get_llm_client
 from mle.state.graph_state import GraphLeadItem, LeadSearchGraphState
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def _build_raw_lead(result: dict[str, Any]) -> GraphLeadItem:
     )
 
 
-async def _score_with_gemini(gemini_client: GeminiClient, lead: GraphLeadItem) -> tuple[float, str]:
+async def _score_with_gemini(llm_client, lead: GraphLeadItem) -> tuple[float, str]:
     lead_payload = {
         "full_name": lead.full_name,
         "specialty": lead.specialty,
@@ -60,7 +60,7 @@ async def _score_with_gemini(gemini_client: GeminiClient, lead: GraphLeadItem) -
         "linkedin_url": lead.linkedin_url,
         "context": lead.score_reasoning,
     }
-    score_response = await gemini_client.score_lead(lead_payload)
+    score_response = await llm_client.score_lead(lead_payload)
     return float(score_response["score"]), str(score_response["reasoning"])
 
 
@@ -92,11 +92,8 @@ async def scoring_cleaning_node(state: LeadSearchGraphState) -> dict[str, object
             raise ValueError("No hay resultados de Exa para procesar.")
 
         settings = get_settings()
-        gemini_client = GeminiClient(
-            api_key=settings.google_api_key,
-            model_name=settings.google_model,
-        )
-        gemini_rate_limited = False
+        llm_client = get_llm_client(settings)
+        llm_rate_limited = False
 
         cleaned_leads: list[GraphLeadItem] = []
         for raw_result in state.exa_raw_results:
@@ -104,15 +101,15 @@ async def scoring_cleaning_node(state: LeadSearchGraphState) -> dict[str, object
             try:
                 # Async boundary to keep processing friendly for future batching.
                 await asyncio.sleep(0)
-                if gemini_rate_limited:
-                    raise RuntimeError("Gemini rate limited")
-                score, reasoning = await _score_with_gemini(gemini_client, lead)
-            except Exception as gemini_error:  # noqa: BLE001
-                status_code = getattr(getattr(gemini_error, "response", None), "status_code", None)
+                if llm_rate_limited:
+                    raise RuntimeError("LLM rate limited")
+                score, reasoning = await _score_with_gemini(llm_client, lead)
+            except Exception as llm_error:  # noqa: BLE001
+                status_code = getattr(getattr(llm_error, "response", None), "status_code", None)
                 if status_code == 429:
-                    gemini_rate_limited = True
-                    logger.warning("Gemini rate limit detectado; usando fallback heuristico para el resto del lote.")
-                logger.warning("Gemini no disponible para lead '%s': %s", lead.full_name, gemini_error)
+                    llm_rate_limited = True
+                    logger.warning("LLM rate limit detectado; usando fallback heuristico para el resto del lote.")
+                logger.warning("LLM no disponible para lead '%s': %s", lead.full_name, llm_error)
                 score, reasoning = _score_heuristic(lead)
 
             lead.score = score

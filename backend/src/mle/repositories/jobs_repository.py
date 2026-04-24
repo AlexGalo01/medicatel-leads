@@ -22,6 +22,7 @@ class JobsRepository:
         requested_contact_channels: list[str],
         notes: str | None = None,
         metadata_json: dict[str, Any] | None = None,
+        directory_id: UUID | None = None,
     ) -> SearchJob:
         normalized_query = expanded_query_text.strip()
         meta = dict(metadata_json or {})
@@ -34,6 +35,7 @@ class JobsRepository:
             progress=0,
             requested_contact_channels=requested_contact_channels,
             notes=notes,
+            directory_id=directory_id,
             metadata_json=meta,
         )
         self.session.add(job)
@@ -67,12 +69,35 @@ class JobsRepository:
         await self.session.refresh(job)
         return job
 
+    async def update_pending_job_after_clarify(
+        self,
+        job_id: UUID,
+        *,
+        expanded_query_text: str,
+        metadata_json: dict[str, Any],
+        notes: str | None = None,
+    ) -> SearchJob | None:
+        """Actualiza texto expandido y metadata tras aclaración (job sigue en pending)."""
+        job = await self.get_by_id(job_id)
+        if job is None:
+            return None
+        normalized = expanded_query_text.strip()
+        job.specialty = normalized[:120] or job.specialty
+        job.metadata_json = dict(metadata_json)
+        if notes is not None:
+            job.notes = notes
+        job.updated_at = datetime.now(timezone.utc)
+        await self.session.commit()
+        await self.session.refresh(job)
+        return job
+
     async def list_jobs(
         self,
         *,
         limit: int | None = 15,
         offset: int = 0,
         query_text: str | None = None,
+        directory_id: UUID | None = None,
     ) -> tuple[list[SearchJob], int]:
         base_query = select(SearchJob)
         normalized = (query_text or "").strip()
@@ -85,6 +110,8 @@ class JobsRepository:
                     SearchJob.metadata_json["query_text"].as_string().ilike(pattern),
                 )
             )
+        if directory_id is not None:
+            base_query = base_query.where(SearchJob.directory_id == directory_id)
         total_query = select(func.count()).select_from(base_query.subquery())
         total_result = await self.session.execute(total_query)
         total = int(total_result.scalar_one() or 0)

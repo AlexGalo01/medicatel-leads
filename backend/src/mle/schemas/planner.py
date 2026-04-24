@@ -31,4 +31,5 @@ class PlannerOutput(BaseModel):
     relevance_criteria: RelevanceCriteria = Field(default_factory=RelevanceCriteria)
     contact_channels: list[str] = Field(default_factory=list)
     planner_notes: str = Field(default="")
+    company_anchor: dict | None = Field(default=None, description="Patrón detectado: búsqueda de empleados de empresa")
 

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Building2,
   Check,
@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import {
+  deleteOpportunity,
   getSearchJobStatus,
   getOpportunity,
   patchOpportunity,
@@ -26,6 +27,7 @@ import {
   putOpportunityContacts,
   summarizeProfile,
 } from "../../../api";
+import { usePermissions } from "../../../auth/usePermissions";
 import { mergeProfileAboutText } from "../../../lib/utils";
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
@@ -104,7 +106,9 @@ const OUTCOMES: OpportunityResponseOutcome[] = ["pending", "positive", "negative
 
 export function OpportunityDetailPage(): JSX.Element {
   const { opportunityId = "" } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { canManageOpportunities } = usePermissions();
   const [stageDraft, setStageDraft] = useState<OpportunityStageKey | "">("");
   const [outcomeDraft, setOutcomeDraft] = useState<OpportunityResponseOutcome>("pending");
   const [stageNote, setStageNote] = useState("");
@@ -114,8 +118,10 @@ export function OpportunityDetailPage(): JSX.Element {
   const [aboutDraft, setAboutDraft] = useState("");
   const [locationDraft, setLocationDraft] = useState("");
   const [cvDirty, setCvDirty] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const bitacoraScrollRef = useRef<HTMLDivElement>(null);
   const bitacoraTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const aboutTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const detailQuery = useQuery({
     queryKey: ["opportunity", opportunityId],
@@ -126,19 +132,28 @@ export function OpportunityDetailPage(): JSX.Element {
   const data = detailQuery.data;
   const sourceJobQuery = useQuery({
     queryKey: ["job-status", data?.job_id],
-    queryFn: () => getSearchJobStatus(data!.job_id),
+    queryFn: () => {
+      const jid = data?.job_id;
+      if (!jid) {
+        return Promise.reject(new Error("job_id requerido"));
+      }
+      return getSearchJobStatus(jid);
+    },
     enabled: Boolean(data?.job_id),
     staleTime: 5 * 60 * 1000,
   });
   const profileSummaryQuery = useQuery({
     queryKey: ["profile-summary", opportunityId, data?.title, data?.specialty, data?.city, data?.snippet],
-    queryFn: () =>
-      summarizeProfile({
-        title: data?.title || "",
-        specialty: data?.specialty || null,
-        city: data?.city || null,
-        snippet: data?.snippet || null,
-      }),
+    queryFn: ({ signal }) =>
+      summarizeProfile(
+        {
+          title: data?.title || "",
+          specialty: data?.specialty || null,
+          city: data?.city || null,
+          snippet: data?.snippet || null,
+        },
+        { signal },
+      ),
     enabled: Boolean(data),
     staleTime: 5 * 60 * 1000,
   });
@@ -150,9 +165,36 @@ export function OpportunityDetailPage(): JSX.Element {
     if (!contactsDirty) setContactsDraft(data.contacts?.length ? data.contacts : []);
   }, [data, contactsDirty]);
 
+  /** Overrides guardados: aplicar al cargar oportunidad sin esperar a la IA. */
+  useEffect(() => {
+    if (!data) return;
+    if (cvDirty) return;
+    const overrides = data.profile_overrides ?? {};
+    if (objectHasOwn(overrides, "about")) {
+      setAboutDraft(mergeAbout(overrides, ""));
+    }
+    if (objectHasOwn(overrides, "location")) {
+      setLocationDraft(mergeLocation(overrides, ""));
+    }
+  }, [data, cvDirty]);
+
+  /** Resumen IA: una sola actualización al terminar (evita parpadeo de texto al llegar el stream de datos). */
   useEffect(() => {
     if (!data || cvDirty) return;
+    if (profileSummaryQuery.isPending) return;
     const overrides = data.profile_overrides ?? {};
+    if (profileSummaryQuery.isError) {
+      if (!objectHasOwn(overrides, "about")) {
+        setAboutDraft(
+          mergeAbout(overrides, mergeProfileAboutText("", "", data.specialty || "Sin resumen disponible.")),
+        );
+      }
+      if (!objectHasOwn(overrides, "location")) {
+        setLocationDraft(mergeLocation(overrides, data.city?.trim() || ""));
+      }
+      return;
+    }
+    if (!profileSummaryQuery.isSuccess) return;
     const rawAbout = mergeProfileAboutText(
       profileSummaryQuery.data?.about?.trim() ?? "",
       profileSummaryQuery.data?.professional_summary?.trim() ?? "",
@@ -161,7 +203,14 @@ export function OpportunityDetailPage(): JSX.Element {
     const aiLocationRaw = profileSummaryQuery.data?.location?.trim() || data.city?.trim() || "";
     setAboutDraft(mergeAbout(overrides, rawAbout));
     setLocationDraft(mergeLocation(overrides, aiLocationRaw));
-  }, [cvDirty, data, profileSummaryQuery.data]);
+  }, [cvDirty, data, profileSummaryQuery.data, profileSummaryQuery.isPending, profileSummaryQuery.isError, profileSummaryQuery.isSuccess]);
+
+  useLayoutEffect(() => {
+    const el = aboutTextareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, 88)}px`;
+  }, [aboutDraft]);
 
   const patchMut = useMutation({
     mutationFn: (body: { stage?: string; response_outcome?: string | null; note?: string | null }) =>
@@ -208,6 +257,14 @@ export function OpportunityDetailPage(): JSX.Element {
     if (n <= 1) return 0;
     return (stageIndex / (n - 1)) * 100;
   }, [stageIndex]);
+
+  const deleteMut = useMutation({
+    mutationFn: () => deleteOpportunity(opportunityId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["opportunities"] });
+      navigate("/opportunities", { replace: true });
+    },
+  });
 
   if (!opportunityId) return <section className="panel error-text">Identificador no válido.</section>;
   if (detailQuery.isLoading) {
@@ -276,6 +333,13 @@ export function OpportunityDetailPage(): JSX.Element {
   const profileCompany = profileSummaryQuery.data?.company?.trim() || "No especificada";
   const storedProfileOverrides = data.profile_overrides ?? {};
   const hasStoredProfileOverrides = Object.keys(storedProfileOverrides).length > 0;
+  const profileIaPending = profileSummaryQuery.isPending && !cvDirty;
+  const aboutFieldWaitingIa = profileIaPending && !objectHasOwn(storedProfileOverrides, "about");
+  const locationFieldWaitingIa = profileIaPending && !objectHasOwn(storedProfileOverrides, "location");
+  const experienceFromOverride =
+    objectHasOwn(storedProfileOverrides, "experiences") &&
+    Array.isArray(storedProfileOverrides.experiences) &&
+    (storedProfileOverrides.experiences?.length ?? 0) > 0;
 
   const profileExperiences = (() => {
     const ov = data.profile_overrides;
@@ -368,13 +432,9 @@ export function OpportunityDetailPage(): JSX.Element {
         {data.owner ? (
           <p className="muted-text opportunity-owner-line" style={{ marginTop: "0.25rem" }}>
             A cargo: <strong>{data.owner.display_name}</strong>
-            {data.owner.email ? (
-              <span className="muted-text"> — {data.owner.email}</span>
-            ) : null}
           </p>
         ) : null}
         <div className="opportunity-summary-badges" aria-label="Resumen rápido">
-          <span className="opportunity-summary-badge">{opportunityStageLabel[data.stage]}</span>
           {data.city ? <span className="opportunity-summary-badge opportunity-summary-badge--muted">{data.city}</span> : null}
           {data.specialty ? (
             <span className="opportunity-summary-badge opportunity-summary-badge--muted">{data.specialty}</span>
@@ -406,27 +466,44 @@ export function OpportunityDetailPage(): JSX.Element {
           </Button>
         </div>
         {profileCvMut.isError ? <p className="error-text opportunity-summary-cv-error">No se pudo guardar el perfil.</p> : null}
+        {profileIaPending ? (
+          <p className="muted-text opportunity-summary-ia-hint" role="status" aria-live="polite">
+            <Loader2 className="spin" size={16} strokeWidth={2} aria-hidden />
+            {aboutFieldWaitingIa || locationFieldWaitingIa
+              ? "Generando resumen del perfil con la IA. Los campos se rellenan al terminar."
+              : "Completando datos del perfil…"}
+          </p>
+        ) : null}
         <div className="opportunity-summary-cv">
           <article className="opportunity-summary-cv-block">
             <h3 className="opportunity-card-subtitle">About</h3>
             <label className="opportunity-field opportunity-summary-cv-field">
               <span className="muted-text">Texto libre; se guarda en la oportunidad.</span>
               <textarea
+                ref={aboutTextareaRef}
                 className="opportunity-summary-cv-textarea"
                 value={aboutDraft}
                 onChange={(e) => {
                   setCvDirty(true);
                   setAboutDraft(e.target.value);
                 }}
-                rows={5}
+                rows={1}
                 maxLength={8000}
                 spellCheck
+                readOnly={aboutFieldWaitingIa}
+                aria-busy={aboutFieldWaitingIa}
+                placeholder={aboutFieldWaitingIa ? "Generando resumen con la IA…" : undefined}
               />
             </label>
           </article>
-          <article className="opportunity-summary-cv-block">
+          <article className="opportunity-summary-cv-block opportunity-summary-cv-block--experience">
             <h3 className="opportunity-card-subtitle">Experiencia</h3>
-            {profileExperiences.length > 0 ? (
+            {profileIaPending && !experienceFromOverride ? (
+              <p className="muted-text opportunity-summary-ia-experience-waiting">
+                <Loader2 className="spin" size={16} strokeWidth={2} aria-hidden />
+                Cargando experiencia estructurada…
+              </p>
+            ) : profileExperiences.length > 0 ? (
               <ul className="opportunity-summary-experience-list">
                 {profileExperiences.map((experience, index) => (
                   <li key={`${experience.role}-${index}`} className="opportunity-summary-experience-item">
@@ -447,7 +524,9 @@ export function OpportunityDetailPage(): JSX.Element {
               <span className="muted-text">Ciudad, país o nota breve.</span>
               <Input
                 value={locationDraft}
-                placeholder={LOCATION_PLACEHOLDER}
+                placeholder={locationFieldWaitingIa ? "Generando o usando ciudad de la ficha…" : LOCATION_PLACEHOLDER}
+                readOnly={locationFieldWaitingIa}
+                aria-busy={locationFieldWaitingIa}
                 onChange={(e) => {
                   setCvDirty(true);
                   setLocationDraft(e.target.value);
@@ -697,6 +776,36 @@ export function OpportunityDetailPage(): JSX.Element {
             </Button>
           </div>
         </Card>
+
+        {canManageOpportunities && (
+          <Card className="panel opportunity-card" style={{ marginTop: "1.5rem" }}>
+            <h2 className="opportunity-card-title opportunity-card-title--flush danger-text">Zona peligrosa</h2>
+            {confirmDelete ? (
+              <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginTop: "0.75rem" }}>
+                <Button
+                  className="cta-button danger-button"
+                  disabled={deleteMut.isPending}
+                  onClick={() => deleteMut.mutate()}
+                >
+                  {deleteMut.isPending ? <Loader2 className="spin" size={14} aria-hidden /> : <Trash2 size={14} aria-hidden />}
+                  Confirmar eliminación
+                </Button>
+                <Button className="link-button" onClick={() => setConfirmDelete(false)}>
+                  Cancelar
+                </Button>
+                {deleteMut.isError && <span className="error-text">{(deleteMut.error as Error).message}</span>}
+              </div>
+            ) : (
+              <Button
+                className="link-button danger-text"
+                style={{ marginTop: "0.75rem" }}
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 size={14} aria-hidden /> Eliminar esta oportunidad
+              </Button>
+            )}
+          </Card>
+        )}
 
       </div>
     </div>

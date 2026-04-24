@@ -143,8 +143,12 @@ class LeadsRepository:
             "email",
             "whatsapp",
             "linkedin_url",
+            "phone",
+            "address",
+            "schedule_text",
             "primary_source_url",
             "source_citations",
+            "enriched_sources",
         }
         lead = await self.session.get(Lead, lead_id)
         if lead is None:
@@ -180,9 +184,13 @@ class LeadsRepository:
                 email=lead.email,
                 whatsapp=lead.whatsapp,
                 linkedin_url=lead.linkedin_url,
+                phone=lead.phone,
+                address=lead.address,
+                schedule_text=lead.schedule_text,
             ),
             primary_source_url=lead.primary_source_url,
             source_citations=lead.source_citations,
+            enriched_sources=lead.enriched_sources or {},
             langsmith_metadata=lead.langsmith_metadata,
             validation_status=lead.validation_status,
             created_at=lead.created_at,

@@ -8,6 +8,7 @@ from typing import Any
 from langsmith import traceable
 
 from mle.clients.exa_client import ExaClient, exa_contents_full_config, finalize_exa_search_payload
+from mle.clients.opencli_client import OpenCliClient
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.core.config import effective_exa_search_timeout_seconds, get_settings
 from mle.state.graph_state import LeadSearchGraphState
@@ -121,6 +122,44 @@ def _extract_results(search_response: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+async def _run_slot_with_prefetch(
+    slot_idx: int,
+    payload: dict[str, Any],
+    num_for_call: int,
+    opencli: OpenCliClient | None,
+    entity_type: str,
+    geo_hint: str,
+    exa_client: ExaClient,
+    n_queries: int,
+    job_id: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Ejecuta un slot Exa y dispara Google Maps para empresas en cuanto llegan los resultados."""
+    search_response = await exa_client.search(payload)
+    batch_results = _extract_results(search_response)
+
+    # Para búsquedas de empresas: dispara Google Maps inmediatamente en paralelo
+    if entity_type == "company" and opencli is not None and opencli.enabled and batch_results:
+        items_with_query = [
+            (item, f"{item.get('title', '')} {geo_hint}".strip())
+            for item in batch_results
+            if str(item.get("title") or "").strip()
+        ]
+        if items_with_query:
+            maps_results = await asyncio.gather(
+                *[opencli.google_maps(q) for _, q in items_with_query],
+                return_exceptions=True,
+            )
+            for (item, _), mr in zip(items_with_query, maps_results, strict=False):
+                if isinstance(mr, dict) and mr:
+                    item["_prefetched_maps"] = mr
+
+    logger.info(
+        "Exa slot job_id=%s slot=%s/%s pedidos=%s recibidos=%s",
+        job_id, slot_idx + 1, n_queries, num_for_call, len(batch_results),
+    )
+    return batch_results, search_response
+
+
 @traceable(
     name="exa_webset_node",
     run_type="chain",
@@ -152,6 +191,19 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             timeout_seconds=effective_exa_search_timeout_seconds(settings),
         )
 
+        # Determinar entity_type y geo_hint para streaming Google Maps
+        exa_category = str(search_config.get("exa_category") or "").strip().lower()
+        entity_type = "company" if exa_category == "company" else "person"
+        rel = planner_output.get("relevance_criteria") if isinstance(planner_output.get("relevance_criteria"), dict) else {}
+        city = str(rel.get("city") or "").strip()
+        country = str(rel.get("country_text") or rel.get("country_iso2") or "").strip()
+        geo_hint = (f"{city} {country}" if city and country else city or country).strip()
+
+        # Crear OpenCliClient solo para búsquedas de empresas
+        opencli: OpenCliClient | None = None
+        if entity_type == "company":
+            opencli = OpenCliClient(settings)
+
         batches: list[list[dict[str, Any]]] = []
         request_ids: list[str] = []
         last_search_type = str(search_config.get("type", "auto"))
@@ -159,46 +211,46 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
 
         await asyncio.sleep(0)
 
-        # Construir payloads y tareas para ejecución paralela
-        tasks: list[tuple[int, int, str, dict[str, Any]]] = []
+        # Construir payloads para ejecución paralela
+        valid_payloads: list[tuple[int, int, dict[str, Any]]] = []
         for slot_idx, query_text in enumerate(queries):
             num_for_call = per_slot[slot_idx] if slot_idx < len(per_slot) else per_slot[-1]
             payload = _build_search_payload_for_query(planner_output, query_text, num_for_call)
             payload = _ensure_non_empty_query(payload, fallback_query=state.query_text)
             if not str(payload.get("query", "")).strip():
                 continue
-            tasks.append((slot_idx, num_for_call, str(payload.get("type", "auto")), payload))
+            valid_payloads.append((slot_idx, num_for_call, payload))
 
-        # Ejecutar todas las búsquedas en paralelo
-        search_coroutines = [exa_client.search(payload) for _, _, _, payload in tasks]
-        responses = await asyncio.gather(*search_coroutines, return_exceptions=True)
+        # Ejecutar todos los slots en paralelo (Exa + Google Maps prefetch para empresas)
+        slot_coroutines = [
+            _run_slot_with_prefetch(
+                slot_idx, payload, num_for_call, opencli, entity_type, geo_hint,
+                exa_client, n_queries, state.job_id,
+            )
+            for slot_idx, num_for_call, payload in valid_payloads
+        ]
+        slot_outcomes = await asyncio.gather(*slot_coroutines, return_exceptions=True)
 
         # Procesar resultados
-        for response_idx, (slot_idx, num_for_call, search_type, _) in enumerate(tasks):
-            search_response = responses[response_idx]
-            if isinstance(search_response, Exception):
+        for outcome_idx, (slot_idx, num_for_call, payload) in enumerate(valid_payloads):
+            outcome = slot_outcomes[outcome_idx]
+            search_type = str(payload.get("type", "auto"))
+
+            if isinstance(outcome, Exception):
                 logger.warning(
                     "Exa batch job_id=%s slot=%s/%s falló: %s",
                     state.job_id,
                     slot_idx + 1,
                     n_queries,
-                    search_response,
+                    outcome,
                 )
                 batches.append([])
                 batch_stats.append({"pedidos": num_for_call, "recibidos": 0})
                 continue
 
-            batch_results = _extract_results(search_response)
+            batch_results, search_response = outcome
             batches.append(batch_results)
             batch_stats.append({"pedidos": num_for_call, "recibidos": len(batch_results)})
-            logger.info(
-                "Exa batch job_id=%s slot=%s/%s numResults_pedidos=%s resultados_recibidos=%s",
-                state.job_id,
-                slot_idx + 1,
-                n_queries,
-                num_for_call,
-                len(batch_results),
-            )
             request_ids.append(str(search_response.get("requestId", "")))
             last_search_type = str(search_response.get("searchType", search_type))
 

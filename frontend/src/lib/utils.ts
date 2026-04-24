@@ -3,6 +3,26 @@ export function cn(...classes: Array<string | false | null | undefined>): string
 }
 
 /**
+ * Una señal que aborta si lo hace cualquiera de las dos (p. ej. cancelación de React Query + timeout).
+ */
+export function mergeAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function") {
+    return AbortSignal.any([a, b]);
+  }
+  const c = new AbortController();
+  if (a.aborted || b.aborted) {
+    c.abort();
+    return c.signal;
+  }
+  const onAbort = (): void => {
+    c.abort();
+  };
+  a.addEventListener("abort", onAbort);
+  b.addEventListener("abort", onAbort);
+  return c.signal;
+}
+
+/**
  * Combina about y resumen profesional de la API de perfil: evita duplicar si uno contiene al otro;
  * si aportan texto distinto, concatena (about primero).
  */

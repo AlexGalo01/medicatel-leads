@@ -16,6 +16,7 @@ dependencies = [
   "langsmith>=0.3.0",
   "PyJWT>=2.8.0",
   "bcrypt>=4.0.0",
+  "openai>=1.30.0",
 ]
 
 [build-system]

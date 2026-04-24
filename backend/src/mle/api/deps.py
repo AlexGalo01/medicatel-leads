@@ -32,3 +32,21 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Se requiere rol administrador.")
     return user
+
+
+def require_permission(*perms: str):
+    """Dependencia que exige que el usuario tenga TODOS los permisos listados. Admin los tiene implícitamente."""
+
+    def checker(user: User = Depends(get_current_user)) -> User:
+        if user.role == "admin":
+            return user
+        user_perms = set(user.permissions) if isinstance(user.permissions, list) else set()
+        missing = set(perms) - user_perms
+        if missing:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Permiso(s) requerido(s): {', '.join(sorted(missing))}",
+            )
+        return user
+
+    return checker

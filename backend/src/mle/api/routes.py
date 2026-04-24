@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from pathlib import Path
@@ -11,10 +12,12 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mle.api.deps import get_current_user, require_admin
+from mle.api.deps import get_current_user, require_admin, require_permission
 from mle.api.schemas import (
     AdminCreateUserRequest,
+    AdminUpdateUserRequest,
     AdminUsersListResponse,
+    OpportunityCreateManualRequest,
     DirectoryEntriesListResponse,
     DirectoryEntryItemResponse,
     ExaMoreResultsRequest,
@@ -27,6 +30,7 @@ from mle.api.schemas import (
     LeadsListResponse,
     LoginRequest,
     LoginResponse,
+    RegisterRequest,
     OpportunityBitacoraRequest,
     OpportunityContactsReplaceRequest,
     OpportunityCreateFromPreviewRequest,
@@ -41,6 +45,8 @@ from mle.api.schemas import (
     ProfileSummaryRequest,
     ProfileSummaryExperienceItem,
     ProfileSummaryResponse,
+    ClarifySearchJobRequest,
+    ClarifySearchJobResponse,
     SearchJobCreateRequest,
     SearchJobCreateResponse,
     SearchJobListItemResponse,
@@ -50,17 +56,31 @@ from mle.api.schemas import (
 )
 from mle.db.base import async_session_factory
 from mle.db.models import Opportunity, User
+from mle.repositories.directories_repository import DirectoriesRepository
 from mle.repositories.directory_entries_repository import DirectoryEntriesRepository
 from mle.repositories.jobs_repository import JobsRepository
 from mle.repositories.leads_repository import LeadsRepository
 from mle.repositories.opportunities_repository import OpportunitiesRepository
 from mle.repositories.users_repository import UsersRepository
+from mle.schemas.directories import (
+    DirectoryCreateRequest,
+    DirectoryListResponse,
+    DirectoryRead,
+    DirectoryStepCreate,
+    DirectoryStepRead,
+    DirectoryStepReorder,
+    DirectoryStepUpdate,
+    DirectoryUpdateRequest,
+    OpportunityMoveStepRequest,
+    OpportunityReopenRequest,
+    OpportunityTerminateRequest,
+    StepDeleteRequest,
+)
 from mle.services.jwt_service import create_access_token
 from mle.services.passwords import hash_password, verify_password
 from mle.services.export_service import export_leads_to_csv
 from mle.services.pipeline_service import run_job_pipeline
 from mle.services.query_expansion_service import expand_user_search_query
-from mle.services.lead_deep_enrich_service import deep_enrich_lead
 from mle.services.exa_more_results_service import append_exa_results_for_job
 from mle.services.profile_interpret_service import interpret_profile_texts
 from mle.services.profile_interpret_service import extract_profile_summary
@@ -68,15 +88,30 @@ from mle.core.config import get_settings
 from mle.schemas.leads import LeadRead
 from mle.schemas.opportunities import OPPORTUNITY_STAGE_KEYS
 
+logger = logging.getLogger(__name__)
+
 public_router = APIRouter(tags=["auth"])
 protected_router = APIRouter(tags=["mle"], dependencies=[Depends(get_current_user)])
-api_router = APIRouter(prefix="/api/v1")
-api_router.include_router(public_router)
-api_router.include_router(protected_router)
 
 
 def _raise_not_found(entity_name: str) -> None:
     raise HTTPException(status_code=404, detail=f"{entity_name} no encontrado")
+
+
+def _pipeline_error_message(metadata: Any, *, max_length: int = 800) -> str | None:
+    """Último error del pipeline (lista `pipeline_errors` en metadata del job)."""
+    if not isinstance(metadata, dict):
+        return None
+    raw = metadata.get("pipeline_errors")
+    if not isinstance(raw, list) or not raw:
+        return None
+    parts = [str(x).strip() for x in raw if str(x).strip()]
+    if not parts:
+        return None
+    text = parts[-1]
+    if len(text) > max_length:
+        return f"{text[: max_length - 1]}…"
+    return text
 
 
 def _owner_to_snippet(u: User | None) -> OpportunityOwnerSnippet | None:
@@ -95,8 +130,10 @@ def _opportunity_to_response(
     po = opp.profile_overrides if isinstance(opp.profile_overrides, dict) else {}
     return OpportunityResponse(
         opportunity_id=str(opp.id),
-        job_id=str(opp.job_id),
+        job_id=str(opp.job_id) if opp.job_id else None,
         exa_preview_index=opp.exa_preview_index,
+        directory_id=str(opp.directory_id) if opp.directory_id else None,
+        current_step_id=str(opp.current_step_id) if opp.current_step_id else None,
         title=opp.title,
         source_url=opp.source_url,
         snippet=opp.snippet,
@@ -104,6 +141,9 @@ def _opportunity_to_response(
         city=opp.city,
         stage=opp.stage,
         response_outcome=opp.response_outcome,
+        terminated_at=opp.terminated_at,
+        terminated_outcome=opp.terminated_outcome,
+        terminated_note=opp.terminated_note,
         contacts=list(opp.contacts or []),
         activity_timeline=list(opp.activity_timeline or []),
         profile_overrides=dict(po),
@@ -176,7 +216,10 @@ def _serialize_source_citations(raw_citations: list[object]) -> list[dict[str, o
 
 
 @protected_router.post("/search-jobs", response_model=SearchJobCreateResponse, status_code=202)
-async def create_search_job(payload: SearchJobCreateRequest) -> SearchJobCreateResponse:
+async def create_search_job(
+    payload: SearchJobCreateRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> SearchJobCreateResponse:
     contact_channels = payload.contact_channels or ["email", "whatsapp", "linkedin"]
     user_query = payload.query.strip()
     combined_parts: list[str] = []
@@ -207,23 +250,132 @@ async def create_search_job(payload: SearchJobCreateRequest) -> SearchJobCreateR
     if payload.exa_category in ("people", "company"):
         job_metadata["exa_category_client"] = payload.exa_category
 
+    cq_raw = plan_dict.get("clarifying_question")
+    if (cq_raw is None or (isinstance(cq_raw, str) and not cq_raw.strip())) and isinstance(
+        expansion_meta, dict
+    ):
+        cq_raw = expansion_meta.get("clarifying_question")
+    cq = cq_raw.strip() if isinstance(cq_raw, str) else None
+    if cq == "":
+        cq = None
+    requires_clarification = bool(cq)
+    job_metadata["awaiting_clarification"] = requires_clarification
+    if isinstance(job_metadata.get("search_plan"), dict) and cq:
+        sp = dict(job_metadata["search_plan"])
+        sp["clarifying_question"] = cq
+        job_metadata["search_plan"] = sp
+
     async with async_session_factory() as session:
+        dirs_repo = DirectoriesRepository(session)
+        directory = await dirs_repo.get(payload.directory_id)
+        if directory is None:
+            raise HTTPException(status_code=404, detail="Directorio destino no encontrado.")
         jobs_repository = JobsRepository(session)
         created_job = await jobs_repository.create(
             expanded_query_text=expanded_query,
             requested_contact_channels=contact_channels,
             notes=payload.notes.strip() if payload.notes and payload.notes.strip() else None,
             metadata_json=job_metadata,
+            directory_id=payload.directory_id,
         )
 
-    asyncio.create_task(run_job_pipeline(created_job.id))
-    cq = plan_dict.get("clarifying_question") if isinstance(plan_dict.get("clarifying_question"), str) else None
+    if not requires_clarification:
+        asyncio.create_task(run_job_pipeline(created_job.id))
+    else:
+        logger.info(
+            "Job creado en espera de aclaracion job_id=%s (pipeline no iniciado hasta POST /clarify)",
+            created_job.id,
+        )
     return SearchJobCreateResponse(
         job_id=str(created_job.id),
         status=created_job.status,
         created_at=created_job.created_at,
         clarifying_question=cq,
+        requires_clarification=requires_clarification,
     )
+
+
+@protected_router.post(
+    "/search-jobs/{job_id}/clarify",
+    response_model=ClarifySearchJobResponse,
+    status_code=200,
+)
+async def clarify_search_job(
+    job_id: UUID,
+    payload: ClarifySearchJobRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> ClarifySearchJobResponse:
+    """Re-expande la consulta con la aclaración del usuario y arranca el pipeline."""
+    reply = payload.reply.strip()
+    async with async_session_factory() as session:
+        jobs_repository = JobsRepository(session)
+        job = await jobs_repository.get_by_id(job_id)
+        if job is None:
+            _raise_not_found("Job")
+        meta = dict(job.metadata_json) if isinstance(job.metadata_json, dict) else {}
+        if job.status != "pending":
+            raise HTTPException(
+                status_code=409,
+                detail="Este trabajo ya no admite aclaraciones.",
+            )
+        if not meta.get("awaiting_clarification"):
+            raise HTTPException(
+                status_code=409,
+                detail="Este trabajo no está esperando una aclaración.",
+            )
+
+        user_query = str(meta.get("user_query") or "").strip()
+        if not user_query:
+            raise HTTPException(status_code=400, detail="Falta la consulta original del trabajo.")
+
+        contact_channels = list(job.requested_contact_channels or ["email", "whatsapp", "linkedin"])
+        search_focus: str | None = None
+        qem = meta.get("query_expansion_metadata")
+        if isinstance(qem, dict) and qem.get("focus"):
+            search_focus = str(qem["focus"])
+
+        combined_parts: list[str] = []
+        if job.notes and job.notes.strip():
+            combined_parts.append(job.notes.strip())
+        exa_crit = meta.get("exa_criteria")
+        if isinstance(exa_crit, str) and exa_crit.strip():
+            combined_parts.append("Criterios específicos para Exa:\n" + exa_crit.strip())
+        combined_parts.append(f"Aclaración del usuario:\n{reply}")
+        combined_notes = "\n\n".join(combined_parts)
+
+        expanded_query, expansion_meta, search_plan = await expand_user_search_query(
+            user_query=user_query,
+            contact_channels=contact_channels,
+            search_focus=search_focus,
+            notes=combined_notes,
+        )
+        plan_dict: dict[str, object] = dict(search_plan) if isinstance(search_plan, dict) else {}
+        exa_cat_client = meta.get("exa_category_client")
+        if exa_cat_client in ("people", "company"):
+            plan_dict["exa_category"] = exa_cat_client
+
+        new_meta: dict[str, object] = {
+            **meta,
+            "query_text": expanded_query,
+            "query_expansion_metadata": expansion_meta,
+            "search_plan": plan_dict,
+            "awaiting_clarification": False,
+            "user_clarification_reply": reply,
+        }
+        if isinstance(exa_crit, str) and exa_crit.strip():
+            new_meta["exa_criteria"] = exa_crit.strip()
+
+        updated = await jobs_repository.update_pending_job_after_clarify(
+            job_id,
+            expanded_query_text=expanded_query,
+            metadata_json=new_meta,
+            notes=job.notes,
+        )
+        if updated is None:
+            raise HTTPException(status_code=500, detail="No se pudo actualizar el trabajo.")
+
+    asyncio.create_task(run_job_pipeline(job_id))
+    return ClarifySearchJobResponse(job_id=str(job_id), status=updated.status)
 
 
 @protected_router.get("/search-jobs", response_model=SearchJobsListResponse)
@@ -231,10 +383,24 @@ async def list_search_jobs(
     limit: int | None = Query(default=15, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
     q: str | None = Query(default=None, max_length=200),
+    directory_id: UUID | None = Query(default=None),
+    _u: User = Depends(require_permission("use_search")),
 ) -> SearchJobsListResponse:
     async with async_session_factory() as session:
         jobs_repository = JobsRepository(session)
-        jobs, total = await jobs_repository.list_jobs(limit=limit, offset=offset, query_text=q)
+        jobs, total = await jobs_repository.list_jobs(
+            limit=limit, offset=offset, query_text=q, directory_id=directory_id
+        )
+        # Mapear directorios referenciados por los jobs para devolver nombre.
+        dir_ids = {job.directory_id for job in jobs if job.directory_id is not None}
+        dir_name_map: dict[UUID, str] = {}
+        if dir_ids:
+            from mle.db.models import Directory
+            result = await session.execute(
+                select(Directory).where(Directory.id.in_(list(dir_ids)))
+            )
+            for d in result.scalars().all():
+                dir_name_map[d.id] = d.name
 
     items: list[SearchJobListItemResponse] = []
     for job in jobs:
@@ -250,6 +416,11 @@ async def list_search_jobs(
             cat_client = meta.get("exa_category_client")
             if cat_client in ("people", "company"):
                 exa_category = str(cat_client)
+        err_hint = (
+            _pipeline_error_message(meta, max_length=160)
+            if job.status == "error"
+            else None
+        )
         items.append(
             SearchJobListItemResponse(
                 job_id=str(job.id),
@@ -257,6 +428,9 @@ async def list_search_jobs(
                 status=job.status,
                 created_at=job.created_at,
                 exa_category=exa_category,
+                directory_id=str(job.directory_id) if job.directory_id else None,
+                directory_name=dir_name_map.get(job.directory_id) if job.directory_id else None,
+                error_message=err_hint,
             )
         )
     page_size = limit if limit is not None else max(total, 1)
@@ -272,7 +446,10 @@ async def list_search_jobs(
 
 
 @protected_router.get("/search-jobs/{job_id}", response_model=SearchJobStatusResponse)
-async def get_search_job_status(job_id: UUID) -> SearchJobStatusResponse:
+async def get_search_job_status(
+    job_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> SearchJobStatusResponse:
     async with async_session_factory() as session:
         jobs_repository = JobsRepository(session)
         job = await jobs_repository.get_by_id(job_id)
@@ -305,6 +482,19 @@ async def get_search_job_status(job_id: UUID) -> SearchJobStatusResponse:
     exa_crit_raw = job.metadata_json.get("exa_criteria")
     exa_crit = str(exa_crit_raw).strip() if exa_crit_raw else None
     query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or job.specialty or "").strip() or None
+    err_detail = (
+        _pipeline_error_message(job.metadata_json, max_length=1200)
+        if job.status == "error"
+        else None
+    )
+
+    meta_job = job.metadata_json if isinstance(job.metadata_json, dict) else {}
+    awaiting_clarification = bool(meta_job.get("awaiting_clarification")) and job.status == "pending"
+    clarifying_display: str | None = None
+    if awaiting_clarification and isinstance(sp, dict):
+        raw_cq_status = sp.get("clarifying_question")
+        if isinstance(raw_cq_status, str) and raw_cq_status.strip():
+            clarifying_display = raw_cq_status.strip()
 
     return SearchJobStatusResponse(
         job_id=str(job.id),
@@ -320,11 +510,17 @@ async def get_search_job_status(job_id: UUID) -> SearchJobStatusResponse:
         exa_category=exa_cat,
         exa_criteria=exa_crit,
         query_text=query_text,
+        error_message=err_detail,
+        awaiting_clarification=awaiting_clarification,
+        clarifying_question=clarifying_display,
     )
 
 
 @protected_router.post("/profiles/interpret", response_model=ProfileInterpretResponse)
-async def interpret_profiles(payload: ProfileInterpretRequest) -> ProfileInterpretResponse:
+async def interpret_profiles(
+    payload: ProfileInterpretRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> ProfileInterpretResponse:
     normalized_texts = [text.strip() for text in payload.texts if text.strip()]
     interpreted_items = await interpret_profile_texts(normalized_texts)
     items = [
@@ -340,7 +536,10 @@ async def interpret_profiles(payload: ProfileInterpretRequest) -> ProfileInterpr
 
 
 @protected_router.post("/profiles/summary", response_model=ProfileSummaryResponse)
-async def summarize_profile(payload: ProfileSummaryRequest) -> ProfileSummaryResponse:
+async def summarize_profile(
+    payload: ProfileSummaryRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> ProfileSummaryResponse:
     summary = await extract_profile_summary(
         title=payload.title,
         specialty=payload.specialty,
@@ -374,7 +573,11 @@ async def summarize_profile(payload: ProfileSummaryRequest) -> ProfileSummaryRes
     "/search-jobs/{job_id}/exa-more",
     response_model=ExaMoreResultsResponse,
 )
-async def load_more_exa_results(job_id: UUID, payload: ExaMoreResultsRequest) -> ExaMoreResultsResponse:
+async def load_more_exa_results(
+    job_id: UUID,
+    payload: ExaMoreResultsRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> ExaMoreResultsResponse:
     result = await append_exa_results_for_job(job_id, payload.num_results)
     if not result.get("ok"):
         err = str(result.get("error") or "Error desconocido")
@@ -395,6 +598,7 @@ async def list_job_directory_entries(
     job_id: UUID,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    _u: User = Depends(require_permission("use_search")),
 ) -> DirectoryEntriesListResponse:
     async with async_session_factory() as session:
         jobs_repository = JobsRepository(session)
@@ -433,6 +637,7 @@ async def list_leads(
     contact_filter: str | None = Query(default=None, max_length=40),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    _u: User = Depends(require_permission("use_search")),
 ) -> LeadsListResponse:
     async with async_session_factory() as session:
         leads_repository = LeadsRepository(session)
@@ -468,7 +673,10 @@ async def list_leads(
 
 
 @protected_router.get("/leads/{lead_id}", response_model=LeadDetailResponse)
-async def get_lead_detail(lead_id: UUID) -> LeadDetailResponse:
+async def get_lead_detail(
+    lead_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> LeadDetailResponse:
     async with async_session_factory() as session:
         leads_repository = LeadsRepository(session)
         lead = await leads_repository.get_by_id(lead_id)
@@ -478,16 +686,12 @@ async def get_lead_detail(lead_id: UUID) -> LeadDetailResponse:
     return _lead_read_to_detail(lead)
 
 
-@protected_router.post("/leads/{lead_id}/deep-enrich", response_model=LeadDetailResponse)
-async def deep_enrich_lead_endpoint(lead_id: UUID) -> LeadDetailResponse:
-    updated = await deep_enrich_lead(lead_id)
-    if updated is None:
-        _raise_not_found("Lead")
-    return _lead_read_to_detail(updated)
-
-
 @protected_router.patch("/leads/{lead_id}/crm", response_model=LeadDetailResponse)
-async def update_lead_crm(lead_id: UUID, payload: LeadCrmUpdateRequest) -> LeadDetailResponse:
+async def update_lead_crm(
+    lead_id: UUID,
+    payload: LeadCrmUpdateRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> LeadDetailResponse:
     activity_entry: dict[str, str] | None = None
     normalized_activity_note = payload.activity_note.strip() if payload.activity_note else ""
     if normalized_activity_note:
@@ -511,7 +715,10 @@ async def update_lead_crm(lead_id: UUID, payload: LeadCrmUpdateRequest) -> LeadD
 
 
 @protected_router.post("/leads/export", response_model=LeadsExportResponse)
-async def export_leads(payload: LeadsExportRequest) -> LeadsExportResponse:
+async def export_leads(
+    payload: LeadsExportRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> LeadsExportResponse:
     if payload.format.lower() != "csv":
         raise HTTPException(status_code=400, detail="Formato no soportado, usa csv")
 
@@ -570,6 +777,7 @@ async def export_leads_file(
     min_score: float | None = Query(default=None),
     q: str | None = Query(default=None, max_length=200),
     contact_filter: str | None = Query(default=None, max_length=40),
+    _u: User = Depends(require_permission("use_search")),
 ) -> FileResponse:
     async with async_session_factory() as session:
         leads_repository = LeadsRepository(session)
@@ -635,7 +843,7 @@ async def get_opportunity_by_preview(
 async def create_opportunity_from_preview(
     payload: OpportunityCreateFromPreviewRequest,
     response: Response,
-    current: User = Depends(get_current_user),
+    current: User = Depends(require_permission("manage_opportunities")),
 ) -> OpportunityResponse:
     async with async_session_factory() as session:
         jobs_repo = JobsRepository(session)
@@ -660,26 +868,57 @@ async def create_opportunity_from_preview(
     return _opportunity_to_response(opp, owner=owner, created=created)
 
 
+@protected_router.post("/opportunities/manual", response_model=OpportunityResponse, status_code=201)
+async def create_opportunity_manual(
+    payload: OpportunityCreateManualRequest,
+    current: User = Depends(require_permission("manage_opportunities")),
+) -> OpportunityResponse:
+    async with async_session_factory() as session:
+        repo = OpportunitiesRepository(session)
+        opp = await repo.create_manual(
+            title=payload.title,
+            specialty=payload.specialty,
+            city=payload.city,
+            source_url=payload.source_url,
+            snippet=payload.snippet,
+            owner_user_id=current.id,
+        )
+        owner = await _load_owner_user(session, opp)
+    return _opportunity_to_response(opp, owner=owner, created=True)
+
+
 @protected_router.get("/opportunities", response_model=OpportunityListResponse)
 async def list_opportunities(
     stage: str | None = Query(default=None, max_length=64),
+    job_id: UUID | None = Query(default=None),
+    directory_id: UUID | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> OpportunityListResponse:
     if stage is not None and stage != "" and stage not in OPPORTUNITY_STAGE_KEYS:
         raise HTTPException(status_code=400, detail="Fase no válida.")
     async with async_session_factory() as session:
         repo = OpportunitiesRepository(session)
-        rows = await repo.list_opportunities(stage=stage or None, limit=limit, offset=0)
+        rows = await repo.list_opportunities(
+            stage=stage or None,
+            job_id=job_id,
+            directory_id=directory_id,
+            limit=limit,
+            offset=0,
+        )
         owners = await _load_owners_map(session, rows)
     items = [
         OpportunityListItemResponse(
             opportunity_id=str(o.id),
-            job_id=str(o.job_id),
+            job_id=str(o.job_id) if o.job_id else None,
             exa_preview_index=o.exa_preview_index,
+            directory_id=str(o.directory_id) if o.directory_id else None,
+            current_step_id=str(o.current_step_id) if o.current_step_id else None,
             title=o.title,
             city=o.city,
             stage=o.stage,
             response_outcome=o.response_outcome,
+            terminated_at=o.terminated_at,
+            terminated_outcome=o.terminated_outcome,
             updated_at=o.updated_at,
             owner=_owner_to_snippet(owners.get(o.owner_user_id) if o.owner_user_id else None),
         )
@@ -703,7 +942,7 @@ async def get_opportunity(opportunity_id: UUID) -> OpportunityResponse:
 async def patch_opportunity(
     opportunity_id: UUID,
     payload: OpportunityUpdateRequest,
-    current: User = Depends(get_current_user),
+    current: User = Depends(require_permission("manage_opportunities")),
 ) -> OpportunityResponse:
     async with async_session_factory() as session:
         repo = OpportunitiesRepository(session)
@@ -744,7 +983,7 @@ async def patch_opportunity(
 async def post_opportunity_bitacora(
     opportunity_id: UUID,
     payload: OpportunityBitacoraRequest,
-    current: User = Depends(get_current_user),
+    current: User = Depends(require_permission("manage_opportunities")),
 ) -> OpportunityResponse:
     async with async_session_factory() as session:
         repo = OpportunitiesRepository(session)
@@ -764,7 +1003,7 @@ async def post_opportunity_bitacora(
 async def put_opportunity_contacts(
     opportunity_id: UUID,
     payload: OpportunityContactsReplaceRequest,
-    current: User = Depends(get_current_user),
+    current: User = Depends(require_permission("manage_opportunities")),
 ) -> OpportunityResponse:
     async with async_session_factory() as session:
         repo = OpportunitiesRepository(session)
@@ -776,6 +1015,43 @@ async def put_opportunity_contacts(
         await session.refresh(opp)
         owner = await _load_owner_user(session, opp)
         return _opportunity_to_response(opp, owner=owner, created=False)
+
+
+@public_router.post("/auth/register", response_model=LoginResponse, status_code=201)
+async def auth_register(payload: RegisterRequest) -> LoginResponse:
+    settings = get_settings()
+    if not settings.mle_open_registration:
+        raise HTTPException(
+            status_code=403,
+            detail="El registro de nuevas cuentas está deshabilitado.",
+        )
+    async with async_session_factory() as session:
+        repo = UsersRepository(session)
+        if await repo.get_by_email(payload.email):
+            raise HTTPException(status_code=400, detail="El correo ya está registrado.")
+        u = await repo.create(
+            email=payload.email.strip().lower(),
+            password_hash=hash_password(payload.password),
+            display_name=payload.display_name.strip(),
+            role="user",
+        )
+        uid = u.id
+        u_email = u.email
+        u_display = u.display_name
+        u_role = u.role
+        token = create_access_token(user_id=uid)
+    return LoginResponse(
+        access_token=token,
+        token_type="bearer",
+        user=UserPublic(
+            user_id=str(uid),
+            email=u_email,
+            display_name=u_display,
+            role=u_role,
+            permissions=[],
+            is_active=True,
+        ),
+    )
 
 
 @public_router.post("/auth/login", response_model=LoginResponse)
@@ -791,6 +1067,7 @@ async def auth_login(payload: LoginRequest) -> LoginResponse:
         email = user.email
         display_name = user.display_name
         role = user.role
+        permissions = user.permissions if isinstance(user.permissions, list) else []
         token = create_access_token(user_id=uid)
     return LoginResponse(
         access_token=token,
@@ -800,18 +1077,26 @@ async def auth_login(payload: LoginRequest) -> LoginResponse:
             email=email,
             display_name=display_name,
             role=role,
+            permissions=permissions,
+            is_active=True,
         ),
+    )
+
+
+def _user_to_public(u: User) -> UserPublic:
+    return UserPublic(
+        user_id=str(u.id),
+        email=u.email,
+        display_name=u.display_name,
+        role=u.role,
+        permissions=u.permissions if isinstance(u.permissions, list) else [],
+        is_active=u.is_active,
     )
 
 
 @protected_router.get("/auth/me", response_model=UserPublic)
 async def auth_me(current: User = Depends(get_current_user)) -> UserPublic:
-    return UserPublic(
-        user_id=str(current.id),
-        email=current.email,
-        display_name=current.display_name,
-        role=current.role,
-    )
+    return _user_to_public(current)
 
 
 @protected_router.get("/admin/users", response_model=AdminUsersListResponse)
@@ -819,16 +1104,17 @@ async def admin_list_users(_admin: User = Depends(require_admin)) -> AdminUsersL
     async with async_session_factory() as session:
         repo = UsersRepository(session)
         users = await repo.list_all()
-    items = [
-        UserPublic(user_id=str(u.id), email=u.email, display_name=u.display_name, role=u.role) for u in users
-    ]
-    return AdminUsersListResponse(items=items)
+    return AdminUsersListResponse(items=[_user_to_public(u) for u in users])
+
+
+VALID_PERMISSIONS = {"use_search", "manage_opportunities"}
 
 
 @protected_router.post("/admin/users", response_model=UserPublic, status_code=201)
 async def admin_create_user(
     payload: AdminCreateUserRequest, _admin: User = Depends(require_admin)
 ) -> UserPublic:
+    perms = [p for p in payload.permissions if p in VALID_PERMISSIONS]
     async with async_session_factory() as session:
         repo = UsersRepository(session)
         if await repo.get_by_email(payload.email):
@@ -838,8 +1124,312 @@ async def admin_create_user(
             password_hash=hash_password(payload.password),
             display_name=payload.display_name,
             role=payload.role,
+            permissions=perms,
         )
-    return UserPublic(
-        user_id=str(u.id), email=u.email, display_name=u.display_name, role=u.role
-    )
+    return _user_to_public(u)
 
+
+@protected_router.patch("/admin/users/{user_id}", response_model=UserPublic)
+async def admin_update_user(
+    user_id: UUID,
+    payload: AdminUpdateUserRequest,
+    admin: User = Depends(require_admin),
+) -> UserPublic:
+    perms = [p for p in payload.permissions if p in VALID_PERMISSIONS] if payload.permissions is not None else None
+    async with async_session_factory() as session:
+        repo = UsersRepository(session)
+        if payload.email is not None:
+            existing = await repo.get_by_email(payload.email)
+            if existing and existing.id != user_id:
+                raise HTTPException(status_code=400, detail="El correo ya está registrado.")
+        u = await repo.update(
+            user_id,
+            email=payload.email,
+            display_name=payload.display_name,
+            role=payload.role,
+            is_active=payload.is_active,
+            permissions=perms,
+        )
+        if u is None:
+            _raise_not_found("Usuario")
+    return _user_to_public(u)
+
+
+@protected_router.delete("/admin/users/{user_id}", status_code=204)
+async def admin_delete_user(
+    user_id: UUID,
+    admin: User = Depends(require_admin),
+) -> Response:
+    if admin.id == user_id:
+        raise HTTPException(status_code=400, detail="No puedes eliminarte a ti mismo.")
+    async with async_session_factory() as session:
+        repo = UsersRepository(session)
+        deleted = await repo.delete(user_id)
+        if not deleted:
+            _raise_not_found("Usuario")
+    return Response(status_code=204)
+
+
+@protected_router.delete("/opportunities/{opportunity_id}", status_code=204)
+async def delete_opportunity(
+    opportunity_id: UUID,
+    _current: User = Depends(require_permission("manage_opportunities")),
+) -> Response:
+    async with async_session_factory() as session:
+        repo = OpportunitiesRepository(session)
+        opp = await repo.get_by_id(opportunity_id)
+        if opp is None:
+            _raise_not_found("Oportunidad")
+        await session.delete(opp)
+        await session.commit()
+    return Response(status_code=204)
+
+
+# ============================================================================
+# DIRECTORIES — Directorios compartidos con steps custom
+# ============================================================================
+
+
+async def _directory_to_read(repo: DirectoriesRepository, directory) -> DirectoryRead:
+    steps = await repo.list_steps(directory.id)
+    item_count = await repo.count_items_by_directory(directory.id)
+    return repo.to_read(directory, steps, item_count)
+
+
+@protected_router.get("/directories", response_model=DirectoryListResponse)
+async def list_directories(
+    _u: User = Depends(require_permission("use_search")),
+) -> DirectoryListResponse:
+    async with async_session_factory() as session:
+        repo = DirectoriesRepository(session)
+        directories = await repo.list_all()
+        items = [await _directory_to_read(repo, d) for d in directories]
+    return DirectoryListResponse(items=items)
+
+
+@protected_router.post("/directories", response_model=DirectoryRead, status_code=201)
+async def create_directory(
+    payload: DirectoryCreateRequest,
+    current: User = Depends(require_permission("use_search")),
+) -> DirectoryRead:
+    async with async_session_factory() as session:
+        repo = DirectoriesRepository(session)
+        directory = await repo.create(
+            name=payload.name,
+            description=payload.description,
+            created_by_user_id=current.id,
+            steps=payload.steps,
+        )
+        return await _directory_to_read(repo, directory)
+
+
+@protected_router.get("/directories/{directory_id}", response_model=DirectoryRead)
+async def get_directory(
+    directory_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> DirectoryRead:
+    async with async_session_factory() as session:
+        repo = DirectoriesRepository(session)
+        directory = await repo.get(directory_id)
+        if directory is None:
+            _raise_not_found("Directorio")
+        return await _directory_to_read(repo, directory)
+
+
+@protected_router.patch("/directories/{directory_id}", response_model=DirectoryRead)
+async def update_directory(
+    directory_id: UUID,
+    payload: DirectoryUpdateRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> DirectoryRead:
+    async with async_session_factory() as session:
+        repo = DirectoriesRepository(session)
+        directory = await repo.update(
+            directory_id,
+            name=payload.name,
+            description=payload.description,
+        )
+        if directory is None:
+            _raise_not_found("Directorio")
+        return await _directory_to_read(repo, directory)
+
+
+@protected_router.delete("/directories/{directory_id}", status_code=204)
+async def delete_directory(
+    directory_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> Response:
+    async with async_session_factory() as session:
+        repo = DirectoriesRepository(session)
+        ok = await repo.delete(directory_id)
+        if not ok:
+            raise HTTPException(
+                status_code=409,
+                detail="El directorio tiene items; mueve o borra los items primero.",
+            )
+    return Response(status_code=204)
+
+
+@protected_router.post("/directories/{directory_id}/steps", response_model=DirectoryStepRead, status_code=201)
+async def add_step(
+    directory_id: UUID,
+    payload: DirectoryStepCreate,
+    _u: User = Depends(require_permission("use_search")),
+) -> DirectoryStepRead:
+    async with async_session_factory() as session:
+        repo = DirectoriesRepository(session)
+        directory = await repo.get(directory_id)
+        if directory is None:
+            _raise_not_found("Directorio")
+        step = await repo.add_step(
+            directory_id,
+            name=payload.name,
+            is_terminal=payload.is_terminal,
+            is_won=payload.is_won,
+        )
+        return DirectoryStepRead(
+            id=step.id,
+            name=step.name,
+            display_order=step.display_order,
+            is_terminal=step.is_terminal,
+            is_won=step.is_won,
+            created_at=step.created_at,
+        )
+
+
+@protected_router.patch("/directories/{directory_id}/steps/{step_id}", response_model=DirectoryStepRead)
+async def update_step(
+    directory_id: UUID,
+    step_id: UUID,
+    payload: DirectoryStepUpdate,
+    _u: User = Depends(require_permission("use_search")),
+) -> DirectoryStepRead:
+    async with async_session_factory() as session:
+        repo = DirectoriesRepository(session)
+        step = await repo.update_step(
+            step_id,
+            name=payload.name,
+            is_terminal=payload.is_terminal,
+            is_won=payload.is_won,
+            display_order=payload.display_order,
+        )
+        if step is None or step.directory_id != directory_id:
+            _raise_not_found("Step")
+        return DirectoryStepRead(
+            id=step.id,
+            name=step.name,
+            display_order=step.display_order,
+            is_terminal=step.is_terminal,
+            is_won=step.is_won,
+            created_at=step.created_at,
+        )
+
+
+@protected_router.post("/directories/{directory_id}/steps/reorder", response_model=list[DirectoryStepRead])
+async def reorder_steps(
+    directory_id: UUID,
+    payload: DirectoryStepReorder,
+    _u: User = Depends(require_permission("use_search")),
+) -> list[DirectoryStepRead]:
+    async with async_session_factory() as session:
+        repo = DirectoriesRepository(session)
+        steps = await repo.reorder_steps(directory_id, payload.step_ids)
+        return [
+            DirectoryStepRead(
+                id=s.id,
+                name=s.name,
+                display_order=s.display_order,
+                is_terminal=s.is_terminal,
+                is_won=s.is_won,
+                created_at=s.created_at,
+            )
+            for s in steps
+        ]
+
+
+@protected_router.delete("/directories/{directory_id}/steps/{step_id}", status_code=204)
+async def delete_step(
+    directory_id: UUID,
+    step_id: UUID,
+    payload: StepDeleteRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> Response:
+    async with async_session_factory() as session:
+        repo = DirectoriesRepository(session)
+        try:
+            ok = await repo.delete_step(step_id, move_items_to_step_id=payload.move_items_to_step_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        if not ok:
+            _raise_not_found("Step")
+    return Response(status_code=204)
+
+
+@protected_router.patch("/opportunities/{opportunity_id}/step", response_model=OpportunityResponse)
+async def move_opportunity_step(
+    opportunity_id: UUID,
+    payload: OpportunityMoveStepRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> OpportunityResponse:
+    async with async_session_factory() as session:
+        dir_repo = DirectoriesRepository(session)
+        opp = await dir_repo.move_opportunity(opportunity_id, payload.direction)
+        if opp is None:
+            raise HTTPException(
+                status_code=409,
+                detail="No se puede mover (opp terminada, sin directorio o step fuera de rango).",
+            )
+        opp_repo = OpportunitiesRepository(session)
+        fresh = await opp_repo.get_by_id(opportunity_id)
+        if fresh is None:
+            _raise_not_found("Oportunidad")
+        owner = await _load_owner_user(session, fresh)
+        return _opportunity_to_response(fresh, owner=owner, created=False)
+
+
+@protected_router.post("/opportunities/{opportunity_id}/terminate", response_model=OpportunityResponse)
+async def terminate_opportunity(
+    opportunity_id: UUID,
+    payload: OpportunityTerminateRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> OpportunityResponse:
+    async with async_session_factory() as session:
+        dir_repo = DirectoriesRepository(session)
+        opp = await dir_repo.terminate_opportunity(
+            opportunity_id,
+            outcome=payload.outcome,
+            note=payload.note,
+        )
+        if opp is None:
+            _raise_not_found("Oportunidad")
+        opp_repo = OpportunitiesRepository(session)
+        fresh = await opp_repo.get_by_id(opportunity_id)
+        if fresh is None:
+            _raise_not_found("Oportunidad")
+        owner = await _load_owner_user(session, fresh)
+        return _opportunity_to_response(fresh, owner=owner, created=False)
+
+
+@protected_router.post("/opportunities/{opportunity_id}/reopen", response_model=OpportunityResponse)
+async def reopen_opportunity(
+    opportunity_id: UUID,
+    _payload: OpportunityReopenRequest = OpportunityReopenRequest(),
+    _u: User = Depends(require_permission("use_search")),
+) -> OpportunityResponse:
+    async with async_session_factory() as session:
+        dir_repo = DirectoriesRepository(session)
+        opp = await dir_repo.reopen_opportunity(opportunity_id)
+        if opp is None:
+            _raise_not_found("Oportunidad")
+        opp_repo = OpportunitiesRepository(session)
+        fresh = await opp_repo.get_by_id(opportunity_id)
+        if fresh is None:
+            _raise_not_found("Oportunidad")
+        owner = await _load_owner_user(session, fresh)
+        return _opportunity_to_response(fresh, owner=owner, created=False)
+
+
+# Incluir sub-routers al final: si no, FastAPI copia public/protected *vacíos* y /api/v1/* devuelve 404.
+api_router = APIRouter(prefix="/api/v1")
+api_router.include_router(public_router)
+api_router.include_router(protected_router)

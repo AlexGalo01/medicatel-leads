@@ -1,16 +1,42 @@
 export type UserRole = "admin" | "user";
 
+export type Permission = "use_search" | "manage_opportunities";
+
 export interface UserPublic {
   user_id: string;
   email: string;
   display_name: string;
   role: UserRole;
+  permissions: Permission[];
+  is_active: boolean;
 }
 
 export interface LoginResponse {
   access_token: string;
   token_type: string;
   user: UserPublic;
+}
+
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  display_name: string;
+}
+
+export interface AdminCreateUserRequest {
+  email: string;
+  password: string;
+  display_name: string;
+  role: UserRole;
+  permissions: Permission[];
+}
+
+export interface AdminUpdateUserRequest {
+  email?: string;
+  display_name?: string;
+  role?: UserRole;
+  is_active?: boolean;
+  permissions?: Permission[];
 }
 
 export interface AdminUsersListResponse {
@@ -31,6 +57,7 @@ export type LeadsContactFilter =
 
 export interface SearchJobCreateRequest {
   query: string;
+  directory_id: string;
   contact_channels: string[];
   notes?: string;
   search_focus?: SearchFocus;
@@ -43,6 +70,7 @@ export interface SearchJobCreateResponse {
   status: string;
   created_at: string;
   clarifying_question?: string | null;
+  requires_clarification?: boolean;
 }
 
 export interface SearchJobListItem {
@@ -51,6 +79,9 @@ export interface SearchJobListItem {
   status: string;
   created_at: string;
   exa_category?: string | null;
+  directory_id?: string | null;
+  directory_name?: string | null;
+  error_message?: string | null;
 }
 
 export interface SearchJobsListResponse {
@@ -100,6 +131,17 @@ export interface ExaResultPreviewItem {
   snippet: string | null;
   specialty?: string | null;
   city?: string | null;
+  organization?: string | null;
+  email?: string | null;
+  whatsapp?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  schedule_text?: string | null;
+  linkedin_url?: string | null;
+  description?: string | null;
+  enrichment_status?: string | null;
+  enrichment_message?: string | null;
+  enriched_sources?: Record<string, unknown> | null;
 }
 
 export interface ExaMoreResultsResponse {
@@ -156,10 +198,14 @@ export interface OpportunityOwnerSnippet {
   email: string;
 }
 
+export type OpportunityTerminatedOutcome = "won" | "lost" | "no_response";
+
 export interface OpportunityResponse {
   opportunity_id: string;
-  job_id: string;
-  exa_preview_index: number;
+  job_id: string | null;
+  exa_preview_index: number | null;
+  directory_id: string | null;
+  current_step_id: string | null;
   title: string;
   source_url: string;
   snippet: string | null;
@@ -167,6 +213,9 @@ export interface OpportunityResponse {
   city: string;
   stage: OpportunityStageKey;
   response_outcome: OpportunityResponseOutcome | null;
+  terminated_at: string | null;
+  terminated_outcome: OpportunityTerminatedOutcome | null;
+  terminated_note: string | null;
   contacts: OpportunityContact[];
   activity_timeline: OpportunityActivityEntry[];
   profile_overrides?: OpportunityProfileOverrides;
@@ -178,14 +227,66 @@ export interface OpportunityResponse {
 
 export interface OpportunityListItem {
   opportunity_id: string;
-  job_id: string;
-  exa_preview_index: number;
+  job_id: string | null;
+  exa_preview_index: number | null;
+  directory_id: string | null;
+  current_step_id: string | null;
   title: string;
   city: string;
   stage: OpportunityStageKey;
   response_outcome: OpportunityResponseOutcome | null;
+  terminated_at: string | null;
+  terminated_outcome: OpportunityTerminatedOutcome | null;
   updated_at: string;
   owner: OpportunityOwnerSnippet | null;
+}
+
+export interface DirectoryStep {
+  id: string;
+  name: string;
+  display_order: number;
+  is_terminal: boolean;
+  is_won: boolean;
+  created_at: string;
+}
+
+export interface Directory {
+  id: string;
+  name: string;
+  description: string | null;
+  created_by_user_id: string | null;
+  steps: DirectoryStep[];
+  item_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DirectoryListResponse {
+  items: Directory[];
+}
+
+export interface DirectoryStepCreate {
+  name: string;
+  is_terminal: boolean;
+  is_won: boolean;
+}
+
+export interface DirectoryCreateRequest {
+  name: string;
+  description?: string | null;
+  steps: DirectoryStepCreate[];
+}
+
+export interface DirectoryUpdateRequest {
+  name?: string;
+  description?: string | null;
+}
+
+export interface DirectoryStepUpdate {
+  name?: string;
+  is_terminal?: boolean;
+  is_won?: boolean;
+  display_order?: number;
 }
 
 export interface OpportunityListResponse {
@@ -220,6 +321,9 @@ export interface SearchJobStatusResponse {
   exa_category?: string | null;
   exa_criteria?: string | null;
   query_text?: string | null;
+  error_message?: string | null;
+  awaiting_clarification?: boolean;
+  clarifying_question?: string | null;
 }
 
 export interface LeadItem {
@@ -231,6 +335,9 @@ export interface LeadItem {
   email: string | null;
   whatsapp: string | null;
   linkedin_url: string | null;
+  phone: string | null;
+  address: string | null;
+  schedule_text: string | null;
   primary_source_url: string | null;
 }
 
@@ -252,6 +359,7 @@ export interface LeadDetailResponse extends LeadItem {
   score_reasoning: string | null;
   validation_status: string;
   source_citations: LeadSourceCitation[];
+  enriched_sources?: Record<string, unknown> | null;
   crm_stage: string;
   crm_notes: string | null;
   activity_timeline: Array<Record<string, string>>;

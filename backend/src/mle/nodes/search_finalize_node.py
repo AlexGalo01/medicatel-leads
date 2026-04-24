@@ -6,6 +6,7 @@ from typing import Any
 
 from langsmith import traceable
 
+from mle.core.config import get_settings
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.services.exa_preview_enrich_service import enrich_exa_preview_rows
 from mle.services.relevance_filter_service import filter_exa_list_heuristic_only
@@ -16,7 +17,6 @@ logger = logging.getLogger(__name__)
 PIPELINE_MODE_SEARCH_ONLY = "presearch_and_search_only"
 MAX_EXA_PREVIEW_ITEMS = 60
 MAX_EXA_ACCUMULATED_RAW = 120
-HIGHLIGHT_JOIN_MAX = 1800
 
 
 def _url_key_for_merge(url: str) -> str:
@@ -24,20 +24,27 @@ def _url_key_for_merge(url: str) -> str:
 
 
 def _preview_item(raw: dict[str, Any], index: int) -> dict[str, Any]:
-    title = str(raw.get("title", "")).strip()[:300]
+    s = get_settings()
+    title_max = s.exa_preview_title_max_chars
+    join_max = s.exa_preview_snippet_max_chars
+    hl_slots = s.exa_preview_num_highlights
+    title = str(raw.get("title", "")).strip()[:title_max]
     url = str(raw.get("url", "")).strip()[:2000]
     highlights = raw.get("highlights")
     snippet = ""
     if isinstance(highlights, list):
-        snippet = " | ".join(str(h) for h in highlights[:8])[:HIGHLIGHT_JOIN_MAX]
+        snippet = " | ".join(str(h) for h in highlights[:hl_slots])[:join_max]
     elif raw.get("text"):
-        snippet = str(raw.get("text", ""))[:HIGHLIGHT_JOIN_MAX]
-    return {
+        snippet = str(raw.get("text", ""))[:join_max]
+    out = {
         "index": index + 1,
         "title": title or url or "Sin titulo",
         "url": url,
         "snippet": snippet or None,
     }
+    if "_prefetched_maps" in raw:
+        out["_prefetched_maps"] = raw["_prefetched_maps"]
+    return out
 
 
 def _build_exa_preview(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -130,8 +137,8 @@ async def search_finalize_node(state: LeadSearchGraphState) -> dict[str, object]
     if finalize_heuristic_meta:
         meta_out = {**meta_out, **finalize_heuristic_meta}
     return {
-        "status": "completed",
-        "current_stage": "done",
-        "progress": 100,
+        "status": "running",
+        "current_stage": "auto_enrich",
+        "progress": 80,
         "langsmith_metadata": meta_out,
     }

@@ -203,6 +203,7 @@ async def auto_enrich_node(state: LeadSearchGraphState) -> dict[str, object]:
                 return item
             async with semaphore:
                 try:
+                    prefetched_maps = item.pop("_prefetched_maps", None)
                     core = _preview_to_core(item, country, entity_type)
                     if not core.full_name and not core.primary_source_url:
                         return item
@@ -213,6 +214,7 @@ async def auto_enrich_node(state: LeadSearchGraphState) -> dict[str, object]:
                         proposer=proposer,
                         reviewer=reviewer,
                         settings=settings,
+                        prefetched_maps=prefetched_maps,
                     )
                     return _apply_enrichment_to_preview(item, enr)
                 except Exception as exc:  # noqa: BLE001

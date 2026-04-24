@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from mle.clients.gemini_client import GeminiClient
 from mle.core.config import get_settings
+from mle.clients.llm_factory import get_llm_client
 
 # Límites alineados con el prompt y la API; el truncado a fin de palabra evita comas o frases a medias.
 PROFESSIONAL_SUMMARY_MAX_LEN = 400
 ABOUT_MAX_LEN = 320
+EXPERIENCE_ROLE_MAX_LEN = 200
+EXPERIENCE_ORG_MAX_LEN = 220
+EXPERIENCE_PERIOD_MAX_LEN = 120
 
 
 def _fallback_interpret(source_text: str) -> dict[str, str | None]:
@@ -47,7 +51,7 @@ async def interpret_profile_texts(texts: list[str]) -> list[dict[str, str | None
         return []
 
     settings = get_settings()
-    client = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_model)
+    client = get_llm_client(settings)
     prompt = (
         "Extrae nombre, empresa y especialidad de cada texto de perfil.\n"
         "Responde SOLO JSON con forma exacta:\n"
@@ -127,8 +131,6 @@ def _sanitize_summary_text(
 
 def _strip_markdown_noise(text: str) -> str:
     """Quita encabezados tipo ## / ### al inicio de línea y viñetas sueltas."""
-    import re
-
     if not text or not str(text).strip():
         return ""
     lines = [re.sub(r"^#{1,6}\s+", "", line).rstrip() for line in str(text).splitlines()]
@@ -147,10 +149,39 @@ def _strip_social_noise(text: str) -> str:
         (r"\bconnections?\b", ""),
         (r"\bfollowers?\b", ""),
     )
-    import re
 
     for pattern, repl in replacements:
         cleaned = re.sub(pattern, repl, cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    return cleaned
+
+
+def _strip_profile_blob_noise(text: str) -> str:
+    """Quita rótulos típicos de LinkedIn/CV en inglés sin inventar contenido (solo limpieza)."""
+    cleaned = _strip_social_noise(text)
+    cleaned = re.sub(r"https?://\S+", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?i)\babout\s+total\s+e\b", " ", cleaned)
+    cleaned = re.sub(r"(?i)\btotal\s+experience[^|·\n]{0,80}", " ", cleaned)
+    cleaned = re.sub(r"(?i)\bactivity\b", " ", cleaned)
+    cleaned = re.sub(r"(?i)\(current\)", " ", cleaned)
+    cleaned = re.sub(
+        r"(?i)department:\s*[^|·\n]{0,64}?(?=\s+level:|\s+at\s+|\Z)",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?i)level:\s*[^|·\n]{0,64}?(?=\s+at\s+|\s+about(?:\s+total)?|\Z)",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(r"(?i)\bpresent\b", " ", cleaned)
+    # Remove LinkedIn post noise: reactions, dates in brackets, post fragments
+    cleaned = re.sub(r"\(\d+\s*reactions?\)", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\(\d+\s*reacciones?\)", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\(\d+\s*comments?\)", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\(\d+\s*comentarios?\)", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\(\d+\s*likes?\)", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\[\d{4}-\d{2}-\d{2}\]", " ", cleaned)
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
     return cleaned
 
@@ -172,16 +203,24 @@ def _looks_like_raw_cv_blob(text: str | None) -> bool:
 
 
 def _extract_experiences_from_blob(text: str) -> list[dict[str, str | None]]:
+    """Heuristica de respaldo cuando el modelo no estructura el CV: parte por ' at ' y recorta a palabra."""
     normalized = _strip_markdown_noise(text)
+    normalized = _strip_profile_blob_noise(normalized)
     if not normalized:
         return []
-    parts = normalized.split(" Experience ")
-    blob = parts[-1] if len(parts) > 1 else normalized
-    chunks = [chunk.strip() for chunk in blob.split(" at ") if chunk.strip()]
+    low = normalized.lower()
+    blob = normalized
+    for sep in (" experience ", " experiencia ", "## experience", "## experiencia"):
+        idx = low.find(sep)
+        if idx != -1:
+            blob = normalized[idx + len(sep) :].lstrip(" :#")
+            low = blob.lower()
+            break
+    chunks = [c.strip() for c in re.split(r"\s+at\s+", blob, flags=re.IGNORECASE) if c.strip()]
     experiences: list[dict[str, str | None]] = []
     for i in range(0, len(chunks) - 1, 2):
-        role = _sanitize_summary_text(chunks[i], max_len=80)
-        organization = _sanitize_summary_text(chunks[i + 1], max_len=100)
+        role = _sanitize_summary_text(chunks[i], max_len=EXPERIENCE_ROLE_MAX_LEN, at_word_boundary=True)
+        organization = _sanitize_summary_text(chunks[i + 1], max_len=EXPERIENCE_ORG_MAX_LEN, at_word_boundary=True)
         if role:
             experiences.append(
                 {
@@ -195,6 +234,67 @@ def _extract_experiences_from_blob(text: str) -> list[dict[str, str | None]]:
     return experiences
 
 
+async def _llm_extract_experiences_for_blob(
+    client,
+    title: str,
+    snippet: str,
+) -> list[dict[str, str | None]]:
+    """Segunda llamada al modelo: fragmento tipo LinkedIn con ruido -> experiencias en español."""
+    body = f"{title}\n{snippet}".strip()
+    if len(body) < 20:
+        return []
+    prompt = (
+        "Eres un extractor de datos. A partir del titulo y el fragmento de un perfil (web, LinkedIn, etc.), "
+        "obten 1 a 3 experiencias laborales o academicas concretas y presentes en el texto.\n"
+        'Responde SOLO JSON valido: {"items":[{"role":"...","organization":"...","period":"..."}]}\n'
+        "Reglas:\n"
+        "- Cada item debe ser inferible del texto; si no es posible, devuelve {\"items\":[]}.\n"
+        "- OBLIGATORIO: Todos los textos en español. TRADUCE del inglés si es necesario. "
+        "Normaliza: sin dejar rótulos en inglés (Current→actual, Department→Departamento, "
+        "connections, followers, etc.). Usa 'actual' o fechas breves en period, o null.\n"
+        "- role: puesto o título traducido al español. organization: centro, hospital, universidad, empresa. Sin markdown.\n"
+        f"TITULO: {title.strip()}\n"
+        f"FRAGMENTO: {snippet.strip()[:11000]}\n"
+    )
+    try:
+        parsed = await client.complete_json_prompt(prompt)
+    except Exception:
+        return []
+    items = parsed.get("items")
+    if not isinstance(items, list):
+        return []
+    out: list[dict[str, str | None]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        role = _sanitize_summary_text(
+            _strip_markdown_noise(str(item.get("role", ""))),
+            max_len=EXPERIENCE_ROLE_MAX_LEN,
+            at_word_boundary=True,
+        )
+        organization = _sanitize_summary_text(
+            _strip_markdown_noise(str(item.get("organization", ""))),
+            max_len=EXPERIENCE_ORG_MAX_LEN,
+            at_word_boundary=True,
+        )
+        period = _sanitize_summary_text(
+            _strip_markdown_noise(str(item.get("period", ""))),
+            max_len=EXPERIENCE_PERIOD_MAX_LEN,
+            at_word_boundary=True,
+        )
+        if role:
+            out.append(
+                {
+                    "role": role,
+                    "organization": organization,
+                    "period": period,
+                }
+            )
+        if len(out) >= 3:
+            break
+    return out
+
+
 def _fallback_profile_summary(
     *,
     title: str,
@@ -202,8 +302,13 @@ def _fallback_profile_summary(
     city: str | None,
     snippet: str | None,
 ) -> dict[str, Any]:
-    normalized_specialty = _sanitize_summary_text(specialty, max_len=100)
-    summary = normalized_specialty or _sanitize_summary_text(_strip_social_noise(snippet or ""), max_len=180) or _sanitize_summary_text(title, max_len=180)
+    normalized_specialty = _sanitize_summary_text(specialty, max_len=100, at_word_boundary=True)
+    snip = _strip_profile_blob_noise(_strip_social_noise(snippet or ""))
+    summary = (
+        normalized_specialty
+        or _sanitize_summary_text(snip, max_len=180, at_word_boundary=True)
+        or _sanitize_summary_text(title, max_len=180, at_word_boundary=True)
+    )
     company = None
     base_text = f"{title} {snippet or ''}".strip()
     if " en " in base_text.lower():
@@ -234,7 +339,7 @@ async def extract_profile_summary(
     normalized_title = title.strip()
     normalized_specialty = (specialty or "").strip()
     normalized_city = (city or "").strip()
-    normalized_snippet = (snippet or "").strip()
+    normalized_snippet = _strip_profile_blob_noise((snippet or "").strip())
     fallback = _fallback_profile_summary(
         title=normalized_title,
         specialty=normalized_specialty or None,
@@ -253,19 +358,31 @@ async def extract_profile_summary(
         }
 
     settings = get_settings()
-    client = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_model)
+    client = get_llm_client(settings)
     prompt = (
         "Analiza un perfil y responde SOLO JSON valido con esta forma exacta:\n"
         '{"professional_summary":"...","about":"...","experiences":[{"role":"...","organization":"...","period":"..."}],"company":"...","location":"...","confidence":"high|medium|low","notes":"..."}\n'
         "Reglas estrictas:\n"
         f"- professional_summary: maximo {PROFESSIONAL_SUMMARY_MAX_LEN} caracteres, 1-2 frases, sin markdown. Termina frase completa (sin dejar comas o listas a medias).\n"
         f"- about: maximo {ABOUT_MAX_LEN} caracteres, resumen profesional 1-3 lineas, sin markdown. Termina frase completa.\n"
-        "- experiences: 1 a 3 entradas maximo si existe evidencia.\n"
-        "- company: solo organizacion/empresa principal o null.\n"
-        "- location: ciudad/pais corto o null.\n"
-        "- No copies bloques crudos de CV/LinkedIn.\n"
-        "- Si no hay suficiente evidencia en algun campo, usa null.\n"
-        "- Responde en espanol.\n"
+        "- experiences: 1 a 3 entradas maximo si existe evidencia; role, organization y period en español. "
+        "Normaliza muletillas en ingles (Current, Department, connections) a español o omite.\n"
+        "- company: SOLO el nombre propio de la organización/empresa/hospital/clínica donde trabaja "
+        "la persona (ej. 'Hospital San Felipe', 'Clínica Vida'). Debe ser un nombre de entidad real, "
+        "NO fragmentos de posts, reacciones, comentarios o texto suelto. Si no puedes identificar "
+        "un nombre de empresa claro, usa null. NUNCA pongas texto de publicaciones de redes sociales.\n"
+        "- location: ciudad/pais corto o null (en español).\n"
+        "- notes: breve, en español, o null.\n"
+        "- IGNORA completamente: publicaciones de redes sociales, reacciones, comentarios, "
+        "conteos de conexiones/seguidores, texto de posts de LinkedIn/Facebook. "
+        "Estos NO son datos del perfil profesional.\n"
+        "- No copies bloques crudos de CV/LinkedIn (listados largos sin sintetizar).\n"
+        "- Si no hay suficiente evidencia en algun campo, usa null o [].\n"
+        "- OBLIGATORIO: Todos los campos de texto del JSON DEBEN estar en español. "
+        "Si el texto original está en inglés, TRADÚCELO al español. "
+        "Ejemplos: 'Cardiologist' → 'Cardiólogo', 'Private Hospital' → 'Hospital Privado', "
+        "'Full Stack Developer at Google' → 'Desarrollador Full Stack en Google', "
+        "'CEO & Founder' → 'CEO y Fundador'. Mantén nombres propios sin traducir.\n"
         f"TITULO: {normalized_title}\n"
         f"ESPECIALIDAD: {normalized_specialty}\n"
         f"UBICACION: {normalized_city}\n"
@@ -287,30 +404,51 @@ async def extract_profile_summary(
                 about_stripped, max_len=ABOUT_MAX_LEN, at_word_boundary=True
             )
 
-        company = _sanitize_summary_text(parsed.get("company"), max_len=120)
-        location = _sanitize_summary_text(parsed.get("location"), max_len=120)
+        company = _sanitize_summary_text(parsed.get("company"), max_len=120, at_word_boundary=True)
+        location = _sanitize_summary_text(parsed.get("location"), max_len=120, at_word_boundary=True)
         experiences_raw = parsed.get("experiences")
         experiences: list[dict[str, str | None]] = []
+        blob_experiences_from_llm = False
         if not is_blob and isinstance(experiences_raw, list):
             for item in experiences_raw:
                 if not isinstance(item, dict):
                     continue
-                role = _sanitize_summary_text(_strip_markdown_noise(str(item.get("role", ""))), max_len=90)
-                organization = _sanitize_summary_text(_strip_markdown_noise(str(item.get("organization", ""))), max_len=120)
-                period = _sanitize_summary_text(_strip_markdown_noise(str(item.get("period", ""))), max_len=60)
+                role = _sanitize_summary_text(
+                    _strip_markdown_noise(str(item.get("role", ""))),
+                    max_len=EXPERIENCE_ROLE_MAX_LEN,
+                    at_word_boundary=True,
+                )
+                organization = _sanitize_summary_text(
+                    _strip_markdown_noise(str(item.get("organization", ""))),
+                    max_len=EXPERIENCE_ORG_MAX_LEN,
+                    at_word_boundary=True,
+                )
+                period = _sanitize_summary_text(
+                    _strip_markdown_noise(str(item.get("period", ""))),
+                    max_len=EXPERIENCE_PERIOD_MAX_LEN,
+                    at_word_boundary=True,
+                )
                 if role:
                     experiences.append({"role": role, "organization": organization, "period": period})
                 if len(experiences) >= 3:
                     break
         elif is_blob:
-            experiences = list(fallback.get("experiences") or [])
+            from_llm = await _llm_extract_experiences_for_blob(client, normalized_title, normalized_snippet)
+            if from_llm:
+                experiences = from_llm
+                blob_experiences_from_llm = True
+            else:
+                experiences = list(fallback.get("experiences") or [])
 
         confidence_raw = str(parsed.get("confidence") or "").strip().lower()
         confidence = confidence_raw if confidence_raw in ("high", "medium", "low") else "low"
-        notes = _sanitize_summary_text(parsed.get("notes"), max_len=120)
+        notes = _sanitize_summary_text(parsed.get("notes"), max_len=120, at_word_boundary=True)
         if is_blob:
             confidence = "low"
-            notes = "fallback_blob_detection"
+            if blob_experiences_from_llm:
+                notes = "blob_llm_experiences"
+            else:
+                notes = "fallback_blob_detection"
         if not professional_summary:
             professional_summary = fallback.get("professional_summary")
         if not about:

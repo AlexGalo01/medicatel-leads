@@ -29,7 +29,7 @@ Este archivo centraliza y organiza la documentación existente del repositorio.
 
 ---
 
-## MedicatelCRM — Producto y fases (borrador vivo)
+## AI CRM — Producto y fases (borrador vivo)
 
 Este bloque resume decisiones de negocio y arquitectura de datos acordadas en conversación; convive con `DEVELOPMENT_PLAN.md` y se irá refinando.
 
