@@ -6562,6 +6562,9 @@ textarea {
   flex-direction: column;
   gap: 4px;
   flex: 1;
+  overflow: visible;
+  position: relative;
+  z-index: 100;
 }
 
 .searchable-select-wrapper {
@@ -6579,6 +6582,7 @@ textarea {
 
 .searchable-select-container {
   position: relative;
+  overflow: visible;
 }
 
 .searchable-select-button {
@@ -6623,17 +6627,14 @@ textarea {
 }
 
 .searchable-select-menu {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  z-index: 1000;
+  z-index: 10000;
   margin-top: 4px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   overflow: hidden;
+  min-width: 200px;
 }
 
 .searchable-select-input {
@@ -6660,8 +6661,9 @@ textarea {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 240px;
+  max-height: 300px;
   overflow-y: auto;
+  background: var(--color-surface);
 }
 
 .searchable-select-item {

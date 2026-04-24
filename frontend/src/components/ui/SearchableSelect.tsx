@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown } from "lucide-react";
 
 interface SearchableSelectProps {
@@ -22,7 +23,9 @@ export function SearchableSelect({
 }: SearchableSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0, width: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const filtered = options.filter((opt) =>
@@ -30,6 +33,18 @@ export function SearchableSelect({
   );
 
   const selectedOption = options.find((opt) => opt.id === value);
+
+  // Update menu position when opened
+  useEffect(() => {
+    if (isOpen && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setMenuPosition({
+        top: rect.bottom + window.scrollY,
+        left: rect.left + window.scrollX,
+        width: rect.width,
+      });
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -54,6 +69,7 @@ export function SearchableSelect({
       {label && <label className="searchable-select-label">{label}</label>}
       <div className="searchable-select-container">
         <button
+          ref={buttonRef}
           type="button"
           className="searchable-select-button"
           onClick={() => setIsOpen(!isOpen)}
@@ -65,9 +81,19 @@ export function SearchableSelect({
           </span>
           <ChevronDown size={16} className={`chevron ${isOpen ? "open" : ""}`} aria-hidden />
         </button>
+      </div>
 
-        {isOpen && (
-          <div className="searchable-select-menu">
+      {isOpen &&
+        createPortal(
+          <div
+            className="searchable-select-menu"
+            style={{
+              position: "fixed",
+              top: `${menuPosition.top}px`,
+              left: `${menuPosition.left}px`,
+              width: `${menuPosition.width}px`,
+            }}
+          >
             <input
               ref={inputRef}
               type="text"
@@ -102,9 +128,9 @@ export function SearchableSelect({
                 <li className="searchable-select-empty">No hay directorios que coincidan</li>
               )}
             </ul>
-          </div>
+          </div>,
+          document.body
         )}
-      </div>
     </div>
   );
 }
