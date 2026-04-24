@@ -59,6 +59,18 @@ def _pg_apply_lead_contact_fields_migrations() -> list[str]:
     ]
 
 
+def _pg_apply_company_enrichment_fields() -> list[str]:
+    """
+    Migración embebida para sql/005_company_enrichment_fields.sql.
+    Añade website, facebook_url, instagram_url al Lead para búsquedas de negocios.
+    """
+    return [
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS website VARCHAR(500)",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS facebook_url VARCHAR(500)",
+        "ALTER TABLE leads ADD COLUMN IF NOT EXISTS instagram_url VARCHAR(500)",
+    ]
+
+
 def _pg_apply_users_and_owner_migrations() -> list[str]:
     """
     Misma lógica que sql/002_users_and_opportunity_owner.sql, en SQL embebida.
@@ -251,6 +263,8 @@ async def init_db() -> None:
         for stmt in _pg_apply_users_and_owner_migrations():
             await connection.execute(text(stmt))
         for stmt in _pg_apply_lead_contact_fields_migrations():
+            await connection.execute(text(stmt))
+        for stmt in _pg_apply_company_enrichment_fields():
             await connection.execute(text(stmt))
         for stmt in _pg_apply_directories_migrations():
             await connection.execute(text(stmt))
