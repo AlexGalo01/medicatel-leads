@@ -62,17 +62,18 @@ def _professional_intent_rules_block(user_query: str, role_or_stack_hint: str | 
         return ""
     return (
         f"*** REGLA PRINCIPAL — OBLIGATORIA — Alineación con la intención de búsqueda ***\n"
-        f"El usuario busca EXACTAMENTE: \"{search_term}\"\n"
-        f"DEBES verificar que cada resultado sea DIRECTAMENTE del sector/rubro/profesión \"{search_term}\".\n"
-        f"- match=true SOLO si título o excerpt demuestran que el resultado ES una {search_term} "
-        f"o está directamente relacionado con {search_term}.\n"
-        f"- match=false INMEDIATAMENTE si el resultado es de OTRO sector, rubro o actividad. "
-        f"Ejemplos de descarte obligatorio: una papelería NO es una clínica; un hotel NO es un "
-        f"consultorio; una ferretería NO es un hospital; una tienda de ropa NO es un laboratorio. "
-        f"NO importa si coincide geográficamente, si NO es del rubro buscado → match=false.\n"
-        f"- El nombre comercial por sí solo NO prueba nada. \"Clínica Bella Vista\" podría ser "
-        f"un salón de belleza. Verifica en el excerpt que realmente ofrece servicios de {search_term}.\n"
-        f"- Si no puedes confirmar con certeza que el resultado es de {search_term}, match=false y confidence=1.\n"
+        f"Consulta del usuario: \"{user_query}\"\n"
+        f"Sector/profesión objetivo: \"{search_term}\"\n"
+        f"IMPORTANTE: Si '{search_term}' contiene palabras geográficas ('en Honduras', 'en Tegucigalpa', etc.), "
+        f"esas son contexto de ubicación, no el sector. Evalúa SECTOR, no geografía.\n"
+        f"DEBES verificar que cada resultado sea DIRECTAMENTE del sector/profesión buscada.\n"
+        f"- match=true SOLO si título o excerpt demuestran que el resultado ES del sector/profesión objetivo.\n"
+        f"- match=false INMEDIATAMENTE si el resultado es de OTRO sector, rubro o actividad.\n"
+        f"  Si el título del resultado menciona EXPLÍCITAMENTE una profesión diferente (ej: 'maquillista', "
+        f"  'estilista', 'peluquero', 'chef', 'arquitecto') cuando se busca un sector distinto → match=false, confidence=1.\n"
+        f"  Ejemplos: papelería NO es clínica; hotel NO es consultorio; salón de belleza NO es médico.\n"
+        f"- El nombre comercial por sí solo NO prueba nada. Verifica el excerpt.\n"
+        f"- Si no puedes confirmar con certeza que el resultado es del sector buscado → match=false y confidence=1.\n"
     )
 
 
@@ -379,10 +380,10 @@ async def filter_exa_raw_results_by_relevance(
                         match_by_index[idx] = True
                         reasons[idx] = "Sin veredicto del modelo; se conserva."
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Filtro de relevancia Gemini omitido, se conservan ítems no heurísticos: %s", exc)
+            logger.warning("Filtro de relevancia Gemini omitido: %s", exc)
             for idx in pending_indices:
                 if idx not in match_by_index:
-                    match_by_index[idx] = True
+                    match_by_index[idx] = target_iso is None
 
     kept: list[dict[str, Any]] = []
     discarded_meta: list[dict[str, Any]] = []

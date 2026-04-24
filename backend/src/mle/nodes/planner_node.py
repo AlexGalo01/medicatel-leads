@@ -104,7 +104,7 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
         country_iso2=country_iso2,
         city=city_hint or None,
         country_text=country_hint or None,
-        role_or_stack_hint=(entity_hint or normalized_query)[:400] or None,
+        role_or_stack_hint=entity_hint[:400] or None,
         normalized_location=None if normalized_location == "No definida" else normalized_location,
     )
 
