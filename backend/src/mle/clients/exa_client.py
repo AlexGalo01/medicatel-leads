@@ -14,16 +14,38 @@ from mle.observability.langsmith_setup import (
 _DEEP_SEARCH_TYPES = frozenset({"deep", "deep-reasoning", "deep-lite"})
 
 
+def exa_contents_highlights_config(max_characters: int) -> dict[str, Any]:
+    """Bloque `contents` para /search: highlights con tope de caracteres por Exa (ver docs)."""
+    return {"highlights": {"maxCharacters": int(max_characters)}}
+
+
+def exa_contents_full_config(
+    text_max_characters: int,
+    highlights_max_characters: int,
+    subpages: int = 0,
+) -> dict[str, Any]:
+    """
+    Bloque `contents` rico para /search: texto completo + highlights + subpáginas.
+
+    `text.maxCharacters` cap sobre lo que Exa devuelve por página.
+    `subpages > 0` hace que Exa crawlée N subpáginas (p. ej. /contacto, /about) por resultado.
+    """
+    block: dict[str, Any] = {
+        "text": {"maxCharacters": int(text_max_characters)},
+        "highlights": {"maxCharacters": int(highlights_max_characters)},
+    }
+    if subpages and int(subpages) > 0:
+        block["subpages"] = int(subpages)
+    return block
+
+
 def finalize_exa_search_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """
     Ajustes finales antes de POST /search:
     - category people/company es incompatible con includeDomains/excludeDomains (API Exa).
-    - Modos deep benefician de outputSchema tipo texto para sintesis con grounding.
     """
     if payload.get("includeDomains") or payload.get("excludeDomains"):
         payload.pop("category", None)
-    if str(payload.get("type", "")).strip().lower() in _DEEP_SEARCH_TYPES:
-        payload.setdefault("outputSchema", {"type": "text"})
     return payload
 
 

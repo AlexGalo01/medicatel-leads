@@ -24,6 +24,7 @@ class SearchPlan(BaseModel):
     negative_constraints: str = Field(default="", max_length=800)
     clarifying_question: str | None = Field(default=None, max_length=500)
     exa_category: str | None = Field(default=None, max_length=32)
+    company_anchor: dict | None = Field(default=None, description="Para búsquedas de empleados: {company_name, anchor_query}")
 
     @field_validator("additional_queries", mode="before")
     @classmethod
@@ -31,7 +32,7 @@ class SearchPlan(BaseModel):
         if not isinstance(value, list):
             return []
         cleaned: list[str] = []
-        for item in value[:8]:
+        for item in value[:12]:
             text = str(item).strip()
             if text and text not in cleaned:
                 cleaned.append(text[:400])

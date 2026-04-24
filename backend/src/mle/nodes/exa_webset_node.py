@@ -7,9 +7,9 @@ from typing import Any
 
 from langsmith import traceable
 
-from mle.clients.exa_client import ExaClient, finalize_exa_search_payload
+from mle.clients.exa_client import ExaClient, exa_contents_full_config, finalize_exa_search_payload
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
-from mle.core.config import get_settings
+from mle.core.config import effective_exa_search_timeout_seconds, get_settings
 from mle.state.graph_state import LeadSearchGraphState
 
 logger = logging.getLogger(__name__)
@@ -69,9 +69,10 @@ def _build_search_payload_for_query(
     query: str,
     num_results: int,
 ) -> dict[str, Any]:
+    settings = get_settings()
     search_config = planner_output.get("search_config", {})
-    search_type = str(search_config.get("type", "auto")).strip() or "auto"
-    use_highlights = bool(search_config.get("use_highlights", True))
+    # Si el planner no especifica type, usar el default de settings (deep-reasoning por defecto).
+    search_type = str(search_config.get("type") or settings.exa_search_type).strip() or settings.exa_search_type
     include_domains = list(search_config.get("include_domains", []))
     exclude_domains = list(search_config.get("exclude_domains", []))
     exa_category = search_config.get("exa_category")
@@ -87,8 +88,11 @@ def _build_search_payload_for_query(
         payload["userLocation"] = iso
     if exa_category in ("people", "company"):
         payload["category"] = exa_category
-    if use_highlights:
-        payload["contents"] = {"highlights": True}
+    payload["contents"] = exa_contents_full_config(
+        text_max_characters=settings.exa_text_max_characters,
+        highlights_max_characters=settings.exa_highlights_max_characters,
+        subpages=settings.exa_subpages,
+    )
     if include_domains:
         payload["includeDomains"] = include_domains
     if exclude_domains:
@@ -145,7 +149,7 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
         settings = get_settings()
         exa_client = ExaClient(
             api_key=settings.exa_api_key,
-            timeout_seconds=settings.exa_search_timeout_seconds,
+            timeout_seconds=effective_exa_search_timeout_seconds(settings),
         )
 
         batches: list[list[dict[str, Any]]] = []
@@ -154,13 +158,36 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
         batch_stats: list[dict[str, int]] = []
 
         await asyncio.sleep(0)
+
+        # Construir payloads y tareas para ejecución paralela
+        tasks: list[tuple[int, int, str, dict[str, Any]]] = []
         for slot_idx, query_text in enumerate(queries):
             num_for_call = per_slot[slot_idx] if slot_idx < len(per_slot) else per_slot[-1]
             payload = _build_search_payload_for_query(planner_output, query_text, num_for_call)
             payload = _ensure_non_empty_query(payload, fallback_query=state.query_text)
             if not str(payload.get("query", "")).strip():
                 continue
-            search_response = await exa_client.search(payload)
+            tasks.append((slot_idx, num_for_call, str(payload.get("type", "auto")), payload))
+
+        # Ejecutar todas las búsquedas en paralelo
+        search_coroutines = [exa_client.search(payload) for _, _, _, payload in tasks]
+        responses = await asyncio.gather(*search_coroutines, return_exceptions=True)
+
+        # Procesar resultados
+        for response_idx, (slot_idx, num_for_call, search_type, _) in enumerate(tasks):
+            search_response = responses[response_idx]
+            if isinstance(search_response, Exception):
+                logger.warning(
+                    "Exa batch job_id=%s slot=%s/%s falló: %s",
+                    state.job_id,
+                    slot_idx + 1,
+                    n_queries,
+                    search_response,
+                )
+                batches.append([])
+                batch_stats.append({"pedidos": num_for_call, "recibidos": 0})
+                continue
+
             batch_results = _extract_results(search_response)
             batches.append(batch_results)
             batch_stats.append({"pedidos": num_for_call, "recibidos": len(batch_results)})
@@ -173,7 +200,7 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
                 len(batch_results),
             )
             request_ids.append(str(search_response.get("requestId", "")))
-            last_search_type = str(search_response.get("searchType", payload.get("type", "auto")))
+            last_search_type = str(search_response.get("searchType", search_type))
 
         exa_results = _merge_exa_results(batches)
 
