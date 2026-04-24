@@ -5075,6 +5075,7 @@ textarea {
   justify-content: center;
   transition: all 0.15s ease;
   opacity: 0;
+  z-index: 9001;
 }
 
 .directory-card:hover .directory-card-delete {
@@ -5181,6 +5182,7 @@ textarea {
   align-items: center;
   justify-content: center;
   transition: background 0.15s ease;
+  z-index: 9001;
 }
 
 .directories-table-delete:hover {

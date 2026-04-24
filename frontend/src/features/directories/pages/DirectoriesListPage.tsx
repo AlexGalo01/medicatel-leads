@@ -238,8 +238,15 @@ export function DirectoriesListPage(): JSX.Element {
       )}
 
       {confirmDir && (
-        <div className="dirs-confirm-overlay">
-          <div className="dirs-confirm-panel">
+        <div
+          className="dirs-confirm-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !deleteMut.isPending) {
+              setConfirmDeleteId(null);
+            }
+          }}
+        >
+          <div className="dirs-confirm-panel" onClick={(e) => e.stopPropagation()}>
             <h2 className="dirs-confirm-title">Eliminar directorio</h2>
             <p className="dirs-confirm-description">
               ¿Estás seguro de que deseas eliminar el directorio "{confirmDir.name}"? Esta acción
