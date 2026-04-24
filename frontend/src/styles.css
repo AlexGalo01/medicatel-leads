@@ -4976,6 +4976,410 @@ textarea {
   color: var(--color-text);
 }
 
+/* ---- Directories toolbar (search + view toggle) ---- */
+
+.directories-toolbar {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.directories-search-wrap {
+  flex: 1 1 auto;
+  min-width: 200px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.directories-search-input {
+  width: 100%;
+  padding: 8px 12px 8px 32px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.directories-search-input::placeholder {
+  color: var(--color-neutral);
+}
+
+.directories-search-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--focus-ring);
+}
+
+.directories-search-wrap svg {
+  position: absolute;
+  left: 10px;
+  color: var(--color-neutral);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.directories-view-toggle {
+  display: flex;
+  gap: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+
+.directories-view-btn {
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.directories-view-btn:hover {
+  color: var(--color-text);
+}
+
+.directories-view-btn.is-active {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ---- Directory card delete button ---- */
+
+.directory-card {
+  position: relative;
+}
+
+.directory-card-delete {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--color-error);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  opacity: 0;
+}
+
+.directory-card:hover .directory-card-delete {
+  opacity: 1;
+}
+
+.directory-card-delete:hover {
+  background: var(--color-error-bg);
+  border-color: var(--color-error);
+}
+
+/* ---- Directories table view ---- */
+
+.directories-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+.directories-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.directories-table thead tr {
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.directories-table th {
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: var(--text-overline);
+}
+
+.directories-table td {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text);
+}
+
+.directories-table tbody tr {
+  border-bottom: 1px solid var(--color-border);
+  transition: background 0.15s ease;
+}
+
+.directories-table tbody tr:hover {
+  background: var(--color-bg);
+}
+
+.directories-table-name {
+  font-weight: var(--font-weight-medium);
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.directories-table-desc {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-secondary);
+}
+
+.directories-table-badges {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.directories-table-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.directories-table-link {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: var(--radius-control);
+  transition: background 0.15s ease;
+}
+
+.directories-table-link:hover {
+  background: var(--color-primary-tint);
+  text-decoration: underline;
+}
+
+.directories-table-delete {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-control);
+  color: var(--color-error);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+
+.directories-table-delete:hover {
+  background: var(--color-error-bg);
+}
+
+/* ---- Pagination ---- */
+
+.directories-pagination {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6) var(--space-4);
+  flex-wrap: wrap;
+}
+
+.directories-pagination-info {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.directories-pagination-btn {
+  padding: 8px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.directories-pagination-btn:hover:not(:disabled) {
+  background: var(--color-bg);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.directories-pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---- Confirm delete modal ---- */
+
+.dirs-confirm-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+  padding: var(--space-4);
+}
+
+.dirs-confirm-panel {
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+  padding: var(--space-6);
+  max-width: 400px;
+  width: 100%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.dirs-confirm-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: var(--font-weight-semibold);
+  margin: 0;
+  color: var(--color-text);
+}
+
+.dirs-confirm-description {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.dirs-confirm-actions {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
+
+.dirs-confirm-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--radius-control);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.15s ease;
+}
+
+.dirs-confirm-btn--cancel {
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.dirs-confirm-btn--cancel:hover {
+  background: var(--color-border);
+}
+
+.dirs-confirm-btn--delete {
+  background: var(--color-error);
+  color: white;
+}
+
+.dirs-confirm-btn--delete:hover {
+  opacity: 0.9;
+}
+
+/* ---- Responsive ---- */
+
+@media (max-width: 768px) {
+  .directory-board-page {
+    padding: var(--space-6) var(--space-4);
+  }
+
+  .directory-board-head {
+    gap: var(--space-3);
+  }
+
+  .directory-board-head h1 {
+    font-size: var(--text-subhead);
+  }
+
+  .directory-board-head-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .directory-board-columns {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .directory-board-terminate-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .directories-page {
+    padding: var(--space-5) var(--space-4);
+    gap: var(--space-5);
+  }
+
+  .directories-page-head {
+    gap: var(--space-4);
+  }
+
+  .directories-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .directories-toolbar {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .directories-search-wrap {
+    min-width: auto;
+  }
+
+  .directories-table th,
+  .directories-table td {
+    padding: var(--space-2) var(--space-3);
+    font-size: 12px;
+  }
+
+  .directories-pagination {
+    padding: var(--space-4) var(--space-2);
+  }
+
+  .directories-pagination-info {
+    font-size: 12px;
+  }
+
+  .directories-pagination-btn {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+}
+
 /* ---- DirectoryCreate / Edit ---- */
 
 .directory-create-page {
