@@ -188,20 +188,26 @@ def _extract_regex_contacts(text: str, source_url: str) -> list[dict[str, str]]:
 
 
 def _build_exa_search_payload(lead: LeadCore, settings: Settings) -> dict[str, Any]:
+    from urllib.parse import urlparse
+
     parts = [
         lead.full_name,
         lead.specialty,
         lead.city,
         lead.country,
-        "contacto email whatsapp telefono direccion horario sitio web",
     ]
-    if lead.linkedin_url:
-        parts.append(lead.linkedin_url)
+    # Anclar búsqueda al dominio conocido del lead para priorizar resultados correctos
+    if lead.primary_source_url:
+        netloc = urlparse(lead.primary_source_url).netloc.lower().replace("www.", "")
+        if netloc and "linkedin" not in netloc:
+            parts.append(netloc)
+
     query = " ".join(p.strip() for p in parts if p and p.strip())
     payload: dict[str, Any] = {
         "query": query[:900],
         "type": settings.exa_search_type,
         "numResults": 18,
+        "excludeDomains": ["linkedin.com"],
         "contents": exa_contents_full_config(
             text_max_characters=settings.exa_text_max_characters,
             highlights_max_characters=settings.exa_highlights_max_characters,

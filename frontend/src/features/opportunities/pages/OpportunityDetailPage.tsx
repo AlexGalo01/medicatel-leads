@@ -912,9 +912,9 @@ export function OpportunityDetailPage(): JSX.Element {
                       </ul>
                       {r.citations.length > 0 && (
                         <details className="enrich-modal-sources">
-                          <summary>Fuentes ({r.citations.length})</summary>
+                          <summary>Fuentes ({Math.min(r.citations.length, 3)})</summary>
                           <ul>
-                            {r.citations.map((c, i) => (
+                            {r.citations.slice(0, 3).map((c, i) => (
                               <li key={i}>
                                 <a href={c.url} target="_blank" rel="noreferrer" className="enrich-modal-source-link">
                                   {c.url}
