@@ -135,21 +135,23 @@ export function JobExaResultDetailPage(): JSX.Element {
     mutationFn: async () => {
       const opp = oppLookup.data;
       if (opp) {
-        return enrichOpportunity(opp.opportunity_id);
+        return enrichOpportunity(opp.opportunity_id, (msg) => {
+          const idx = ENRICH_STAGES.indexOf(msg);
+          if (idx >= 0) {
+            setEnrichStageIdx(idx);
+          }
+        });
       }
       const newOpp = await createOpportunityFromPreview({ job_id: jobId, exa_preview_index: resultIndex! });
       void queryClient.invalidateQueries({ queryKey: ["opportunity-by-preview", jobId, resultIndex] });
-      return enrichOpportunity(newOpp.opportunity_id);
+      return enrichOpportunity(newOpp.opportunity_id, (msg) => {
+        const idx = ENRICH_STAGES.indexOf(msg);
+        if (idx >= 0) {
+          setEnrichStageIdx(idx);
+        }
+      });
     },
   });
-
-  useEffect(() => {
-    if (!enrichMut.isPending) return;
-    const timer = setInterval(() => {
-      setEnrichStageIdx((i) => Math.min(i + 1, ENRICH_STAGES.length - 1));
-    }, 3500);
-    return () => clearInterval(timer);
-  }, [enrichMut.isPending]);
 
   const profileSectionsQuery = useQuery({
     queryKey: ["profile-sections", jobId, resultIndex],

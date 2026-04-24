@@ -245,6 +245,12 @@ export function DirectoriesListPage(): JSX.Element {
               ¿Estás seguro de que deseas eliminar el directorio "{confirmDir.name}"? Esta acción
               no se puede deshacer.
             </p>
+            {deleteMut.isError && (
+              <p className="error-text" style={{ marginBottom: "1rem" }}>
+                No se pudo eliminar: el directorio contiene oportunidades. Borra o mueve las oportunidades
+                primero.
+              </p>
+            )}
             <div className="dirs-confirm-actions">
               <button
                 onClick={() => setConfirmDeleteId(null)}

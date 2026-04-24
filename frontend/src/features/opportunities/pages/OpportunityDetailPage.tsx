@@ -259,16 +259,14 @@ export function OpportunityDetailPage(): JSX.Element {
   });
 
   const enrichMut = useMutation<OpportunityEnrichResult>({
-    mutationFn: () => enrichOpportunity(opportunityId),
+    mutationFn: () =>
+      enrichOpportunity(opportunityId, (msg) => {
+        const idx = ENRICH_STAGES.indexOf(msg);
+        if (idx >= 0) {
+          setEnrichStageIdx(idx);
+        }
+      }),
   });
-
-  useEffect(() => {
-    if (!enrichMut.isPending) return;
-    const timer = setInterval(() => {
-      setEnrichStageIdx((i) => Math.min(i + 1, ENRICH_STAGES.length - 1));
-    }, 3500);
-    return () => clearInterval(timer);
-  }, [enrichMut.isPending]);
 
   const stageIndex = useMemo(() => {
     if (!data) return 0;

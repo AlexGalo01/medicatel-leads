@@ -518,14 +518,20 @@ async def enrich_lead_contacts(
     settings: Settings | None = None,
     prefetched_maps: dict[str, Any] | None = None,
     exclude_linkedin: bool = False,
+    progress_callback: callable | None = None,
 ) -> EnrichmentResult:
     """Enriquece un lead con Exa (evidencia textual) + OpenCLI (contactos estructurados) + Gemini reviewer.
 
     Función pura: no persiste en DB. El caller decide qué hacer con el resultado.
     Si prefetched_maps está disponible, usa esos datos en lugar de llamar a Google Maps de nuevo.
     exclude_linkedin: si True, excluye linkedin.com de los resultados Exa (solo para enriquecimiento manual).
+    progress_callback: callable async que recibe un string con el mensaje de progreso.
     """
     st = settings or get_settings()
+
+    # Notificar inicio
+    if progress_callback:
+        await progress_callback("Buscando información del perfil en la web...")
 
     # Ejecutar exa y opencli en paralelo usando create_task para mejor control
     exa_task = asyncio.create_task(_exa_evidence(exa_client, lead, st, exclude_linkedin=exclude_linkedin))
@@ -533,6 +539,10 @@ async def enrich_lead_contacts(
 
     # Esperar a que exa termine, luego lanzar deep_fetch en paralelo con opencli
     exa_results, evidence, regex_contacts = await exa_task
+
+    if progress_callback:
+        await progress_callback("Visitando páginas personales y redes sociales...")
+
     deep_fetch_task = asyncio.create_task(
         _deep_fetch_contacts(
             exa_client, exa_results, st,
@@ -541,7 +551,13 @@ async def enrich_lead_contacts(
     )
 
     # Esperar a opencli y deep_fetch en paralelo
+    if progress_callback:
+        await progress_callback("Consultando Google Maps y Knowledge Panel...")
+
     opencli_results, deep_contacts = await asyncio.gather(opencli_task, deep_fetch_task)
+
+    if progress_callback:
+        await progress_callback("Verificando datos con inteligencia artificial...")
 
     # Combinar todos los contactos directos (regex + deep_fetch), deduplicar
     all_direct_contacts = regex_contacts + deep_contacts

@@ -8,7 +8,8 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+import json
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -943,9 +944,13 @@ async def get_opportunity(opportunity_id: UUID) -> OpportunityResponse:
         return _opportunity_to_response(opp, owner=owner, created=False)
 
 
-@protected_router.post("/opportunities/{opportunity_id}/enrich", response_model=OpportunityEnrichResponse)
-async def enrich_opportunity(opportunity_id: UUID) -> OpportunityEnrichResponse:
-    """Enriquece un opportunity buscando contactos (email, teléfono, etc.) en la web."""
+@protected_router.post("/opportunities/{opportunity_id}/enrich")
+async def enrich_opportunity(opportunity_id: UUID):
+    """Enriquece un opportunity buscando contactos (email, teléfono, etc.) en la web.
+
+    Devuelve Server-Sent Events (SSE) con progreso en tiempo real.
+    Último evento contiene los datos de enriquecimiento completos.
+    """
     async with async_session_factory() as session:
         opp_repo = OpportunitiesRepository(session)
         opp = await opp_repo.get_by_id(opportunity_id)
@@ -976,31 +981,44 @@ async def enrich_opportunity(opportunity_id: UUID) -> OpportunityEnrichResponse:
     proposer = get_llm_client(st)
     reviewer = get_reviewer_llm_client(st)
 
-    result = await enrich_lead_contacts(
-        lead,
-        exa_client=exa_client,
-        opencli=opencli,
-        proposer=proposer,
-        reviewer=reviewer,
-        settings=st,
-        exclude_linkedin=True,
-    )
+    async def generate():
+        try:
+            async def send_progress(msg: str):
+                progress_data = {"stage": msg}
+                yield f"data: {json.dumps(progress_data)}\n\n"
 
-    return OpportunityEnrichResponse(
-        status=result.status,
-        message=result.message,
-        email=result.email,
-        phone=result.phone,
-        whatsapp=result.whatsapp,
-        address=result.address,
-        schedule_text=result.schedule_text,
-        website=result.website,
-        facebook_url=result.facebook_url,
-        instagram_url=result.instagram_url,
-        linkedin_url=result.linkedin_url,
-        description=result.description,
-        citations=result.citations,
-    )
+            result = await enrich_lead_contacts(
+                lead,
+                exa_client=exa_client,
+                opencli=opencli,
+                proposer=proposer,
+                reviewer=reviewer,
+                settings=st,
+                exclude_linkedin=True,
+                progress_callback=send_progress,
+            )
+
+            response_data = OpportunityEnrichResponse(
+                status=result.status,
+                message=result.message,
+                email=result.email,
+                phone=result.phone,
+                whatsapp=result.whatsapp,
+                address=result.address,
+                schedule_text=result.schedule_text,
+                website=result.website,
+                facebook_url=result.facebook_url,
+                instagram_url=result.instagram_url,
+                linkedin_url=result.linkedin_url,
+                description=result.description,
+                citations=result.citations,
+            )
+            yield f"event: done\ndata: {response_data.model_dump_json()}\n\n"
+        except Exception as e:
+            error_data = {"error": str(e)}
+            yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @protected_router.patch("/opportunities/{opportunity_id}", response_model=OpportunityResponse)

@@ -442,11 +442,59 @@ export interface OpportunityEnrichResult {
   citations: Array<{ url?: string; title?: string; confidence?: string; source?: string }>;
 }
 
-export async function enrichOpportunity(opportunityId: string): Promise<OpportunityEnrichResult> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities/${opportunityId}/enrich`, {
-    method: "POST",
+export async function enrichOpportunity(
+  opportunityId: string,
+  onProgress?: (message: string) => void
+): Promise<OpportunityEnrichResult> {
+  return new Promise((resolve, reject) => {
+    const token = localStorage.getItem("auth_token") || "";
+    const eventSource = new EventSource(
+      `${apiBaseUrl}/api/v1/opportunities/${opportunityId}/enrich`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      } as any
+    );
+
+    eventSource.addEventListener("message", (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.stage) {
+          onProgress?.(data.stage);
+        }
+      } catch (e) {
+        console.error("Failed to parse progress message:", e);
+      }
+    });
+
+    eventSource.addEventListener("done", (event) => {
+      try {
+        const result = JSON.parse(event.data);
+        eventSource.close();
+        resolve(result);
+      } catch (e) {
+        eventSource.close();
+        reject(new Error("Failed to parse enrichment result"));
+      }
+    });
+
+    eventSource.addEventListener("error", (event) => {
+      try {
+        const error = JSON.parse((event as any).data);
+        eventSource.close();
+        reject(new Error(error.error || "Enrichment failed"));
+      } catch (e) {
+        eventSource.close();
+        reject(new Error("Enrichment failed"));
+      }
+    });
+
+    eventSource.onerror = () => {
+      eventSource.close();
+      reject(new Error("Connection failed"));
+    };
   });
-  return parseJsonResponse<OpportunityEnrichResult>(response);
 }
 
 export async function authLogin(email: string, password: string): Promise<LoginResponse> {
