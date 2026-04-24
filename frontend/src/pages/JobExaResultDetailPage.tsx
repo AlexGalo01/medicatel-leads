@@ -1,13 +1,15 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Briefcase, ChevronLeft, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
+import { Briefcase, ChevronLeft, ChevronRight, ExternalLink, Loader2, Search } from "lucide-react";
 
 import {
   createOpportunityFromPreview,
   getOpportunityByPreview,
   getSearchJobStatus,
   summarizeProfile,
+  enrichOpportunity,
+  type OpportunityEnrichResult,
 } from "../api";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
@@ -63,6 +65,13 @@ function inferLocationFromText(city: string, title: string, snippet: string): st
 /** Evita espera infinita si el backend no responde (p. ej. Gemini colgado). */
 const PROFILE_SUMMARY_TIMEOUT_MS = 90_000;
 
+const ENRICH_STAGES = [
+  "Buscando información del perfil en la web...",
+  "Consultando Google Maps y Knowledge Panel...",
+  "Visitando páginas personales y redes sociales...",
+  "Verificando datos con inteligencia artificial...",
+];
+
 function profileSummaryErrorMessage(err: unknown): string {
   if (err instanceof DOMException && err.name === "AbortError") {
     return "El resumen con IA tardó demasiado o se canceló. Puedes recargar la página o revisar el backend.";
@@ -82,6 +91,8 @@ export function JobExaResultDetailPage(): JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const resultIndex = parseResultIndex(resultIndexParam);
+  const [enrichModalOpen, setEnrichModalOpen] = useState(false);
+  const [enrichStageIdx, setEnrichStageIdx] = useState(0);
 
   const jobQuery = useQuery({
     queryKey: ["job-status", jobId],
@@ -119,6 +130,19 @@ export function JobExaResultDetailPage(): JSX.Element {
       navigate(`/opportunities/${data.opportunity_id}`);
     },
   });
+
+  const enrichMut = useMutation<OpportunityEnrichResult>({
+    mutationFn: () => enrichOpportunity(oppLookup.data?.opportunity_id ?? ""),
+    enabled: Boolean(oppLookup.data?.opportunity_id),
+  });
+
+  useEffect(() => {
+    if (!enrichMut.isPending) return;
+    const timer = setInterval(() => {
+      setEnrichStageIdx((i) => Math.min(i + 1, ENRICH_STAGES.length - 1));
+    }, 3500);
+    return () => clearInterval(timer);
+  }, [enrichMut.isPending]);
 
   const profileSectionsQuery = useQuery({
     queryKey: ["profile-sections", jobId, resultIndex],
@@ -250,11 +274,23 @@ export function JobExaResultDetailPage(): JSX.Element {
                   {profileSummaryErrorMessage(profileSectionsQuery.error)}
                 </p>
               ) : null}
-              <div className="lead-detail-summary-actions">
-                <button type="button" className="workspace-tool-btn" disabled>
-                  Enriquecimiento (próximamente)
-                </button>
-              </div>
+              {existingOpp && (
+                <div className="lead-detail-summary-actions">
+                  <button
+                    type="button"
+                    className="workspace-tool-btn"
+                    onClick={() => {
+                      setEnrichModalOpen(true);
+                      setEnrichStageIdx(0);
+                      enrichMut.reset();
+                      enrichMut.mutate();
+                    }}
+                    disabled={enrichMut.isPending}
+                  >
+                    <Search size={16} aria-hidden /> Enriquecer
+                  </button>
+                </div>
+              )}
               <div className="lead-detail-summary-cards">
                 <article className="lead-detail-summary-card">
                   <h3>Acerca de</h3>
@@ -389,6 +425,104 @@ export function JobExaResultDetailPage(): JSX.Element {
           </section>
         </aside>
       </div>
+
+      {enrichModalOpen && existingOpp && (
+        <div
+          className="enrich-modal-overlay"
+          onClick={() => { if (!enrichMut.isPending) setEnrichModalOpen(false); }}
+        >
+          <div className="enrich-modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="enrich-modal-header">
+              <h3 className="enrich-modal-title">Búsqueda de contactos</h3>
+              {!enrichMut.isPending && (
+                <button
+                  type="button"
+                  className="enrich-modal-close"
+                  aria-label="Cerrar"
+                  onClick={() => setEnrichModalOpen(false)}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {enrichMut.isPending && (
+              <div className="enrich-modal-loading">
+                <Loader2 className="spin" size={32} aria-hidden />
+                <p className="enrich-modal-stage">{ENRICH_STAGES[enrichStageIdx]}</p>
+              </div>
+            )}
+
+            {enrichMut.isError && (
+              <p className="error-text" style={{ padding: "1rem" }}>
+                Error al buscar. Intenta de nuevo.
+              </p>
+            )}
+
+            {enrichMut.isSuccess && enrichMut.data && (() => {
+              const r = enrichMut.data;
+              const found = [
+                { label: "Email",      value: r.email },
+                { label: "Teléfono",   value: r.phone },
+                { label: "WhatsApp",   value: r.whatsapp },
+                { label: "LinkedIn",   value: r.linkedin_url },
+                { label: "Dirección",  value: r.address },
+                { label: "Sitio web",  value: r.website },
+                { label: "Facebook",   value: r.facebook_url },
+                { label: "Instagram",  value: r.instagram_url },
+              ].filter((x) => x.value.trim() !== "");
+
+              return (
+                <div className="enrich-modal-results">
+                  {found.length === 0 ? (
+                    <p className="muted-text" style={{ padding: "0.5rem 0" }}>
+                      No se encontró información de contacto verificada.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="enrich-modal-summary">{found.length} dato{found.length !== 1 ? "s" : ""} encontrado{found.length !== 1 ? "s" : ""}</p>
+                      <ul className="enrich-modal-contact-list">
+                        {found.map((item, i) => (
+                          <li key={i} className="enrich-modal-contact-row">
+                            <span className="enrich-modal-contact-label">{item.label}</span>
+                            <span className="enrich-modal-contact-value">{item.value}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      {r.citations.length > 0 && (
+                        <details className="enrich-modal-sources">
+                          <summary>Fuentes ({Math.min(r.citations.length, 3)})</summary>
+                          <ul>
+                            {r.citations.slice(0, 3).map((c, i) => (
+                              <li key={i}>
+                                <a href={c.url} target="_blank" rel="noreferrer" className="enrich-modal-source-link">
+                                  {c.url}
+                                </a>
+                                {c.source === "direct_regex" && <span className="enrich-modal-source-tag">extracción directa</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                      <Button
+                        type="button"
+                        className="cta-button"
+                        style={{ marginTop: "1rem", width: "100%" }}
+                        onClick={() => {
+                          navigate(`/opportunities/${existingOpp.opportunity_id}`);
+                          setEnrichModalOpen(false);
+                        }}
+                      >
+                        Ver oportunidad con datos
+                      </Button>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
