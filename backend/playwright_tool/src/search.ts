@@ -48,47 +48,78 @@ async function scrapeKnowledgePanel(page: any, query: string): Promise<Record<st
       timeout: 30000,
     });
 
-    // Try JSON-LD structured data first (more stable)
-    const jsonLdScripts = await page.$$eval('script[type="application/ld+json"]', (els: Element[]) =>
-      els.map((e) => {
-        try {
-          return JSON.parse(e.textContent || '{}');
-        } catch {
-          return null;
-        }
-      }).filter(Boolean)
-    );
+    // Wait for page to render
+    await page.waitForTimeout(2000).catch(() => {});
 
     let phone: string | null = null;
     let address: string | null = null;
     let website: string | null = null;
     let hours: string | null = null;
 
-    // Try CSS selectors for Knowledge Panel
+    // Try JSON-LD structured data (most reliable)
     try {
-      phone = await page.$eval('[data-dtype="d3ph"]', (el: Element) => el.textContent?.trim() || null);
-    } catch {
-      phone = await extractFromJsonLd(jsonLdScripts, 'telephone');
-    }
-
-    try {
-      address = await page.$eval('[data-dtype="d3adr"]', (el: Element) => el.textContent?.trim() || null);
-    } catch {
-      address = await extractFromJsonLd(jsonLdScripts, 'address');
-    }
-
-    try {
-      website = await page.$eval('[data-dtype="d3wbg"] a', (el: Element) =>
-        (el as HTMLAnchorElement).href || null
+      const jsonLdScripts = await page.$$eval('script[type="application/ld+json"]', (els: Element[]) =>
+        els.map((e) => {
+          try {
+            return JSON.parse(e.textContent || '{}');
+          } catch {
+            return null;
+          }
+        }).filter(Boolean)
       );
+      if (jsonLdScripts.length > 0) {
+        phone = phone || (await extractFromJsonLd(jsonLdScripts, 'telephone'));
+        address = address || (await extractFromJsonLd(jsonLdScripts, 'address'));
+        website = website || (await extractFromJsonLd(jsonLdScripts, 'url'));
+      }
     } catch {
-      website = await extractFromJsonLd(jsonLdScripts, 'url');
+      // Continue to other methods
+    }
+
+    // Try CSS selectors - use multiple variations for resilience
+    try {
+      phone = phone || (await page.$eval('[data-dtype="d3ph"]', (el: Element) => el.textContent?.trim() || null));
+    } catch {
+      // Try alternative selectors
+      try {
+        phone = phone || (await page.$eval('.wIdbqf .fl', (el: Element) => el.textContent?.trim() || null));
+      } catch {
+        // Continue
+      }
     }
 
     try {
-      hours = await page.$eval('[jsname="yRmGpb"]', (el: Element) => el.textContent?.trim() || null);
+      address = address || (await page.$eval('[data-dtype="d3adr"]', (el: Element) => el.textContent?.trim() || null));
     } catch {
-      // No fallback for hours in JSON-LD typically
+      try {
+        address = address || (await page.$eval('.dbg0md', (el: Element) => el.textContent?.trim() || null));
+      } catch {
+        // Continue
+      }
+    }
+
+    try {
+      website = website || (await page.$eval('[data-dtype="d3wbg"] a', (el: Element) =>
+        (el as HTMLAnchorElement).href || null
+      ));
+    } catch {
+      try {
+        website = website || (await page.$eval('a[data-dtype="d3lk"]', (el: Element) =>
+          (el as HTMLAnchorElement).href || null
+        ));
+      } catch {
+        // Continue
+      }
+    }
+
+    try {
+      hours = hours || (await page.$eval('[jsname="yRmGpb"]', (el: Element) => el.textContent?.trim() || null));
+    } catch {
+      try {
+        hours = hours || (await page.$eval('.xpd.O9g5cc', (el: Element) => el.textContent?.trim() || null));
+      } catch {
+        // Continue
+      }
     }
 
     return {
@@ -112,6 +143,7 @@ async function scrapeMapsPlace(page: any, query: string): Promise<Record<string,
     });
 
     // Wait for map to load
+    await page.waitForTimeout(3000).catch(() => {});
     await page.waitForSelector('[role="region"]', { timeout: 10000 }).catch(() => {});
 
     let phone: string | null = null;
@@ -119,48 +151,55 @@ async function scrapeMapsPlace(page: any, query: string): Promise<Record<string,
     let website: string | null = null;
     let hours: string | null = null;
 
-    // Google Maps selectors - these are fragile but the best approach
+    // Try to find the first result in the list and get its details
     try {
-      const phoneElement = await page.$('[aria-label*="Llamar"], [aria-label*="Phone"], button[data-tooltip*="teléfono"]');
+      await page.click('div[data-item-id]', { timeout: 5000 }).catch(() => {});
+    } catch {
+      // Continue without clicking
+    }
+
+    // Multiple selector variations for resilience
+    try {
+      const phoneElement = await page.$('[aria-label*="Llamar"], [aria-label*="Phone"], [aria-label*="teléfono"]');
       if (phoneElement) {
-        phone = await phoneElement.textContent();
+        phone = (await phoneElement.textContent())?.trim() || null;
       }
     } catch {
-      // No phone found
+      // Continue
     }
 
     try {
-      const addressElement = await page.$('[aria-label*="Dirección"], [aria-label*="Address"]');
+      const addressElement = await page.$('[aria-label*="Dirección"], [aria-label*="Address"], .EKp0qd');
       if (addressElement) {
-        address = await addressElement.textContent();
+        address = (await addressElement.textContent())?.trim() || null;
       }
     } catch {
-      // No address found
+      // Continue
     }
 
     try {
-      const websiteElement = await page.$('[aria-label*="Sitio web"], [aria-label*="Website"] a');
+      const websiteElement = await page.$('[aria-label*="Sitio web"], [aria-label*="Website"], a[aria-label*="website"]');
       if (websiteElement) {
-        website = await websiteElement.getAttribute('href');
+        website = (await websiteElement.getAttribute('href'))?.trim() || null;
       }
     } catch {
-      // No website found
+      // Continue
     }
 
     try {
-      const hoursElement = await page.$('[aria-label*="Horario"], [aria-label*="Hours"]');
+      const hoursElement = await page.$('[aria-label*="Horario"], [aria-label*="Hours"], .OqJZkb');
       if (hoursElement) {
-        hours = await hoursElement.textContent();
+        hours = (await hoursElement.textContent())?.trim() || null;
       }
     } catch {
-      // No hours found
+      // Continue
     }
 
     return {
-      phone: phone?.trim() || null,
-      address: address?.trim() || null,
-      website: website?.trim() || null,
-      hours: hours?.trim() || null,
+      phone: phone || null,
+      address: address || null,
+      website: website || null,
+      hours: hours || null,
       source: 'playwright_maps',
     };
   } catch (error) {
