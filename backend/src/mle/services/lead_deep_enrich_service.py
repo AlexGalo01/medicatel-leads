@@ -1,14 +1,23 @@
+"""Enriquecimiento profundo de contactos: Exa (texto + /contents) + OpenCLI + Gemini reviewer.
+
+La función central `enrich_lead_contacts` es pura (no toca DB) — se usa desde
+`auto_enrich_node` en lotes y desde el wrapper legacy `deep_enrich_lead` por id.
+"""
+
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
-from mle.clients.exa_client import ExaClient, finalize_exa_search_payload
+from mle.clients.exa_client import ExaClient, exa_contents_full_config, finalize_exa_search_payload
 from mle.clients.gemini_client import GeminiClient
-from mle.core.config import get_settings
+from mle.clients.opencli_client import OpenCliClient
+from mle.core.config import Settings, effective_exa_search_timeout_seconds, get_settings
 from mle.db.base import async_session_factory
 from mle.db.models import Lead
 from mle.repositories.leads_repository import LeadsRepository
@@ -17,6 +26,47 @@ from mle.schemas.leads import LeadRead
 logger = logging.getLogger(__name__)
 
 NO_DATA_ES = "No se encontró información adicional verificable en las fuentes recuperadas."
+
+
+@dataclass
+class LeadCore:
+    """Campos mínimos de un lead para alimentar el enriquecimiento (independiente del ORM)."""
+
+    full_name: str
+    specialty: str
+    city: str
+    country: str
+    entity_type: str = "person"  # "person" | "company"
+    linkedin_url: str = ""
+    email: str = ""
+    whatsapp: str = ""
+    phone: str = ""
+    address: str = ""
+    schedule_text: str = ""
+    primary_source_url: str = ""
+
+
+@dataclass
+class EnrichmentResult:
+    email: str = ""
+    whatsapp: str = ""
+    phone: str = ""
+    address: str = ""
+    schedule_text: str = ""
+    website: str = ""
+    facebook_url: str = ""
+    instagram_url: str = ""
+    linkedin_url: str = ""
+    description: str = ""
+    primary_source_url: str = ""
+    citations: list[dict[str, Any]] = field(default_factory=list)
+    enriched_sources: dict[str, Any] = field(default_factory=dict)
+    audit: list[dict[str, Any]] = field(default_factory=list)
+    status: str = "no_verified_data"
+    message: str = ""
+
+
+# ---------------- Exa helpers ----------------
 
 
 def _extract_results(search_response: dict[str, Any]) -> list[dict[str, Any]]:
@@ -68,48 +118,204 @@ def _linkedin_in_evidence(url: str, evidence_lower: str) -> bool:
     return u.rstrip("/") in evidence_lower
 
 
-def _build_exa_payload(lead: Lead) -> dict[str, Any]:
-    name = str(lead.full_name or "").strip()
-    spec = str(lead.specialty or "").strip()
-    city = str(lead.city or "").strip()
-    country = str(lead.country or "").strip()
-    li = str(lead.linkedin_url or "").strip()
-    parts = [name, spec, city, country, "contacto email whatsapp sitio web linkedin facebook instagram"]
-    if li:
-        parts.append(li)
-    query = " ".join(p for p in parts if p)
+def _build_exa_search_payload(lead: LeadCore, settings: Settings) -> dict[str, Any]:
+    parts = [
+        lead.full_name,
+        lead.specialty,
+        lead.city,
+        lead.country,
+        "contacto email whatsapp telefono direccion horario sitio web",
+    ]
+    if lead.linkedin_url:
+        parts.append(lead.linkedin_url)
+    query = " ".join(p.strip() for p in parts if p and p.strip())
     payload: dict[str, Any] = {
         "query": query[:900],
-        "type": get_settings().exa_search_type,
-        "category": "people",
+        "type": settings.exa_search_type,
         "numResults": 18,
-        "contents": {"highlights": True},
+        "contents": exa_contents_full_config(
+            text_max_characters=settings.exa_text_max_characters,
+            highlights_max_characters=settings.exa_highlights_max_characters,
+            subpages=settings.exa_subpages,
+        ),
     }
     return finalize_exa_search_payload(payload)
 
 
-def _proposer_prompt(evidence: str, lead: Lead) -> str:
+async def _exa_evidence(
+    exa_client: ExaClient,
+    lead: LeadCore,
+    settings: Settings,
+) -> tuple[list[dict[str, Any]], str]:
+    """Combina /contents sobre primary_source_url (si existe) + /search genérica."""
+    results: list[dict[str, Any]] = []
+    if lead.primary_source_url:
+        try:
+            contents_payload: dict[str, Any] = {
+                "ids": [lead.primary_source_url],
+                "text": {"maxCharacters": settings.exa_text_max_characters},
+                "highlights": {"maxCharacters": settings.exa_highlights_max_characters},
+                "subpages": settings.exa_subpages,
+            }
+            contents_response = await exa_client.get_contents(contents_payload)
+            results.extend(_extract_results(contents_response))
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Exa /contents para %s falló (degrade safe): %s", lead.primary_source_url, exc)
+
+    try:
+        search_payload = _build_exa_search_payload(lead, settings)
+        search_response = await exa_client.search(search_payload)
+        results.extend(_extract_results(search_response))
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Exa /search para %s falló (degrade safe): %s", lead.full_name, exc)
+
+    evidence = _flatten_evidence(results)
+    return results, evidence
+
+
+# ---------------- OpenCLI evidence ----------------
+
+
+async def _opencli_evidence(
+    opencli: OpenCliClient,
+    lead: LeadCore,
+) -> dict[str, Any]:
+    """Lanza adapters OpenCLI en paralelo y retorna dict por fuente.
+
+    Para empresas: query simplificada (solo nombre + ciudad).
+    Para personas: query completa (nombre + especialidad + ciudad).
+    Para empresas: Facebook e Instagram siempre habilitados.
+    """
+    if not opencli.enabled:
+        return {}
+
+    is_company = lead.entity_type == "company"
+
+    if is_company:
+        # Para empresas: solo nombre + ciudad para no confundir Google Maps
+        google_q = lead.full_name.strip()
+        if lead.city:
+            google_q = f"{google_q} {lead.city}".strip()
+        maps_q = google_q
+    else:
+        # Para personas: nombre + especialidad + ciudad (comportamiento original)
+        name_query = lead.full_name.strip()
+        if lead.specialty:
+            name_query = f"{name_query} {lead.specialty}".strip()
+        if lead.city:
+            name_query = f"{name_query} {lead.city}".strip()
+        google_q = maps_q = name_query
+
+    tasks = {
+        "google_search": opencli.google_search(google_q),
+        "google_maps": opencli.google_maps(maps_q),
+    }
+
+    # Doctoralia solo para personas
+    if not is_company:
+        tasks["doctoralia"] = opencli.doctoralia(lead.full_name, lead.specialty, lead.city)
+
+    # Para empresas: Facebook e Instagram siempre activados
+    # Para personas: solo si está habilitado en settings
+    if is_company or opencli.include_facebook:
+        tasks["facebook"] = opencli.facebook_page(google_q)
+    if is_company or opencli.include_instagram:
+        tasks["instagram"] = opencli.instagram_profile(google_q)
+
+    keys = list(tasks.keys())
+    values = await asyncio.gather(*tasks.values(), return_exceptions=True)
+
+    out: dict[str, Any] = {}
+    for k, v in zip(keys, values, strict=False):
+        if isinstance(v, Exception):
+            logger.info("OpenCLI %s levantó excepción: %s", k, v)
+            continue
+        if isinstance(v, dict) and v:
+            out[k] = v
+    return out
+
+
+def _merge_opencli_contacts(opencli_results: dict[str, Any]) -> dict[str, str]:
+    """Prioriza fuentes por confiabilidad: maps > search > doctoralia > redes.
+
+    Extrae también URLs de redes sociales (facebook_url, instagram_url) desde profile_url.
+    """
+    priority = ["google_maps", "google_search", "doctoralia", "facebook", "instagram"]
+    merged: dict[str, str] = {
+        "phone": "",
+        "address": "",
+        "schedule_text": "",
+        "website": "",
+        "email": "",
+        "facebook_url": "",
+        "instagram_url": "",
+    }
+
+    for src in priority:
+        data = opencli_results.get(src) or {}
+        if not isinstance(data, dict):
+            continue
+        for target, candidates in (
+            ("phone", ["phone"]),
+            ("address", ["address"]),
+            ("schedule_text", ["hours", "schedule_text"]),
+            ("website", ["website"]),
+            ("email", ["email"]),
+        ):
+            if merged[target]:
+                continue
+            for key in candidates:
+                v = data.get(key)
+                if isinstance(v, str) and v.strip():
+                    merged[target] = v.strip()
+                    break
+
+    # Extraer URLs de redes sociales desde profile_url
+    if not merged["facebook_url"]:
+        fb_data = opencli_results.get("facebook") or {}
+        if isinstance(fb_data, dict):
+            profile_url = fb_data.get("profile_url")
+            if isinstance(profile_url, str) and profile_url.strip():
+                merged["facebook_url"] = profile_url.strip()
+
+    if not merged["instagram_url"]:
+        ig_data = opencli_results.get("instagram") or {}
+        if isinstance(ig_data, dict):
+            profile_url = ig_data.get("profile_url")
+            if isinstance(profile_url, str) and profile_url.strip():
+                merged["instagram_url"] = profile_url.strip()
+
+    return merged
+
+
+# ---------------- Prompts ----------------
+
+
+def _proposer_prompt(evidence: str, lead: LeadCore, opencli_contacts: dict[str, str]) -> str:
     ctx = json.dumps(
         {
             "full_name": lead.full_name,
             "specialty": lead.specialty,
             "city": lead.city,
             "country": lead.country,
-            "linkedin_url_known": lead.linkedin_url or "",
-            "email_known": lead.email or "",
-            "whatsapp_known": lead.whatsapp or "",
+            "linkedin_url_known": lead.linkedin_url,
+            "email_known": lead.email,
+            "whatsapp_known": lead.whatsapp,
+            "opencli_phone": opencli_contacts.get("phone", ""),
+            "opencli_address": opencli_contacts.get("address", ""),
+            "opencli_hours": opencli_contacts.get("schedule_text", ""),
         },
         ensure_ascii=False,
     )
     return (
-        "Eres analista de datos de contacto B2B medico. SOLO puedes usar datos que aparezcan literalmente en EVIDENCIA.\n"
-        "Si un dato no esta escrito en EVIDENCIA, deja cadena vacia. No infieras ni completes.\n\n"
+        "Eres analista de datos de contacto B2B médico. SOLO puedes usar datos que aparezcan literalmente en EVIDENCIA.\n"
+        "Si un dato no está escrito en EVIDENCIA, deja cadena vacía. No infieras ni completes.\n\n"
         f"CONTEXTO_LEAD_JSON: {ctx}\n\n"
         f"EVIDENCIA:\n{evidence}\n\n"
         "Devuelve SOLO JSON con claves exactas:\n"
-        '{"description": "texto breve en español solo con hechos de EVIDENCIA, maximo 600 caracteres", '
+        '{"description": "texto breve en español solo con hechos de EVIDENCIA, máximo 600 caracteres", '
         '"email": "", "whatsapp": "", "linkedin_url": ""}\n'
-        "email y whatsapp y linkedin_url deben ser copias exactas de fragmentos de EVIDENCIA o vacios."
+        "email, whatsapp y linkedin_url deben ser copias exactas de fragmentos de EVIDENCIA o vacíos."
     )
 
 
@@ -118,8 +324,8 @@ def _reviewer_prompt(evidence: str, proposal: dict[str, Any]) -> str:
     return (
         "Eres un auditor estricto anti-alucinaciones. Recibes EVIDENCIA (texto) y una PROPUESTA_JSON.\n"
         "Tu trabajo: para description_final, email_final, whatsapp_final, linkedin_url_final, copia SOLO valores "
-        "que sean subcadenas exactas reproducibles desde EVIDENCIA o deja cadena vacia si no hay prueba.\n"
-        "Si la propuesta inventa datos, rechazalos (cadena vacia).\n"
+        "que sean subcadenas exactas reproducibles desde EVIDENCIA o deja cadena vacía si no hay prueba.\n"
+        "Si la propuesta inventa datos, rechazalos (cadena vacía).\n"
         "Incluye lista rejected con objetos {field, reason} en español para cada campo vaciado.\n\n"
         f"EVIDENCIA:\n{evidence}\n\nPROPUESTA_JSON:\n{proposal_txt}\n\n"
         "Devuelve SOLO JSON con claves exactas:\n"
@@ -128,11 +334,11 @@ def _reviewer_prompt(evidence: str, proposal: dict[str, Any]) -> str:
     )
 
 
-def _gate_finals(
-    evidence_lower: str,
-    finals: dict[str, str],
-) -> dict[str, str]:
-    out = {k: (finals.get(k) or "").strip() for k in ("description_final", "email_final", "whatsapp_final", "linkedin_url_final")}
+def _gate_finals(evidence_lower: str, finals: dict[str, str]) -> dict[str, str]:
+    out = {
+        k: (finals.get(k) or "").strip()
+        for k in ("description_final", "email_final", "whatsapp_final", "linkedin_url_final")
+    }
     desc = out["description_final"]
     if desc and desc.lower() not in evidence_lower:
         out["description_final"] = ""
@@ -148,48 +354,63 @@ def _gate_finals(
     return out
 
 
-async def deep_enrich_lead(lead_id: UUID) -> LeadRead | None:
-    settings = get_settings()
-    async with async_session_factory() as session:
-        repo = LeadsRepository(session)
-        lead_orm = await repo.get_orm_by_id(lead_id)
-        if lead_orm is None:
-            return None
+# ---------------- Core enrichment function ----------------
 
-        exa_client = ExaClient(
-            api_key=settings.exa_api_key,
-            timeout_seconds=settings.exa_search_timeout_seconds,
-        )
-        payload = _build_exa_payload(lead_orm)
+
+async def enrich_lead_contacts(
+    lead: LeadCore,
+    *,
+    exa_client: ExaClient,
+    opencli: OpenCliClient,
+    proposer: GeminiClient,
+    reviewer: GeminiClient,
+    settings: Settings | None = None,
+) -> EnrichmentResult:
+    """Enriquece un lead con Exa (evidencia textual) + OpenCLI (contactos estructurados) + Gemini reviewer.
+
+    Función pura: no persiste en DB. El caller decide qué hacer con el resultado.
+    """
+    st = settings or get_settings()
+
+    exa_task = _exa_evidence(exa_client, lead, st)
+    opencli_task = _opencli_evidence(opencli, lead)
+    (exa_results, evidence), opencli_results = await asyncio.gather(exa_task, opencli_task)
+
+    opencli_merged = _merge_opencli_contacts(opencli_results)
+
+    result = EnrichmentResult(enriched_sources=opencli_results)
+
+    # Contactos estructurados (Google Knowledge Panel, Maps, etc.) tienen preferencia directa.
+    if opencli_merged["phone"] and not lead.phone:
+        result.phone = opencli_merged["phone"][:40]
+    if opencli_merged["address"] and not lead.address:
+        result.address = opencli_merged["address"][:500]
+    if opencli_merged["schedule_text"] and not lead.schedule_text:
+        result.schedule_text = opencli_merged["schedule_text"][:500]
+    if opencli_merged["website"]:
+        result.website = opencli_merged["website"][:500]
+    if opencli_merged["facebook_url"]:
+        result.facebook_url = opencli_merged["facebook_url"][:500]
+    if opencli_merged["instagram_url"]:
+        result.instagram_url = opencli_merged["instagram_url"][:500]
+
+    # Si no hay evidencia ni de Exa ni de OpenCLI, termina no_verified_data.
+    if not evidence.strip() and not any([result.phone, result.address, result.schedule_text]):
+        result.message = NO_DATA_ES
+        return result
+
+    # Gemini proposer + reviewer sobre evidencia Exa.
+    if evidence.strip():
         try:
-            search_response = await exa_client.search(payload)
+            proposal = await proposer.complete_json_prompt(_proposer_prompt(evidence, lead, opencli_merged))
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Exa fallo en deep enrich lead_id=%s: %s", lead_id, exc)
-            await _persist_no_data(repo, lead_orm, reason="exa_error")
-            refreshed = await repo.get_by_id(lead_id)
-            return refreshed
-
-        results = _extract_results(search_response)
-        if not results:
-            await _persist_no_data(repo, lead_orm, reason="sin_resultados_exa")
-            return await repo.get_by_id(lead_id)
-
-        evidence = _flatten_evidence(results)
-        evidence_lower = evidence.lower()
-
-        proposer = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_model)
-        reviewer = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_reviewer_model)
-
-        try:
-            proposal = await proposer.complete_json_prompt(_proposer_prompt(evidence, lead_orm))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Gemini proponente fallo: %s", exc)
+            logger.warning("Gemini proponente falló: %s", exc)
             proposal = {"description": "", "email": "", "whatsapp": "", "linkedin_url": ""}
 
         try:
             reviewed = await reviewer.complete_json_prompt(_reviewer_prompt(evidence, proposal))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Gemini revisora fallo: %s", exc)
+            logger.warning("Gemini revisora falló: %s", exc)
             reviewed = {
                 "description_final": "",
                 "email_final": "",
@@ -199,7 +420,7 @@ async def deep_enrich_lead(lead_id: UUID) -> LeadRead | None:
             }
 
         finals = _gate_finals(
-            evidence_lower,
+            evidence.lower(),
             {
                 "description_final": str(reviewed.get("description_final", "")),
                 "email_final": str(reviewed.get("email_final", "")),
@@ -208,89 +429,153 @@ async def deep_enrich_lead(lead_id: UUID) -> LeadRead | None:
             },
         )
 
-        has_contact = any(
-            [
-                finals["email_final"],
-                finals["whatsapp_final"],
-                finals["linkedin_url_final"],
-            ]
-        )
-        has_desc = bool(finals["description_final"])
-        if not has_contact and not has_desc:
-            await _persist_no_data(repo, lead_orm, reason="sin_datos_verificables", audit=reviewed.get("rejected"))
-            return await repo.get_by_id(lead_id)
+        if finals["email_final"] and not lead.email:
+            result.email = finals["email_final"][:255]
+        if finals["whatsapp_final"] and not lead.whatsapp:
+            result.whatsapp = finals["whatsapp_final"][:30]
+        if finals["linkedin_url_final"] and not lead.linkedin_url:
+            result.linkedin_url = finals["linkedin_url_final"][:500]
+        result.description = finals["description_final"]
+        result.audit = list(reviewed.get("rejected") or [])[:20]
 
-        base_reason = (lead_orm.score_reasoning or "").strip()
-        enrich_block = finals["description_final"] if has_desc else NO_DATA_ES
-        new_reasoning = (
-            f"{base_reason}\n\n[Búsqueda extensiva]\n{enrich_block}".strip()
-            if base_reason
-            else f"[Búsqueda extensiva]\n{enrich_block}".strip()
-        )
+    # Fallback: OpenCLI también puede haber encontrado email (sin evidencia LLM pero adapter determinista).
+    if opencli_merged["email"] and not lead.email and not result.email:
+        result.email = opencli_merged["email"][:255]
 
-        existing_cites: list[dict[str, Any]] = []
-        if isinstance(lead_orm.source_citations, list):
-            existing_cites = [c for c in lead_orm.source_citations if isinstance(c, dict)]
-        seen_urls = {str(c.get("url", "")).strip() for c in existing_cites if c.get("url")}
-        for item in results:
-            u = str(item.get("url", "")).strip()
-            if u and u not in seen_urls:
-                existing_cites.append(
-                    {
-                        "url": u,
-                        "title": str(item.get("title", "") or "Fuente")[:240],
-                        "confidence": "medium",
-                        "source": "deep_enrich_exa",
-                    }
-                )
-                seen_urls.add(u)
-
-        updates: dict[str, Any] = {
-            "score_reasoning": new_reasoning[:1000],
-            "source_citations": existing_cites,
-            "langsmith_metadata": {
-                "last_deep_enrich": {
-                    "status": "enriched" if (has_desc or has_contact) else "no_verified_data",
-                    "message": "Datos verificados en fuentes recuperadas." if has_contact or has_desc else NO_DATA_ES,
-                    "audit": reviewed.get("rejected", [])[:20],
+    # Citations: URLs de Exa.
+    citations: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for item in exa_results:
+        u = str(item.get("url", "")).strip()
+        if u and u not in seen_urls:
+            citations.append(
+                {
+                    "url": u,
+                    "title": str(item.get("title", "") or "Fuente")[:240],
+                    "confidence": "medium",
+                    "source": "auto_enrich_exa",
                 }
-            },
-        }
+            )
+            seen_urls.add(u)
+    result.citations = citations
+    if citations and not lead.primary_source_url:
+        result.primary_source_url = str(citations[0].get("url", ""))[:500]
 
-        if finals["email_final"] and not (lead_orm.email or "").strip():
-            updates["email"] = finals["email_final"][:255]
-        if finals["whatsapp_final"] and not (lead_orm.whatsapp or "").strip():
-            updates["whatsapp"] = finals["whatsapp_final"][:30]
-        if finals["linkedin_url_final"] and not (lead_orm.linkedin_url or "").strip():
-            updates["linkedin_url"] = finals["linkedin_url_final"][:500]
-
-        if not (lead_orm.primary_source_url or "").strip() and existing_cites:
-            first_url = str(existing_cites[0].get("url", "")).strip()
-            if first_url:
-                updates["primary_source_url"] = first_url[:500]
-
-        await repo.apply_field_updates(lead_id, updates)
-        return await repo.get_by_id(lead_id)
+    has_contact = any([result.email, result.whatsapp, result.linkedin_url, result.phone, result.address])
+    has_desc = bool(result.description)
+    if has_contact or has_desc or result.schedule_text:
+        result.status = "enriched"
+        result.message = "Datos verificados en fuentes recuperadas."
+    else:
+        result.status = "no_verified_data"
+        result.message = NO_DATA_ES
+    return result
 
 
-async def _persist_no_data(repo: LeadsRepository, lead: Lead, reason: str, audit: Any = None) -> None:
-    base = (lead.score_reasoning or "").strip()
-    block = NO_DATA_ES
-    new_reasoning = (
-        f"{base}\n\n[Búsqueda extensiva]\n{block}".strip() if base else f"[Búsqueda extensiva]\n{block}".strip()
+def _lead_to_core(lead: Lead) -> LeadCore:
+    return LeadCore(
+        full_name=str(lead.full_name or ""),
+        specialty=str(lead.specialty or ""),
+        city=str(lead.city or ""),
+        country=str(lead.country or ""),
+        entity_type="person",  # Default; el auto_enrich_node puede sobrescribir
+        linkedin_url=str(lead.linkedin_url or ""),
+        email=str(lead.email or ""),
+        whatsapp=str(lead.whatsapp or ""),
+        phone=str(lead.phone or ""),
+        address=str(lead.address or ""),
+        schedule_text=str(lead.schedule_text or ""),
+        primary_source_url=str(lead.primary_source_url or ""),
     )
-    meta_patch = {
+
+
+def build_lead_updates(lead: Lead, enrichment: EnrichmentResult) -> dict[str, Any]:
+    """Convierte un EnrichmentResult en un diff aplicable por LeadsRepository.apply_field_updates."""
+    updates: dict[str, Any] = {}
+
+    if enrichment.email and not (lead.email or "").strip():
+        updates["email"] = enrichment.email
+    if enrichment.whatsapp and not (lead.whatsapp or "").strip():
+        updates["whatsapp"] = enrichment.whatsapp
+    if enrichment.linkedin_url and not (lead.linkedin_url or "").strip():
+        updates["linkedin_url"] = enrichment.linkedin_url
+    if enrichment.phone and not (lead.phone or "").strip():
+        updates["phone"] = enrichment.phone
+    if enrichment.address and not (lead.address or "").strip():
+        updates["address"] = enrichment.address
+    if enrichment.schedule_text and not (lead.schedule_text or "").strip():
+        updates["schedule_text"] = enrichment.schedule_text
+    if enrichment.website and not (lead.website or "").strip():
+        updates["website"] = enrichment.website
+    if enrichment.facebook_url and not (lead.facebook_url or "").strip():
+        updates["facebook_url"] = enrichment.facebook_url
+    if enrichment.instagram_url and not (lead.instagram_url or "").strip():
+        updates["instagram_url"] = enrichment.instagram_url
+
+    if enrichment.citations:
+        existing = lead.source_citations if isinstance(lead.source_citations, list) else []
+        existing_normalized = [c for c in existing if isinstance(c, dict)]
+        seen_urls = {str(c.get("url", "")).strip() for c in existing_normalized if c.get("url")}
+        merged = list(existing_normalized)
+        for c in enrichment.citations:
+            u = str(c.get("url", "")).strip()
+            if u and u not in seen_urls:
+                merged.append(c)
+                seen_urls.add(u)
+        updates["source_citations"] = merged
+
+    if enrichment.primary_source_url and not (lead.primary_source_url or "").strip():
+        updates["primary_source_url"] = enrichment.primary_source_url[:500]
+
+    if enrichment.enriched_sources:
+        base = dict(lead.enriched_sources or {})
+        base.update(enrichment.enriched_sources)
+        updates["enriched_sources"] = base
+
+    base_reason = (lead.score_reasoning or "").strip()
+    enrich_block = enrichment.description if enrichment.description else NO_DATA_ES
+    new_reasoning = (
+        f"{base_reason}\n\n[Búsqueda extensiva]\n{enrich_block}".strip()
+        if base_reason
+        else f"[Búsqueda extensiva]\n{enrich_block}".strip()
+    )
+    updates["score_reasoning"] = new_reasoning[:1000]
+
+    updates["langsmith_metadata"] = {
         "last_deep_enrich": {
-            "status": "no_verified_data",
-            "message": NO_DATA_ES,
-            "reason": reason,
-            "audit": audit if isinstance(audit, list) else [],
+            "status": enrichment.status,
+            "message": enrichment.message,
+            "audit": enrichment.audit,
         }
     }
-    await repo.apply_field_updates(
-        lead.id,
-        {
-            "score_reasoning": new_reasoning[:1000],
-            "langsmith_metadata": meta_patch,
-        },
-    )
+    return updates
+
+
+async def deep_enrich_lead(lead_id: UUID) -> LeadRead | None:
+    """Wrapper legacy para el endpoint manual: carga lead, enriquece, persiste."""
+    settings = get_settings()
+    async with async_session_factory() as session:
+        repo = LeadsRepository(session)
+        lead_orm = await repo.get_orm_by_id(lead_id)
+        if lead_orm is None:
+            return None
+
+        exa_client = ExaClient(
+            api_key=settings.exa_api_key,
+            timeout_seconds=effective_exa_search_timeout_seconds(settings),
+        )
+        opencli = OpenCliClient(settings)
+        proposer = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_model)
+        reviewer = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_reviewer_model)
+
+        enrichment = await enrich_lead_contacts(
+            _lead_to_core(lead_orm),
+            exa_client=exa_client,
+            opencli=opencli,
+            proposer=proposer,
+            reviewer=reviewer,
+            settings=settings,
+        )
+        updates = build_lead_updates(lead_orm, enrichment)
+        await repo.apply_field_updates(lead_id, updates)
+        return await repo.get_by_id(lead_id)

@@ -11,6 +11,12 @@ class LeadContacts(BaseModel):
     email: str | None = None
     whatsapp: str | None = None
     linkedin_url: HttpUrl | None = None
+    phone: str | None = None
+    address: str | None = None
+    schedule_text: str | None = None
+    website: str | None = None
+    facebook_url: str | None = None
+    instagram_url: str | None = None
 
 
 class LeadSourceCitation(BaseModel):
@@ -32,6 +38,7 @@ class LeadRead(BaseModel):
     contacts: LeadContacts
     primary_source_url: HttpUrl | None = None
     source_citations: list[LeadSourceCitation] = Field(default_factory=list)
+    enriched_sources: dict[str, Any] = Field(default_factory=dict)
     langsmith_metadata: dict[str, Any] = Field(default_factory=dict)
     validation_status: str
     created_at: datetime
