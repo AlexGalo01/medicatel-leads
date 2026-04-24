@@ -132,8 +132,15 @@ export function JobExaResultDetailPage(): JSX.Element {
   });
 
   const enrichMut = useMutation<OpportunityEnrichResult>({
-    mutationFn: () => enrichOpportunity(oppLookup.data?.opportunity_id ?? ""),
-    enabled: Boolean(oppLookup.data?.opportunity_id),
+    mutationFn: async () => {
+      const opp = oppLookup.data;
+      if (opp) {
+        return enrichOpportunity(opp.opportunity_id);
+      }
+      const newOpp = await createOpportunityFromPreview({ job_id: jobId, exa_preview_index: resultIndex! });
+      void queryClient.invalidateQueries({ queryKey: ["opportunity-by-preview", jobId, resultIndex] });
+      return enrichOpportunity(newOpp.opportunity_id);
+    },
   });
 
   useEffect(() => {
@@ -274,23 +281,21 @@ export function JobExaResultDetailPage(): JSX.Element {
                   {profileSummaryErrorMessage(profileSectionsQuery.error)}
                 </p>
               ) : null}
-              {existingOpp && (
-                <div className="lead-detail-summary-actions">
-                  <button
-                    type="button"
-                    className="workspace-tool-btn"
-                    onClick={() => {
-                      setEnrichModalOpen(true);
-                      setEnrichStageIdx(0);
-                      enrichMut.reset();
-                      enrichMut.mutate();
-                    }}
-                    disabled={enrichMut.isPending}
-                  >
-                    <Search size={16} aria-hidden /> Enriquecer
-                  </button>
-                </div>
-              )}
+              <div className="lead-detail-summary-actions">
+                <button
+                  type="button"
+                  className="workspace-tool-btn"
+                  onClick={() => {
+                    setEnrichModalOpen(true);
+                    setEnrichStageIdx(0);
+                    enrichMut.reset();
+                    enrichMut.mutate();
+                  }}
+                  disabled={enrichMut.isPending}
+                >
+                  <Search size={16} aria-hidden /> Enriquecer
+                </button>
+              </div>
               <div className="lead-detail-summary-cards">
                 <article className="lead-detail-summary-card">
                   <h3>Acerca de</h3>
@@ -426,7 +431,7 @@ export function JobExaResultDetailPage(): JSX.Element {
         </aside>
       </div>
 
-      {enrichModalOpen && existingOpp && (
+      {enrichModalOpen && (
         <div
           className="enrich-modal-overlay"
           onClick={() => { if (!enrichMut.isPending) setEnrichModalOpen(false); }}
@@ -504,17 +509,26 @@ export function JobExaResultDetailPage(): JSX.Element {
                           </ul>
                         </details>
                       )}
-                      <Button
-                        type="button"
-                        className="cta-button"
-                        style={{ marginTop: "1rem", width: "100%" }}
-                        onClick={() => {
-                          navigate(`/opportunities/${existingOpp.opportunity_id}`);
-                          setEnrichModalOpen(false);
-                        }}
-                      >
-                        Ver oportunidad con datos
-                      </Button>
+                      <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
+                        <Button
+                          type="button"
+                          className="cta-button"
+                          style={{ flex: 1 }}
+                          onClick={() => {
+                            setEnrichModalOpen(false);
+                            void queryClient.invalidateQueries({ queryKey: ["opportunity-by-preview", jobId, resultIndex] });
+                          }}
+                        >
+                          Crear oportunidad
+                        </Button>
+                        <Button
+                          type="button"
+                          className="link-button"
+                          onClick={() => setEnrichModalOpen(false)}
+                        >
+                          Descartar
+                        </Button>
+                      </div>
                     </>
                   )}
                 </div>
