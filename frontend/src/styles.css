@@ -5789,90 +5789,155 @@ textarea {
   align-items: center;
 }
 
-.directory-board-searches {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
-  background: var(--color-surface);
-  overflow: hidden;
+/* ── Directory board tabs ── */
+.directory-board-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--color-border);
+  margin-bottom: var(--space-4);
 }
 
-.directory-board-searches > summary {
-  display: flex;
+.directory-board-tab {
+  display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  cursor: pointer;
-  list-style: none;
-  font-family: var(--font-sans);
+  padding: var(--space-2) var(--space-4);
   font-size: var(--text-small);
   font-weight: var(--font-weight-medium);
+  color: var(--color-neutral);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.directory-board-tab:hover {
   color: var(--color-text);
 }
 
-.directory-board-searches > summary::-webkit-details-marker {
-  display: none;
+.directory-board-tab.is-active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
 }
 
-.directory-board-searches > summary:hover {
-  background: var(--color-bg);
+.directory-board-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  background: var(--color-border);
+  color: var(--color-text-secondary);
 }
 
-.directory-board-searches > summary .muted-text {
-  margin-left: var(--space-1);
+.directory-board-tab.is-active .directory-board-tab-count {
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+  color: var(--color-primary);
 }
 
-.directory-board-searches-chev {
-  margin-left: auto;
-  color: var(--color-neutral);
-  transition: transform 0.15s ease;
+/* ── Searches tab panel ── */
+.directory-searches-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
-.directory-board-searches[open] .directory-board-searches-chev {
-  transform: rotate(180deg);
+.directory-searches-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
 
-.directory-board-searches-body {
-  padding: var(--space-3) var(--space-4) var(--space-4);
-  border-top: 1px solid var(--color-border);
+.directory-searches-title {
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-semibold);
+  margin: 0;
 }
 
-.directory-board-searches-list {
+.directory-searches-subtitle {
+  margin: 2px 0 0;
+  font-size: var(--text-small);
+}
+
+.directory-searches-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-card);
+}
+
+.directory-searches-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
-.directory-board-search-row {
+.directory-searches-row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-2);
-  border-radius: var(--radius-chip);
+  padding: var(--space-3) var(--space-3);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--color-border);
   text-decoration: none;
   color: var(--color-text);
-  transition: background 0.15s ease;
+  background: var(--color-surface);
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.directory-board-search-row:hover {
+.directory-searches-row:hover {
+  border-color: var(--color-primary);
   background: var(--color-bg);
 }
 
-.directory-board-search-query {
+.directory-searches-row-main {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.directory-searches-row-query {
+  font-size: var(--text-small);
+  font-weight: var(--font-weight-medium);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: var(--text-small);
 }
 
-.directory-board-search-meta {
+.directory-searches-row-badges {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.directory-searches-row-meta {
   font-size: var(--text-caption);
+  color: var(--color-neutral);
+  white-space: nowrap;
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+.directory-searches-row-icon {
+  color: var(--color-neutral);
+  flex-shrink: 0;
 }
 
 .directory-board-columns {

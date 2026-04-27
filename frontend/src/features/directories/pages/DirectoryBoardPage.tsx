@@ -11,7 +11,19 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { useDraggable } from "@dnd-kit/core";
-import { ChevronLeft, CheckCircle2, XCircle, Pencil, RotateCcw, Flag, Clock3, ChevronDown } from "lucide-react";
+import {
+  ChevronLeft,
+  CheckCircle2,
+  XCircle,
+  Pencil,
+  RotateCcw,
+  Flag,
+  Clock3,
+  Plus,
+  ExternalLink,
+  Users,
+  Building2,
+} from "lucide-react";
 
 import {
   getDirectory,
@@ -28,7 +40,10 @@ import type {
   DirectoryStep,
   OpportunityListItem,
   OpportunityTerminatedOutcome,
+  SearchJobListItem,
 } from "../../../types";
+
+type ActiveTab = "board" | "searches";
 
 function formatRecent(iso: string): string {
   const d = new Date(iso);
@@ -40,6 +55,51 @@ function formatRecent(iso: string): string {
   if (diffH < 24) return `hace ${diffH} h`;
   const diffD = Math.floor(diffH / 24);
   return `hace ${diffD} día${diffD > 1 ? "s" : ""}`;
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case "completed": return "Completada";
+    case "running": return "En progreso";
+    case "pending": return "Pendiente";
+    case "error": return "Error";
+    default: return status;
+  }
+}
+
+function statusBadgeClass(status: string): string {
+  if (status === "completed") return "ui-badge ui-badge--success";
+  if (status === "error") return "ui-badge ui-badge--error";
+  return "ui-badge ui-badge--default";
+}
+
+function SearchRow({ job }: { job: SearchJobListItem }): JSX.Element {
+  return (
+    <Link to={`/jobs/${job.job_id}`} className="directory-searches-row">
+      <div className="directory-searches-row-main">
+        <span className="directory-searches-row-query">{job.query || "(sin query)"}</span>
+        <div className="directory-searches-row-badges">
+          {job.exa_category === "company" ? (
+            <span className="ui-badge ui-badge--muted" title="Empresas">
+              <Building2 size={11} aria-hidden /> Empresas
+            </span>
+          ) : (
+            <span className="ui-badge ui-badge--muted" title="Personas">
+              <Users size={11} aria-hidden /> Personas
+            </span>
+          )}
+          <span className={statusBadgeClass(job.status)} title={job.error_message ?? undefined}>
+            {statusLabel(job.status)}
+          </span>
+        </div>
+      </div>
+      <div className="directory-searches-row-meta">
+        <Clock3 size={11} aria-hidden />
+        {formatRecent(job.created_at)}
+      </div>
+      <ExternalLink size={13} className="directory-searches-row-icon" aria-hidden />
+    </Link>
+  );
 }
 
 function OpportunityCard({ opp }: { opp: OpportunityListItem }): JSX.Element {
@@ -124,6 +184,7 @@ export function DirectoryBoardPage(): JSX.Element {
   const { directoryId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<ActiveTab>("board");
   const [terminateTarget, setTerminateTarget] = useState<OpportunityListItem | null>(null);
   const [terminateOutcome, setTerminateOutcome] = useState<OpportunityTerminatedOutcome>("won");
   const [terminateNote, setTerminateNote] = useState("");
@@ -144,7 +205,7 @@ export function DirectoryBoardPage(): JSX.Element {
 
   const searchesQuery = useQuery({
     queryKey: ["directory-searches", directoryId],
-    queryFn: () => listSearchJobs({ directory_id: directoryId, limit: 20 }),
+    queryFn: () => listSearchJobs({ directory_id: directoryId, limit: 100 }),
     enabled: Boolean(directoryId),
   });
 
@@ -188,7 +249,7 @@ export function DirectoryBoardPage(): JSX.Element {
     const map = new Map<string, OpportunityListItem[]>();
     const items = itemsQuery.data?.items ?? [];
     for (const item of items) {
-      if (item.terminated_at) continue; // las terminadas se muestran aparte
+      if (item.terminated_at) continue;
       const key = item.current_step_id ?? "__unassigned__";
       const bucket = map.get(key) ?? [];
       bucket.push(item);
@@ -212,7 +273,6 @@ export function DirectoryBoardPage(): JSX.Element {
     const currentIdx = stepsOrdered.findIndex((s) => s.id === currentStepId);
     const targetIdx = stepsOrdered.findIndex((s) => s.id === overStepId);
     if (currentIdx < 0 || targetIdx < 0 || currentIdx === targetIdx) return;
-    // Restricción ±1
     if (Math.abs(targetIdx - currentIdx) !== 1) {
       setMoveError("Solo se puede mover al step adyacente (±1).");
       return;
@@ -229,6 +289,7 @@ export function DirectoryBoardPage(): JSX.Element {
     return <section className="panel error-text">No se pudo cargar el directorio.</section>;
   }
   const directory = directoryQuery.data;
+  const searches = searchesQuery.data?.items ?? [];
 
   return (
     <section className="directory-board-page">
@@ -245,152 +306,183 @@ export function DirectoryBoardPage(): JSX.Element {
         </div>
         <div className="directory-board-head-actions">
           <Link to={`/directories/${directory.id}/edit`} className="link-button">
-            <Pencil size={14} aria-hidden /> Editar directorio
+            <Pencil size={14} aria-hidden /> Editar
           </Link>
-          <button
-            type="button"
-            className="cta-button"
-            onClick={() => navigate(`/search?directory_id=${directory.id}`)}
-          >
-            Buscar en este directorio
-          </button>
         </div>
       </header>
 
-      <details className="directory-board-searches">
-        <summary>
-          <span>Búsquedas en este directorio</span>
-          <span className="muted-text">{searchesQuery.data?.items.length ?? 0}</span>
-          <ChevronDown size={14} aria-hidden className="directory-board-searches-chev" />
-        </summary>
-        <div className="directory-board-searches-body">
+      {/* Tabs */}
+      <div className="directory-board-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "board"}
+          className={`directory-board-tab${activeTab === "board" ? " is-active" : ""}`}
+          onClick={() => setActiveTab("board")}
+        >
+          Tablero
+          <span className="directory-board-tab-count">
+            {itemsQuery.data?.items.filter((i) => !i.terminated_at).length ?? 0}
+          </span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "searches"}
+          className={`directory-board-tab${activeTab === "searches" ? " is-active" : ""}`}
+          onClick={() => setActiveTab("searches")}
+        >
+          Búsquedas
+          <span className="directory-board-tab-count">{searches.length}</span>
+        </button>
+      </div>
+
+      {/* Tablero */}
+      {activeTab === "board" && (
+        <>
+          {moveError ? <p className="error-text">{moveError}</p> : null}
+
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <div className="directory-board-columns">
+              {stepsOrdered.map((step) => (
+                <StepColumn
+                  key={step.id}
+                  step={step}
+                  items={itemsByStep.get(step.id) ?? []}
+                />
+              ))}
+            </div>
+          </DndContext>
+
+          {terminatedItems.length > 0 ? (
+            <section className="directory-board-terminated">
+              <h2>Terminadas</h2>
+              <ul className="directory-board-terminated-list">
+                {terminatedItems.map((opp) => (
+                  <li
+                    key={opp.opportunity_id}
+                    className={`directory-board-terminated-row directory-board-terminated-row--${opp.terminated_outcome}`}
+                  >
+                    <div>
+                      <Link to={`/opportunities/${opp.opportunity_id}`}>
+                        <strong>{opp.title || "Sin título"}</strong>
+                      </Link>
+                      <span className="muted-text"> · {opp.terminated_outcome}</span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => reopenMutation.mutate(opp.opportunity_id)}
+                      disabled={reopenMutation.isPending}
+                    >
+                      <RotateCcw size={14} aria-hidden /> Reabrir
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          <section className="directory-board-actions-panel">
+            <h3>Acción rápida: marcar como terminada</h3>
+            <p className="muted-text">
+              Elige una oportunidad activa y marca su resultado final.
+            </p>
+            <div className="directory-board-terminate-form">
+              <Select
+                value={terminateTarget?.opportunity_id ?? ""}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  const items = itemsQuery.data?.items ?? [];
+                  setTerminateTarget(items.find((i) => i.opportunity_id === id && !i.terminated_at) ?? null);
+                }}
+              >
+                <option value="">— Elige oportunidad —</option>
+                {(itemsQuery.data?.items ?? [])
+                  .filter((i) => !i.terminated_at)
+                  .map((i) => (
+                    <option key={i.opportunity_id} value={i.opportunity_id}>
+                      {i.title || "(sin título)"}
+                    </option>
+                  ))}
+              </Select>
+              <Select
+                value={terminateOutcome}
+                onChange={(e) => setTerminateOutcome(e.target.value as OpportunityTerminatedOutcome)}
+              >
+                <option value="won">Ganado</option>
+                <option value="lost">Perdido</option>
+                <option value="no_response">Sin respuesta</option>
+              </Select>
+              <input
+                className="ui-input"
+                value={terminateNote}
+                onChange={(e) => setTerminateNote(e.target.value)}
+                placeholder="Nota (opcional)"
+                maxLength={500}
+              />
+              <Button
+                type="button"
+                disabled={!terminateTarget || terminateMutation.isPending}
+                onClick={() =>
+                  terminateTarget
+                    ? terminateMutation.mutate({
+                        opportunityId: terminateTarget.opportunity_id,
+                        outcome: terminateOutcome,
+                        note: terminateNote.trim() || null,
+                      })
+                    : undefined
+                }
+              >
+                <Flag size={14} aria-hidden /> Terminar
+              </Button>
+            </div>
+          </section>
+        </>
+      )}
+
+      {/* Búsquedas */}
+      {activeTab === "searches" && (
+        <div className="directory-searches-panel">
+          <div className="directory-searches-header">
+            <div>
+              <h2 className="directory-searches-title">Búsquedas</h2>
+              <p className="muted-text directory-searches-subtitle">
+                Búsquedas realizadas en este directorio
+              </p>
+            </div>
+            <Button
+              type="button"
+              className="cta-button"
+              onClick={() => navigate(`/search?directory_id=${directory.id}`)}
+            >
+              <Plus size={15} aria-hidden /> Nueva búsqueda
+            </Button>
+          </div>
+
           {searchesQuery.isLoading ? (
             <p className="muted-text">Cargando búsquedas…</p>
-          ) : (searchesQuery.data?.items ?? []).length === 0 ? (
-            <p className="muted-text">Sin búsquedas en este directorio.</p>
+          ) : searches.length === 0 ? (
+            <div className="directory-searches-empty">
+              <p className="muted-text">No hay búsquedas en este directorio aún.</p>
+              <Button
+                type="button"
+                onClick={() => navigate(`/search?directory_id=${directory.id}`)}
+              >
+                <Plus size={15} aria-hidden /> Crear primera búsqueda
+              </Button>
+            </div>
           ) : (
-            <ul className="directory-board-searches-list">
-              {searchesQuery.data!.items.map((s) => (
-                <li key={s.job_id}>
-                  <Link to={`/jobs/${s.job_id}`} className="directory-board-search-row">
-                    <span className="directory-board-search-query">{s.query || "(sin query)"}</span>
-                    <span className="muted-text directory-board-search-meta">
-                      <Clock3 size={11} aria-hidden /> {formatRecent(s.created_at)}
-                    </span>
-                    {s.status && s.status !== "completed" ? (
-                      <span
-                        className={`ui-badge ui-badge--${s.status === "error" ? "error" : "default"}`}
-                        title={s.status === "error" ? s.error_message ?? "Búsqueda fallida" : undefined}
-                      >
-                        {s.status === "error" ? "Error" : "En vivo"}
-                      </span>
-                    ) : null}
-                  </Link>
+            <ul className="directory-searches-list">
+              {searches.map((job) => (
+                <li key={job.job_id}>
+                  <SearchRow job={job} />
                 </li>
               ))}
             </ul>
           )}
         </div>
-      </details>
-
-      {moveError ? <p className="error-text">{moveError}</p> : null}
-
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <div className="directory-board-columns">
-          {stepsOrdered.map((step) => (
-            <StepColumn
-              key={step.id}
-              step={step}
-              items={itemsByStep.get(step.id) ?? []}
-            />
-          ))}
-        </div>
-      </DndContext>
-
-      {terminatedItems.length > 0 ? (
-        <section className="directory-board-terminated">
-          <h2>Terminadas</h2>
-          <ul className="directory-board-terminated-list">
-            {terminatedItems.map((opp) => (
-              <li
-                key={opp.opportunity_id}
-                className={`directory-board-terminated-row directory-board-terminated-row--${opp.terminated_outcome}`}
-              >
-                <div>
-                  <Link to={`/opportunities/${opp.opportunity_id}`}>
-                    <strong>{opp.title || "Sin título"}</strong>
-                  </Link>
-                  <span className="muted-text"> · {opp.terminated_outcome}</span>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => reopenMutation.mutate(opp.opportunity_id)}
-                  disabled={reopenMutation.isPending}
-                >
-                  <RotateCcw size={14} aria-hidden /> Reabrir
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      <section className="directory-board-actions-panel">
-        <h3>Acción rápida: marcar como terminada</h3>
-        <p className="muted-text">
-          Elige una oportunidad activa y marca su resultado final. El item se mueve a la sección "Terminadas".
-        </p>
-        <div className="directory-board-terminate-form">
-          <Select
-            value={terminateTarget?.opportunity_id ?? ""}
-            onChange={(e) => {
-              const id = e.target.value;
-              const items = itemsQuery.data?.items ?? [];
-              setTerminateTarget(items.find((i) => i.opportunity_id === id && !i.terminated_at) ?? null);
-            }}
-          >
-            <option value="">— Elige oportunidad —</option>
-            {(itemsQuery.data?.items ?? [])
-              .filter((i) => !i.terminated_at)
-              .map((i) => (
-                <option key={i.opportunity_id} value={i.opportunity_id}>
-                  {i.title || "(sin título)"}
-                </option>
-              ))}
-          </Select>
-          <Select
-            value={terminateOutcome}
-            onChange={(e) => setTerminateOutcome(e.target.value as OpportunityTerminatedOutcome)}
-          >
-            <option value="won">Ganado</option>
-            <option value="lost">Perdido</option>
-            <option value="no_response">Sin respuesta</option>
-          </Select>
-          <input
-            className="ui-input"
-            value={terminateNote}
-            onChange={(e) => setTerminateNote(e.target.value)}
-            placeholder="Nota (opcional)"
-            maxLength={500}
-          />
-          <Button
-            type="button"
-            disabled={!terminateTarget || terminateMutation.isPending}
-            onClick={() =>
-              terminateTarget
-                ? terminateMutation.mutate({
-                    opportunityId: terminateTarget.opportunity_id,
-                    outcome: terminateOutcome,
-                    note: terminateNote.trim() || null,
-                  })
-                : undefined
-            }
-          >
-            <Flag size={14} aria-hidden /> Terminar
-          </Button>
-        </div>
-      </section>
+      )}
     </section>
   );
 }
