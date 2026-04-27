@@ -384,6 +384,7 @@ export async function patchOpportunity(
     response_outcome?: string | null;
     note?: string | null;
     profile_cv?: OpportunityProfileOverrides;
+    contact_type?: "employee" | "company";
   },
 ): Promise<OpportunityResponse> {
   const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities/${opportunityId}`, {

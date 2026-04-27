@@ -287,6 +287,7 @@ class OpportunityResponse(BaseModel):
     contacts: list[dict[str, Any]]
     activity_timeline: list[dict[str, Any]]
     profile_overrides: dict[str, Any] = Field(default_factory=dict)
+    contact_type: str | None = None
     created_at: datetime
     updated_at: datetime
     created: bool = False
@@ -355,6 +356,7 @@ class OpportunityUpdateRequest(BaseModel):
     response_outcome: str | None = Field(default=None, max_length=32)
     note: str | None = Field(default=None, max_length=4000)
     profile_cv: OpportunityProfileCvPatch | None = None
+    contact_type: Literal["employee", "company"] | None = None
 
 
 class OpportunityBitacoraRequest(BaseModel):

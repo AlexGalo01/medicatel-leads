@@ -153,6 +153,7 @@ def _opportunity_to_response(
         contacts=list(opp.contacts or []),
         activity_timeline=list(opp.activity_timeline or []),
         profile_overrides=dict(po),
+        contact_type=opp.contact_type,
         created_at=opp.created_at,
         updated_at=opp.updated_at,
         created=created,
@@ -1040,6 +1041,7 @@ async def patch_opportunity(
                 note=payload.note,
                 owner_user_id=current.id,
                 author_for_note=current.display_name,
+                contact_type=payload.contact_type,
             )
         except ValueError as exc:
             msg = str(exc)

@@ -268,6 +268,9 @@ async def init_db() -> None:
             await connection.execute(text(stmt))
         for stmt in _pg_apply_directories_migrations():
             await connection.execute(text(stmt))
+        await connection.execute(
+            text("ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS contact_type VARCHAR(32)")
+        )
         await _seed_sin_clasificar_directory(connection)
         block = _pg_migration_sql_002()
         if not block:

@@ -276,6 +276,7 @@ class OpportunitiesRepository:
         note: str | None = None,
         owner_user_id: UUID | None = None,
         author_for_note: str = "usuario",
+        contact_type: str | None = None,
     ) -> Opportunity:
         if stage is not None:
             if stage not in OPPORTUNITY_STAGE_KEYS:
@@ -304,6 +305,8 @@ class OpportunitiesRepository:
                 }
             )
             opp.activity_timeline = timeline
+        if contact_type is not None:
+            opp.contact_type = contact_type
         if owner_user_id is not None:
             self._set_owner(opp, owner_user_id)
         else:

@@ -119,6 +119,7 @@ class Opportunity(SQLModel, table=True):
     profile_overrides: dict[str, Any] = Field(
         default_factory=dict, sa_column=Column(JSON, nullable=False)
     )
+    contact_type: str | None = Field(default=None, max_length=32)
     owner_user_id: UUID | None = Field(default=None, index=True, foreign_key="users.id")
     created_at: datetime = Field(
         default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)

@@ -219,6 +219,7 @@ export interface OpportunityResponse {
   contacts: OpportunityContact[];
   activity_timeline: OpportunityActivityEntry[];
   profile_overrides?: OpportunityProfileOverrides;
+  contact_type: "employee" | "company" | null;
   created_at: string;
   updated_at: string;
   created: boolean;

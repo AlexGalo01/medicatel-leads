@@ -243,6 +243,13 @@ export function OpportunityDetailPage(): JSX.Element {
     },
   });
 
+  const contactTypeMut = useMutation({
+    mutationFn: (ct: "employee" | "company") => patchOpportunity(opportunityId, { contact_type: ct }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["opportunity", opportunityId], updated);
+    },
+  });
+
   const profileCvMut = useMutation({
     mutationFn: (body: { profile_cv: OpportunityProfileOverrides }) => patchOpportunity(opportunityId, body),
     onSuccess: (updated) => {
@@ -477,108 +484,138 @@ export function OpportunityDetailPage(): JSX.Element {
             </span>
           ) : null}
         </div>
-        <div className="opportunity-summary-cv-toolbar">
-          <Button
-            type="button"
-            className="cta-button opportunity-summary-cv-save"
-            disabled={profileCvMut.isPending}
-            onClick={() => saveProfileCv()}
-          >
-            {profileCvMut.isPending ? <Loader2 className="spin" size={16} aria-hidden /> : null}
-            Guardar datos del perfil
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="workspace-tool-btn"
-            disabled={profileCvMut.isPending || !hasStoredProfileOverrides}
-            onClick={() => restoreProfileCv()}
-          >
-            Restaurar resumen generado
-          </Button>
-        </div>
-        {profileCvMut.isError ? <p className="error-text opportunity-summary-cv-error">No se pudo guardar el perfil.</p> : null}
-        {profileIaPending ? (
-          <p className="muted-text opportunity-summary-ia-hint" role="status" aria-live="polite">
-            <Loader2 className="spin" size={16} strokeWidth={2} aria-hidden />
-            {aboutFieldWaitingIa || locationFieldWaitingIa
-              ? "Generando resumen del perfil con la IA. Los campos se rellenan al terminar."
-              : "Completando datos del perfil…"}
-          </p>
-        ) : null}
-        <div className="opportunity-summary-cv">
-          <article className="opportunity-summary-cv-block">
-            <h3 className="opportunity-card-subtitle">About</h3>
-            <label className="opportunity-field opportunity-summary-cv-field">
-              <span className="muted-text">Texto libre; se guarda en la oportunidad.</span>
-              <textarea
-                ref={aboutTextareaRef}
-                className="opportunity-summary-cv-textarea"
-                value={aboutDraft}
-                onChange={(e) => {
-                  setCvDirty(true);
-                  setAboutDraft(e.target.value);
-                }}
-                rows={1}
-                maxLength={8000}
-                spellCheck
-                readOnly={aboutFieldWaitingIa}
-                aria-busy={aboutFieldWaitingIa}
-                placeholder={aboutFieldWaitingIa ? "Generando resumen con la IA…" : undefined}
-              />
-            </label>
-          </article>
-          <article className="opportunity-summary-cv-block opportunity-summary-cv-block--experience">
-            <h3 className="opportunity-card-subtitle">Experiencia</h3>
-            {profileIaPending && !experienceFromOverride ? (
-              <p className="muted-text opportunity-summary-ia-experience-waiting">
+        {data.contact_type === "company" ? (
+          <div className="opportunity-summary-company-info">
+            {data.snippet ? <p className="opportunity-summary-snippet muted-text">{data.snippet}</p> : null}
+            {data.source_url ? (
+              <a
+                href={data.source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="link-button"
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", marginTop: "0.5rem" }}
+              >
+                <ExternalLink size={14} aria-hidden /> Ver fuente
+              </a>
+            ) : null}
+          </div>
+        ) : (
+          <>
+            <div className="opportunity-summary-cv-toolbar">
+              <Button
+                type="button"
+                className="cta-button opportunity-summary-cv-save"
+                disabled={profileCvMut.isPending}
+                onClick={() => saveProfileCv()}
+              >
+                {profileCvMut.isPending ? <Loader2 className="spin" size={16} aria-hidden /> : null}
+                Guardar datos del perfil
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="workspace-tool-btn"
+                disabled={profileCvMut.isPending || !hasStoredProfileOverrides}
+                onClick={() => restoreProfileCv()}
+              >
+                Restaurar resumen generado
+              </Button>
+            </div>
+            {profileCvMut.isError ? <p className="error-text opportunity-summary-cv-error">No se pudo guardar el perfil.</p> : null}
+            {profileIaPending ? (
+              <p className="muted-text opportunity-summary-ia-hint" role="status" aria-live="polite">
                 <Loader2 className="spin" size={16} strokeWidth={2} aria-hidden />
-                Cargando experiencia estructurada…
+                {aboutFieldWaitingIa || locationFieldWaitingIa
+                  ? "Generando resumen del perfil con la IA. Los campos se rellenan al terminar."
+                  : "Completando datos del perfil…"}
               </p>
-            ) : profileExperiences.length > 0 ? (
-              <ul className="opportunity-summary-experience-list">
-                {profileExperiences.map((experience, index) => (
-                  <li key={`${experience.role}-${index}`} className="opportunity-summary-experience-item">
-                    <strong>{experience.role}</strong>
-                    <span className="muted-text">
-                      {[experience.organization || null, experience.period || null].filter(Boolean).join(" · ") || "Sin detalle"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="muted-text">Sin experiencia estructurada.</p>
-            )}
-          </article>
-          <article className="opportunity-summary-cv-block">
-            <h3 className="opportunity-card-subtitle">Ubicación</h3>
-            <label className="opportunity-field opportunity-summary-cv-field">
-              <span className="muted-text">Ciudad, país o nota breve.</span>
-              <Input
-                value={locationDraft}
-                placeholder={locationFieldWaitingIa ? "Generando o usando ciudad de la ficha…" : LOCATION_PLACEHOLDER}
-                readOnly={locationFieldWaitingIa}
-                aria-busy={locationFieldWaitingIa}
-                onChange={(e) => {
-                  setCvDirty(true);
-                  setLocationDraft(e.target.value);
-                }}
-                maxLength={500}
-                className="opportunity-summary-location-input"
-              />
-            </label>
-          </article>
-          <article className="opportunity-summary-cv-block">
-            <h3 className="opportunity-card-subtitle">Empresa</h3>
-            <p className="muted-text">{profileCompany}</p>
-          </article>
-        </div>
+            ) : null}
+            <div className="opportunity-summary-cv">
+              <article className="opportunity-summary-cv-block">
+                <h3 className="opportunity-card-subtitle">About</h3>
+                <label className="opportunity-field opportunity-summary-cv-field">
+                  <span className="muted-text">Texto libre; se guarda en la oportunidad.</span>
+                  <textarea
+                    ref={aboutTextareaRef}
+                    className="opportunity-summary-cv-textarea"
+                    value={aboutDraft}
+                    onChange={(e) => {
+                      setCvDirty(true);
+                      setAboutDraft(e.target.value);
+                    }}
+                    rows={1}
+                    maxLength={8000}
+                    spellCheck
+                    readOnly={aboutFieldWaitingIa}
+                    aria-busy={aboutFieldWaitingIa}
+                    placeholder={aboutFieldWaitingIa ? "Generando resumen con la IA…" : undefined}
+                  />
+                </label>
+              </article>
+              <article className="opportunity-summary-cv-block opportunity-summary-cv-block--experience">
+                <h3 className="opportunity-card-subtitle">Experiencia</h3>
+                {profileIaPending && !experienceFromOverride ? (
+                  <p className="muted-text opportunity-summary-ia-experience-waiting">
+                    <Loader2 className="spin" size={16} strokeWidth={2} aria-hidden />
+                    Cargando experiencia estructurada…
+                  </p>
+                ) : profileExperiences.length > 0 ? (
+                  <ul className="opportunity-summary-experience-list">
+                    {profileExperiences.map((experience, index) => (
+                      <li key={`${experience.role}-${index}`} className="opportunity-summary-experience-item">
+                        <strong>{experience.role}</strong>
+                        <span className="muted-text">
+                          {[experience.organization || null, experience.period || null].filter(Boolean).join(" · ") || "Sin detalle"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted-text">Sin experiencia estructurada.</p>
+                )}
+              </article>
+              <article className="opportunity-summary-cv-block">
+                <h3 className="opportunity-card-subtitle">Ubicación</h3>
+                <label className="opportunity-field opportunity-summary-cv-field">
+                  <span className="muted-text">Ciudad, país o nota breve.</span>
+                  <Input
+                    value={locationDraft}
+                    placeholder={locationFieldWaitingIa ? "Generando o usando ciudad de la ficha…" : LOCATION_PLACEHOLDER}
+                    readOnly={locationFieldWaitingIa}
+                    aria-busy={locationFieldWaitingIa}
+                    onChange={(e) => {
+                      setCvDirty(true);
+                      setLocationDraft(e.target.value);
+                    }}
+                    maxLength={500}
+                    className="opportunity-summary-location-input"
+                  />
+                </label>
+              </article>
+              <article className="opportunity-summary-cv-block">
+                <h3 className="opportunity-card-subtitle">Empresa</h3>
+                <p className="muted-text">{profileCompany}</p>
+              </article>
+            </div>
+          </>
+        )}
       </Card>
 
       <div className="opportunity-ficha-area-bitacora opportunity-ficha-side-stack">
       <Card className="panel opportunity-card opportunity-bento-card opportunity-phase-card opportunity-phase-card--prominent">
         <h2 className="opportunity-card-title">Actualizar fase</h2>
         <div className="opportunity-stage-form opportunity-stage-form--bento">
+          <label className="opportunity-field">
+            <span>Tipo</span>
+            <Select
+              value={data.contact_type ?? "employee"}
+              onChange={(e) => contactTypeMut.mutate(e.target.value as "employee" | "company")}
+              disabled={contactTypeMut.isPending}
+            >
+              <option value="employee">Empleado</option>
+              <option value="company">Empresa</option>
+            </Select>
+          </label>
           <label className="opportunity-field">
             <span>Fase</span>
             <Select
