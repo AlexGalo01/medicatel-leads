@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mle.db.models import Directory, DirectoryStep, Opportunity
@@ -81,18 +81,14 @@ class DirectoriesRepository:
         directory = await self.session.get(Directory, directory_id)
         if directory is None:
             return False
-        # Eliminar todas las oportunidades del directorio.
-        opportunities = await self.session.execute(
-            select(Opportunity).where(Opportunity.directory_id == directory_id)
+        # Eliminar todas las oportunidades del directorio (SQL directo para garantizar orden).
+        await self.session.execute(
+            delete(Opportunity).where(Opportunity.directory_id == directory_id)
         )
-        for opp in opportunities.scalars().all():
-            await self.session.delete(opp)
-        # Eliminar steps primero.
-        steps = await self.session.execute(
-            select(DirectoryStep).where(DirectoryStep.directory_id == directory_id)
+        # Eliminar steps (SQL directo antes de que se elimine el directorio).
+        await self.session.execute(
+            delete(DirectoryStep).where(DirectoryStep.directory_id == directory_id)
         )
-        for step in steps.scalars().all():
-            await self.session.delete(step)
         await self.session.delete(directory)
         await self.session.commit()
         return True
