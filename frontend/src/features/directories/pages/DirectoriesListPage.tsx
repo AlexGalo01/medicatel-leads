@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Folder, Plus, Search, LayoutGrid, List, Trash2, ExternalLink } from "lucide-react";
+import { Folder, Plus, Search, LayoutGrid, List, Trash2, ExternalLink, Pencil } from "lucide-react";
 
 import { listDirectories, deleteDirectory } from "../../../api";
 import { Card } from "../../../components/ui/card";
@@ -126,6 +126,14 @@ export function DirectoriesListPage(): JSX.Element {
                   key={dir.id}
                   className="ui-card ui-card--interactive directory-card"
                 >
+                  <Link
+                    to={`/directories/${dir.id}/edit`}
+                    className="directory-card-delete"
+                    title="Editar directorio"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Pencil size={16} />
+                  </Link>
                   <button
                     onClick={(e) => handleDeleteClick(e, dir.id)}
                     className="directory-card-delete"
@@ -182,6 +190,13 @@ export function DirectoriesListPage(): JSX.Element {
                             title="Abrir directorio"
                           >
                             <ExternalLink size={14} />
+                          </Link>
+                          <Link
+                            to={`/directories/${dir.id}/edit`}
+                            className="directories-table-link"
+                            title="Editar directorio"
+                          >
+                            <Pencil size={14} />
                           </Link>
                           <button
                             onClick={(e) => handleDeleteClick(e, dir.id)}

@@ -5,6 +5,7 @@ import { AppLayout } from "./layout";
 import { DirectoriesListPage } from "./features/directories/pages/DirectoriesListPage";
 import { DirectoryCreatePage } from "./features/directories/pages/DirectoryCreatePage";
 import { DirectoryBoardPage } from "./features/directories/pages/DirectoryBoardPage";
+import { DirectoryEditPage } from "./features/directories/pages/DirectoryEditPage";
 import { OpportunitiesListPage } from "./features/opportunities/pages/OpportunitiesListPage";
 import { OpportunityCreatePage } from "./features/opportunities/pages/OpportunityCreatePage";
 import { OpportunityDetailPage } from "./features/opportunities/pages/OpportunityDetailPage";
@@ -37,6 +38,7 @@ export const appRouter = createBrowserRouter([
       { path: "directories", element: <DirectoriesListPage /> },
       { path: "directories/new", element: <DirectoryCreatePage /> },
       { path: "directories/:directoryId", element: <DirectoryBoardPage /> },
+      { path: "directories/:directoryId/edit", element: <DirectoryEditPage /> },
       { path: "opportunities", element: <OpportunitiesListPage /> },
       { path: "opportunities/new", element: <OpportunityCreatePage /> },
       { path: "opportunities/:opportunityId", element: <OpportunityDetailPage /> },
