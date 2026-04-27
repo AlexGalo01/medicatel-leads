@@ -249,15 +249,9 @@ export function DirectoriesListPage(): JSX.Element {
           <div className="dirs-confirm-panel" onClick={(e) => e.stopPropagation()}>
             <h2 className="dirs-confirm-title">Eliminar directorio</h2>
             <p className="dirs-confirm-description">
-              ¿Estás seguro de que deseas eliminar el directorio "{confirmDir.name}"? Esta acción
-              no se puede deshacer.
+              ¿Estás seguro de que deseas eliminar el directorio "{confirmDir.name}"? Se eliminarán también todas
+              las oportunidades que contiene. Esta acción no se puede deshacer.
             </p>
-            {deleteMut.isError && (
-              <p className="error-text" style={{ marginBottom: "1rem" }}>
-                No se pudo eliminar: el directorio contiene oportunidades. Borra o mueve las oportunidades
-                primero.
-              </p>
-            )}
             <div className="dirs-confirm-actions">
               <button
                 onClick={() => setConfirmDeleteId(null)}

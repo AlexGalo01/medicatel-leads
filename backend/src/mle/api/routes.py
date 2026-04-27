@@ -1346,10 +1346,7 @@ async def delete_directory(
         repo = DirectoriesRepository(session)
         ok = await repo.delete(directory_id)
         if not ok:
-            raise HTTPException(
-                status_code=409,
-                detail="El directorio tiene items; mueve o borra los items primero.",
-            )
+            _raise_not_found("Directorio")
     return Response(status_code=204)
 
 

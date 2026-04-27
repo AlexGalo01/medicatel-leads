@@ -81,12 +81,12 @@ class DirectoriesRepository:
         directory = await self.session.get(Directory, directory_id)
         if directory is None:
             return False
-        # Prevenir borrado si tiene items.
-        count_items = await self.session.execute(
-            select(func.count(Opportunity.id)).where(Opportunity.directory_id == directory_id)
+        # Eliminar todas las oportunidades del directorio.
+        opportunities = await self.session.execute(
+            select(Opportunity).where(Opportunity.directory_id == directory_id)
         )
-        if int(count_items.scalar() or 0) > 0:
-            return False
+        for opp in opportunities.scalars().all():
+            await self.session.delete(opp)
         # Eliminar steps primero.
         steps = await self.session.execute(
             select(DirectoryStep).where(DirectoryStep.directory_id == directory_id)
