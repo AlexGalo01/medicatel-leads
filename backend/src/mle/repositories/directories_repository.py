@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mle.db.models import Directory, DirectoryStep, Opportunity
+from mle.db.models import Directory, DirectoryStep, Opportunity, SearchJob
 from mle.schemas.directories import (
     DirectoryRead,
     DirectoryStepCreate,
@@ -84,6 +84,10 @@ class DirectoriesRepository:
         # Eliminar todas las oportunidades del directorio (SQL directo para garantizar orden).
         await self.session.execute(
             delete(Opportunity).where(Opportunity.directory_id == directory_id)
+        )
+        # Eliminar search jobs del directorio.
+        await self.session.execute(
+            delete(SearchJob).where(SearchJob.directory_id == directory_id)
         )
         # Eliminar steps (SQL directo antes de que se elimine el directorio).
         await self.session.execute(
