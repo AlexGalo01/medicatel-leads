@@ -982,6 +982,14 @@ async def enrich_opportunity(opportunity_id: UUID):
     proposer = get_llm_client(st)
     reviewer = get_reviewer_llm_client(st)
 
+    brave = None
+    if st.brave_search_api_key and st.brave_search_enabled:
+        from mle.clients.brave_client import BraveSearchClient
+        brave = BraveSearchClient(
+            api_key=st.brave_search_api_key,
+            timeout_seconds=st.brave_search_timeout_seconds,
+        )
+
     queue: asyncio.Queue[dict] = asyncio.Queue()
 
     async def send_progress(msg: str):
@@ -998,6 +1006,7 @@ async def enrich_opportunity(opportunity_id: UUID):
                 proposer=proposer,
                 reviewer=reviewer,
                 settings=st,
+                brave=brave,
                 exclude_linkedin=True,
                 progress_callback=send_progress,
             )

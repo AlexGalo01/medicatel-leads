@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
+from mle.clients.brave_client import BraveSearchClient
 from mle.clients.exa_client import ExaClient, exa_contents_full_config, finalize_exa_search_payload
 from mle.clients.gemini_client import GeminiClient
 from mle.clients.opencli_client import OpenCliClient
@@ -325,14 +326,15 @@ async def _deep_fetch_contacts(
 async def _opencli_evidence(
     opencli: OpenCliClient,
     lead: LeadCore,
+    brave: BraveSearchClient | None = None,
     prefetched_maps: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Lanza adapters OpenCLI en paralelo y retorna dict por fuente.
+    """Lanza adapters OpenCLI + Brave en paralelo y retorna dict por fuente.
 
     Para empresas: query simplificada (solo nombre + ciudad).
     Para personas: query completa (nombre + especialidad + ciudad).
     Para empresas: Facebook e Instagram siempre habilitados.
-    Si prefetched_maps está disponible, usa esos datos en lugar de llamar a Google Maps.
+    Usa Brave Local Search para extender ubicación/contacto en lugar de google_maps.
     """
     if not opencli.enabled:
         return {}
@@ -340,7 +342,7 @@ async def _opencli_evidence(
     is_company = lead.entity_type == "company"
 
     if is_company:
-        # Para empresas: solo nombre + ciudad para no confundir Google Maps
+        # Para empresas: solo nombre + ciudad
         google_q = lead.full_name.strip()
         if lead.city:
             google_q = f"{google_q} {lead.city}".strip()
@@ -355,15 +357,14 @@ async def _opencli_evidence(
         google_q = maps_q = name_query
 
     out: dict[str, Any] = {}
+    tasks: dict[str, Any] = {}
 
     # Si ya tenemos datos de Google Maps prefetched, usarlos directamente
     if prefetched_maps and isinstance(prefetched_maps, dict):
         out["google_maps"] = prefetched_maps
-        tasks = {}
-    else:
-        tasks = {
-            "google_maps": opencli.google_maps(maps_q),
-        }
+    elif brave is not None:
+        # Usar Brave Local Search como reemplazo de google_maps
+        tasks["brave_local"] = brave.local_search(maps_q)
 
     # Para empresas: Facebook e Instagram siempre activados
     # Para personas: solo si está habilitado en settings
@@ -377,7 +378,7 @@ async def _opencli_evidence(
 
     for k, v in zip(keys, values, strict=False):
         if isinstance(v, Exception):
-            logger.info("OpenCLI %s levantó excepción: %s", k, v)
+            logger.info("OpenCLI/Brave %s levantó excepción: %s", k, v)
             continue
         if isinstance(v, dict) and v:
             out[k] = v
@@ -385,11 +386,11 @@ async def _opencli_evidence(
 
 
 def _merge_opencli_contacts(opencli_results: dict[str, Any]) -> dict[str, str]:
-    """Prioriza fuentes por confiabilidad: maps > search > redes.
+    """Prioriza fuentes por confiabilidad: brave_local > google_maps > google_search > redes.
 
     Extrae también URLs de redes sociales (facebook_url, instagram_url) desde profile_url.
     """
-    priority = ["google_maps", "google_search", "facebook", "instagram"]
+    priority = ["brave_local", "google_maps", "google_search", "facebook", "instagram"]
     merged: dict[str, str] = {
         "phone": "",
         "address": "",
@@ -514,14 +515,16 @@ async def enrich_lead_contacts(
     proposer: GeminiClient,
     reviewer: GeminiClient,
     settings: Settings | None = None,
+    brave: BraveSearchClient | None = None,
     prefetched_maps: dict[str, Any] | None = None,
     exclude_linkedin: bool = False,
     progress_callback: callable | None = None,
 ) -> EnrichmentResult:
-    """Enriquece un lead con Exa (evidencia textual) + OpenCLI (contactos estructurados) + Gemini reviewer.
+    """Enriquece un lead con Exa (evidencia textual) + OpenCLI/Brave (contactos estructurados) + Gemini reviewer.
 
     Función pura: no persiste en DB. El caller decide qué hacer con el resultado.
-    Si prefetched_maps está disponible, usa esos datos en lugar de llamar a Google Maps de nuevo.
+    Si brave está configurado, lo usa para búsqueda local de contactos.
+    Si prefetched_maps está disponible, usa esos datos en lugar de llamar a APIs de mapas.
     exclude_linkedin: si True, excluye linkedin.com de los resultados Exa (solo para enriquecimiento manual).
     progress_callback: callable async que recibe un string con el mensaje de progreso.
     """
@@ -533,7 +536,7 @@ async def enrich_lead_contacts(
 
     # Ejecutar exa y opencli en paralelo usando create_task para mejor control
     exa_task = asyncio.create_task(_exa_evidence(exa_client, lead, st, exclude_linkedin=exclude_linkedin))
-    opencli_task = asyncio.create_task(_opencli_evidence(opencli, lead, prefetched_maps=prefetched_maps))
+    opencli_task = asyncio.create_task(_opencli_evidence(opencli, lead, brave=brave, prefetched_maps=prefetched_maps))
 
     # Esperar a que exa termine, luego lanzar deep_fetch en paralelo con opencli
     exa_results, evidence, regex_contacts = await exa_task
@@ -796,6 +799,13 @@ async def deep_enrich_lead(lead_id: UUID) -> LeadRead | None:
         proposer = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_model)
         reviewer = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_reviewer_model)
 
+        brave = None
+        if settings.brave_search_api_key and settings.brave_search_enabled:
+            brave = BraveSearchClient(
+                api_key=settings.brave_search_api_key,
+                timeout_seconds=settings.brave_search_timeout_seconds,
+            )
+
         enrichment = await enrich_lead_contacts(
             _lead_to_core(lead_orm),
             exa_client=exa_client,
@@ -803,6 +813,7 @@ async def deep_enrich_lead(lead_id: UUID) -> LeadRead | None:
             proposer=proposer,
             reviewer=reviewer,
             settings=settings,
+            brave=brave,
         )
         updates = build_lead_updates(lead_orm, enrichment)
         await repo.apply_field_updates(lead_id, updates)

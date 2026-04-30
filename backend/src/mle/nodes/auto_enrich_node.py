@@ -17,6 +17,7 @@ from langsmith import traceable
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from mle.clients.brave_client import BraveSearchClient
 from mle.clients.exa_client import ExaClient
 from mle.clients.opencli_client import OpenCliClient
 from mle.clients.llm_factory import get_llm_client, get_reviewer_llm_client
@@ -206,6 +207,13 @@ async def auto_enrich_node(state: LeadSearchGraphState) -> dict[str, object]:
         proposer = get_llm_client(settings)
         reviewer = get_reviewer_llm_client(settings)
 
+        brave = None
+        if settings.brave_search_api_key and settings.brave_search_enabled:
+            brave = BraveSearchClient(
+                api_key=settings.brave_search_api_key,
+                timeout_seconds=settings.brave_search_timeout_seconds,
+            )
+
         semaphore = asyncio.Semaphore(max(1, int(settings.auto_enrich_concurrency)))
 
         async def _enrich_one(item: dict[str, Any]) -> dict[str, Any]:
@@ -224,6 +232,7 @@ async def auto_enrich_node(state: LeadSearchGraphState) -> dict[str, object]:
                         proposer=proposer,
                         reviewer=reviewer,
                         settings=settings,
+                        brave=brave,
                         prefetched_maps=prefetched_maps,
                     )
                     return _apply_enrichment_to_preview(item, enr)
