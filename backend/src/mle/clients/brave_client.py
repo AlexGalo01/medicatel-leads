@@ -5,6 +5,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Países soportados por Brave Search API
+_BRAVE_SUPPORTED_COUNTRIES = frozenset({
+    "AR", "AU", "AT", "BE", "BR", "CA", "CL", "DK", "FI", "FR", "DE", "GR",
+    "HK", "IN", "ID", "IT", "JP", "KR", "MY", "MX", "NL", "NZ", "NO", "CN",
+    "PL", "PT", "PH", "RU", "SA", "ZA", "ES", "SE", "CH", "TW", "TR", "GB",
+    "US", "ALL"
+})
+
 
 def _normalize_brave_web_results(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Normaliza resultados de Brave Web Search al formato de items de Exa.
@@ -173,7 +181,11 @@ class BraveSearchClient:
                         "extra_snippets": "true",
                     }
                     if country:
-                        params["country"] = country.upper()
+                        # Brave solo soporta un subconjunto de países; los demás van como ALL
+                        brave_country = country.upper()
+                        if brave_country not in _BRAVE_SUPPORTED_COUNTRIES:
+                            brave_country = "ALL"
+                        params["country"] = brave_country
                     response = await client.get(
                         f"{self.BASE_URL}/web/search",
                         params=params,
