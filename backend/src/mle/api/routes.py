@@ -452,6 +452,23 @@ async def list_search_jobs(
     )
 
 
+@protected_router.post("/search-jobs/{job_id}/cancel", status_code=200)
+async def cancel_search_job(
+    job_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> dict[str, str]:
+    """Cancela un search job en ejecución o pendiente."""
+    async with async_session_factory() as session:
+        jobs_repository = JobsRepository(session)
+        job = await jobs_repository.get_by_id(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job no encontrado")
+        if job.status not in ("pending", "running"):
+            raise HTTPException(status_code=409, detail="Solo se pueden cancelar jobs pendientes o en ejecución")
+        await jobs_repository.update_status(job_id, "cancelled", job.progress)
+    return {"status": "cancelled", "job_id": str(job_id)}
+
+
 @protected_router.get("/search-jobs/{job_id}", response_model=SearchJobStatusResponse)
 async def get_search_job_status(
     job_id: UUID,

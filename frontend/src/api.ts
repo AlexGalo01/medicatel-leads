@@ -171,6 +171,13 @@ export async function listSearchJobs(params: {
   return parseJsonResponse<SearchJobsListResponse>(response);
 }
 
+export async function cancelSearchJob(jobId: string): Promise<{ status: string; job_id: string }> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/search-jobs/${jobId}/cancel`, {
+    method: "POST",
+  });
+  return parseJsonResponse<{ status: string; job_id: string }>(response);
+}
+
 export async function loadMoreExaResults(jobId: string, numResults = 40): Promise<ExaMoreResultsResponse> {
   const response = await apiFetch(`${apiBaseUrl}/api/v1/search-jobs/${jobId}/exa-more`, {
     method: "POST",

@@ -4,6 +4,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { ChevronRight, Download, Loader2, Mail, Phone, Linkedin, MessageCircle } from "lucide-react";
 
 import {
+  cancelSearchJob,
   clarifySearchJob,
   downloadLeadsCsvFile,
   getDirectory,
@@ -75,7 +76,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
     queryFn: () => getSearchJobStatus(jobId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === "completed" || status === "error" ? false : 2000;
+      return status === "completed" || status === "error" || status === "cancelled" ? false : 2000;
     },
     enabled: Boolean(jobId),
     staleTime: 1000,
@@ -100,6 +101,13 @@ export function JobSearchWorkspacePage(): JSX.Element {
     mutationFn: (reply: string) => clarifySearchJob(jobId, { reply }),
     onSuccess: () => {
       setWorkspaceClarifyReply("");
+      void queryClient.invalidateQueries({ queryKey: ["job-status", jobId] });
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelSearchJob(jobId),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["job-status", jobId] });
     },
   });
@@ -226,12 +234,14 @@ export function JobSearchWorkspacePage(): JSX.Element {
     awaitingClarification ? "Aclaración pendiente" :
     jobStatus === "completed" ? "Completada" :
     jobStatus === "error" ? "Error" :
+    jobStatus === "cancelled" ? "Cancelada" :
     "En vivo";
 
   const statusTone =
     awaitingClarification ? "running" :
     jobStatus === "completed" ? "completed" :
-    jobStatus === "error" ? "error" : "running";
+    jobStatus === "error" ? "error" :
+    jobStatus === "cancelled" ? "error" : "running";
 
   return (
     <section className="workspace-v3">
@@ -265,6 +275,17 @@ export function JobSearchWorkspacePage(): JSX.Element {
             </>
           ) : null}
           <div className="workspace-v3-actions">
+            {isProcessing ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={cancelMutation.isPending}
+                onClick={() => cancelMutation.mutate()}
+              >
+                {cancelMutation.isPending ? "Cancelando…" : "Detener búsqueda"}
+              </Button>
+            ) : null}
             {jobStatus === "completed" && searchOnlyDemo && previewRows.length > 0 ? (
               <Button
                 type="button"
