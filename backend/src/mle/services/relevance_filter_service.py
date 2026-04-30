@@ -91,6 +91,18 @@ def _sector_intent_rules_block(user_query: str) -> str:
     )
 
 
+def _obituary_exclusion_rules_block() -> str:
+    """Regla obligatoria para excluir obituarios y personas fallecidas."""
+    return (
+        "*** REGLA DE EXCLUSIÓN OBLIGATORIA — Personas fallecidas y obituarios ***\n"
+        "- Si el resultado es un obituario, noticia de fallecimiento, artículo 'in memoriam', "
+        "'homenaje póstumo' o cualquier texto sobre una persona que ya no vive → match=false, confidence=0.\n"
+        "- Señales de fallecimiento en título o excerpt: 'muere', 'murió', 'falleció', 'fallecido', "
+        "'obituario', 'víctima del covid', 'perdió la vida', 'died', 'obituary', 'passed away' → match=false, confidence=0.\n"
+        "- Esta regla aplica aunque la persona sea del sector buscado: NO PODEMOS CONTACTAR A ALGUIEN FALLECIDO.\n"
+    )
+
+
 def _heuristic_sede_extranjera_sin_senal_local(blob: str, target_iso: str) -> bool:
     """
     Heurística: sede/razón social fuera del país (p. ej. India + Private Limited) sin menciones al país objetivo.
@@ -112,6 +124,35 @@ def _heuristic_sede_extranjera_sin_senal_local(blob: str, target_iso: str) -> bo
     if "private limited" in bl and re.search(r"\b(india|indian)\b", bl):
         return True
     return False
+
+
+_OBITUARY_TITLE_KEYWORDS = frozenset({
+    "muere ", "murió", "murio ", "falleció", "fallecio", "fallecido", "fallecida",
+    "fallece ", "obituario", "in memoriam", "homenaje póstumo", "homenaje postumo",
+    "víctima del covid", "victima del covid", "perdió la vida", "perdio la vida",
+    "died", "death of", "obituary", "in memory of", "passed away", "deceased",
+})
+
+_OBITUARY_URL_FRAGMENTS = frozenset({
+    "obituario", "obituarios", "in-memoriam", "fallecio", "fallecimiento",
+})
+
+
+def _heuristic_obituary_drop_reason(item: dict[str, Any]) -> str | None:
+    """Descarta obituarios/fallecidos por heurística antes de llamar a Gemini."""
+    title = str(item.get("title") or "").lower()
+    url = str(item.get("url") or "").lower()
+
+    for kw in _OBITUARY_TITLE_KEYWORDS:
+        if kw in title:
+            return f"Obituario/fallecido detectado en título: '{kw}'"
+
+    url_path = url.split("?")[0]
+    for frag in _OBITUARY_URL_FRAGMENTS:
+        if f"/{frag}" in url_path or f"-{frag}" in url_path or f"{frag}-" in url_path:
+            return f"URL indica obituario/fallecimiento: '{frag}'"
+
+    return None
 
 
 def _heuristic_drop_reason(item: dict[str, Any], target_iso: str | None) -> str | None:
@@ -292,6 +333,8 @@ async def filter_exa_raw_results_by_relevance(
         if not isinstance(item, dict):
             continue
         drop_reason = _heuristic_drop_reason(item, target_iso)
+        if not drop_reason:
+            drop_reason = _heuristic_obituary_drop_reason(item)
         if drop_reason:
             heuristic_drop.add(i)
             reasons[i] = drop_reason
@@ -334,6 +377,7 @@ async def filter_exa_raw_results_by_relevance(
                     )
                 entity_rules = _exa_category_entity_rules(exa_cat_s or None)
                 sector_rules = _sector_intent_rules_block(user_query)
+                obituary_rules = _obituary_exclusion_rules_block()
                 professional_rules = _professional_intent_rules_block(
                     user_query, criteria_compact.get("role_or_stack_hint"),
                 )
@@ -344,6 +388,7 @@ async def filter_exa_raw_results_by_relevance(
                     f"{professional_rules}"
                     f"{geo_rules}"
                     f"{entity_rules}"
+                    f"{obituary_rules}"
                     f"{sector_rules}"
                     "Cada ítem tiene index (posición global en la lista original), title, url, excerpt.\n"
                     "Para CADA ítem pregúntate: ¿Este resultado ES realmente del sector/rubro/profesión que busca el usuario? "
