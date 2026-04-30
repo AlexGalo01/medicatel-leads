@@ -22,7 +22,7 @@ export function UrlScrapeJobPage(): JSX.Element {
     enabled: Boolean(jobId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === "completed" || status === "error" ? false : 2000;
+      return status === "completed" || status === "error" || status === "cancelled" ? false : 2000;
     },
   });
 
@@ -57,9 +57,10 @@ export function UrlScrapeJobPage(): JSX.Element {
   });
 
   const preview = job?.scrape_results_preview ?? [];
-  const isRunning = job?.status === "running" || job?.status === "pending";
+  const isRunning = jobQuery.isLoading || job?.status === "running" || job?.status === "pending";
   const isCompleted = job?.status === "completed";
   const isError = job?.status === "error";
+  const isCancelled = job?.status === "cancelled";
 
   const totalPages = Math.ceil(preview.length / ITEMS_PER_PAGE);
   const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -150,6 +151,18 @@ export function UrlScrapeJobPage(): JSX.Element {
           >
             {cancelMutation.isPending ? "Cancelando…" : "Cancelar"}
           </Button>
+        </div>
+      )}
+
+      {/* Cancelled */}
+      {isCancelled && (
+        <div className="url-scrape-job-error">
+          <p className="muted-text">Búsqueda cancelada.</p>
+          {directoryId && (
+            <Button type="button" onClick={() => navigate(`/directories/${directoryId}`)}>
+              Volver al directorio
+            </Button>
+          )}
         </div>
       )}
 

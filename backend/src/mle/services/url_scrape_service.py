@@ -368,6 +368,14 @@ async def run_url_scrape_pipeline(job_id: UUID) -> None:
                 )
             return
 
+    # --- Check if cancelled before final save ---
+    async with async_session_factory() as session:
+        repo = UrlScrapeJobsRepository(session)
+        current_job = await repo.get_by_id(job_id)
+        if current_job and current_job.status == "cancelled":
+            logger.info("Job cancelled before final save job_id=%s", job_id)
+            return
+
     # --- Save final results ---
     async with async_session_factory() as session:
         repo = UrlScrapeJobsRepository(session)

@@ -48,6 +48,8 @@ class UrlScrapeJobsRepository:
         job = await self.get_by_id(job_id)
         if job is None:
             return None
+        if job.status == "cancelled":
+            return job
         job.status = status
         job.progress = progress
         job.updated_at = datetime.now(timezone.utc)
