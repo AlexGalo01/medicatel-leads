@@ -179,6 +179,14 @@ class BraveSearchClient:
                         params=params,
                         headers=headers,
                     )
+                    if not response.is_success:
+                        logger.warning(
+                            "Brave web search HTTP %s — query=%r country=%r body=%s",
+                            response.status_code,
+                            simplified_query,
+                            params.get("country"),
+                            response.text[:500],
+                        )
                     response.raise_for_status()
                     data = response.json()
                     batch = _normalize_brave_web_results(data)
