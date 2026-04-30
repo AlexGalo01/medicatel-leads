@@ -66,7 +66,7 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
                 additional_clean.append(text[:400])
 
     exa_cat = plan_dict.get("exa_category")
-    if exa_cat not in ("people", "company", None):
+    if exa_cat not in ("company", None):
         exa_cat = None
     if exa_cat == "":
         exa_cat = None
@@ -76,7 +76,7 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
     search_config = ExaSearchConfig(
         query=base_query,
         type=get_settings().exa_search_type,
-        num_results=50,
+        num_results=100,
         use_highlights=True,
         additional_queries=additional_clean[:8],
         exa_category=exa_cat,

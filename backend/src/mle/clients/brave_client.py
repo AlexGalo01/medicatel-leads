@@ -6,6 +6,43 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _normalize_brave_web_results(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normaliza resultados de Brave Web Search al formato de items de Exa.
+
+    Cada resultado Exa tiene: url, title, text, highlights (lista), etc.
+    Brave devuelve: url, title, description, extra_snippets (lista).
+    """
+    try:
+        web = data.get("web", {})
+        results = web.get("results", [])
+        if not isinstance(results, list):
+            return []
+        items = []
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            url = str(r.get("url", "")).strip()
+            if not url:
+                continue
+            title = str(r.get("title", "") or "").strip()
+            description = str(r.get("description", "") or "").strip()
+            extra = r.get("extra_snippets")
+            highlights = [description] if description else []
+            if isinstance(extra, list):
+                highlights.extend(str(s) for s in extra if s)
+            items.append({
+                "url": url,
+                "title": title,
+                "text": description,
+                "highlights": highlights,
+                "source": "brave_web",
+            })
+        return items
+    except Exception as exc:
+        logger.warning("Error normalizando resultados Brave Web: %s", exc)
+        return []
+
+
 def _normalize_brave_location(data: dict[str, Any]) -> dict[str, str]:
     """Normaliza respuesta de Brave Local Search al formato esperado.
 
@@ -96,3 +133,51 @@ class BraveSearchClient:
         except Exception as exc:
             logger.warning("Brave local search para '%s' falló (degrade safe): %s", query, exc)
             return {}
+
+    async def web_search(
+        self,
+        query: str,
+        country: str | None = None,
+        count: int = 20,
+        pages: int = 2,
+    ) -> list[dict[str, Any]]:
+        """Busca en la web con Brave y normaliza resultados al formato Exa.
+
+        Pagina hasta `pages` veces (offset 0, 1, …). Degrade safe: retorna [] en error.
+        """
+        try:
+            import httpx
+
+            headers = {
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip",
+                "X-Subscription-Token": self.api_key,
+            }
+            all_items: list[dict[str, Any]] = []
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                for offset in range(pages):
+                    params: dict[str, Any] = {
+                        "q": query,
+                        "count": min(count, 20),
+                        "offset": offset,
+                        "extra_snippets": "true",
+                    }
+                    if country:
+                        params["country"] = country.lower()
+                    response = await client.get(
+                        f"{self.BASE_URL}/web/search",
+                        params=params,
+                        headers=headers,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    batch = _normalize_brave_web_results(data)
+                    all_items.extend(batch)
+                    # Si no hay más resultados disponibles, dejar de paginar
+                    more = data.get("query", {}).get("more_results_available", True)
+                    if not more:
+                        break
+            return all_items
+        except Exception as exc:
+            logger.warning("Brave web search para '%s' falló (degrade safe): %s", query, exc)
+            return []

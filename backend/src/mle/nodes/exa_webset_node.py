@@ -7,6 +7,7 @@ from typing import Any
 
 from langsmith import traceable
 
+from mle.clients.brave_client import BraveSearchClient
 from mle.clients.exa_client import ExaClient, exa_contents_full_config, finalize_exa_search_payload
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.core.config import effective_exa_search_timeout_seconds, get_settings
@@ -255,8 +256,33 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
 
             exa_results = _merge_exa_results(batches + keyword_batches)
 
+        # Complemento Brave Web Search: cubre directorios locales y páginas regionales
+        brave_web_results: list[dict[str, Any]] = []
+        if valid_payloads and settings.brave_search_api_key and settings.brave_search_enabled:
+            brave = BraveSearchClient(
+                api_key=settings.brave_search_api_key,
+                timeout_seconds=settings.brave_search_timeout_seconds,
+            )
+            rel = planner_output.get("relevance_criteria") if isinstance(planner_output.get("relevance_criteria"), dict) else {}
+            country_iso2 = str(rel.get("country_iso2") or "").strip().upper() or None
+            main_query = str(planner_output.get("search_config", {}).get("query", "")).strip()
+            if main_query:
+                brave_web_results = await brave.web_search(
+                    query=main_query,
+                    country=country_iso2,
+                    count=20,
+                    pages=2,
+                )
+                logger.info(
+                    "Brave Web Search job_id=%s resultados=%s",
+                    state.job_id,
+                    len(brave_web_results),
+                )
+
+        exa_results = _merge_exa_results(batches + keyword_batches + [brave_web_results])
+
         logger.info(
-            "Exa search node completado job_id=%s unicos_tras_merge=%s llamadas=%s detalle_batches=%s",
+            "Exa search node completado job_id=%s unicos_tras_merge=%s (exa+brave) llamadas=%s detalle_batches=%s",
             state.job_id,
             len(exa_results),
             len(batches),

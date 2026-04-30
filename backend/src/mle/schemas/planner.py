@@ -21,7 +21,7 @@ class ExaSearchConfig(BaseModel):
     include_domains: list[str] = Field(default_factory=list)
     exclude_domains: list[str] = Field(default_factory=list)
     additional_queries: list[str] = Field(default_factory=list)
-    exa_category: str | None = Field(default="people", max_length=32)
+    exa_category: str | None = Field(default=None, max_length=32)
 
 
 class PlannerOutput(BaseModel):
