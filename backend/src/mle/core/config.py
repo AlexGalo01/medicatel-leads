@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     database_url: str = Field(alias="DATABASE_URL")
     exa_api_key: str = Field(alias="EXA_API_KEY")
-    exa_search_type: str = Field(default="deep-reasoning", alias="EXA_SEARCH_TYPE")
+    exa_search_type: str = Field(default="auto", alias="EXA_SEARCH_TYPE")
     exa_search_timeout_seconds: float = Field(default=45.0, alias="EXA_SEARCH_TIMEOUT_SECONDS")
     # Suma fija (p. ej. demo) al timeout HTTP de /search y /contents de Exa. 0 lo desactiva.
     exa_search_demo_extra_seconds: float = Field(default=20.0, ge=0.0, le=300.0, alias="EXA_SEARCH_DEMO_EXTRA_SECONDS")

@@ -43,8 +43,11 @@ def finalize_exa_search_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """
     Ajustes finales antes de POST /search:
     - category people/company es incompatible con includeDomains/excludeDomains (API Exa).
+    - category no funciona correctamente con deep-reasoning (retorna muy pocos resultados).
     """
     if payload.get("includeDomains") or payload.get("excludeDomains"):
+        payload.pop("category", None)
+    if payload.get("type") in _DEEP_SEARCH_TYPES:
         payload.pop("category", None)
     return payload
 

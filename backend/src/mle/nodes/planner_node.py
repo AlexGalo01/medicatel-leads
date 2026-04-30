@@ -70,8 +70,8 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
         exa_cat = None
     if exa_cat == "":
         exa_cat = None
-    if exa_cat is None:
-        exa_cat = "people"
+    # No forzar categoría por defecto: si el LLM no especificó, Exa busca sin restricción de tipo
+    # (forzar "people" eliminaría resultados de empresas como restaurantes, clínicas, hoteles)
 
     search_config = ExaSearchConfig(
         query=base_query,

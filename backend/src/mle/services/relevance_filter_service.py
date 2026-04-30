@@ -69,9 +69,8 @@ def _professional_intent_rules_block(user_query: str, role_or_stack_hint: str | 
         f"DEBES verificar que cada resultado sea DIRECTAMENTE del sector/profesión buscada.\n"
         f"- match=true SOLO si título o excerpt demuestran que el resultado ES del sector/profesión objetivo.\n"
         f"- match=false INMEDIATAMENTE si el resultado es de OTRO sector, rubro o actividad.\n"
-        f"  Si el título del resultado menciona EXPLÍCITAMENTE una profesión diferente (ej: 'maquillista', "
-        f"  'estilista', 'peluquero', 'chef', 'arquitecto') cuando se busca un sector distinto → match=false, confidence=1.\n"
-        f"  Ejemplos: papelería NO es clínica; hotel NO es consultorio; salón de belleza NO es médico.\n"
+        f"  Si el título del resultado pertenece claramente a un rubro diferente al buscado → match=false, confidence=1.\n"
+        f"  Ejemplo: si el usuario busca 'clínicas dentales' y el resultado es una ferretería o una escuela de idiomas → match=false.\n"
         f"- El nombre comercial por sí solo NO prueba nada. Verifica el excerpt.\n"
         f"- Si no puedes confirmar con certeza que el resultado es del sector buscado → match=false y confidence=1.\n"
     )
@@ -85,8 +84,8 @@ def _sector_intent_rules_block(user_query: str) -> str:
         "- Si hay duda razonable y no puedes confirmar que el resultado sea del sector → match=false.\n"
         "- Solo marca match=true cuando el título o excerpt demuestren de forma positiva que el resultado "
         "pertenece al sector buscado.\n"
-        "- Negocios de rubro completamente distinto (papelerías, ferreterías, restaurantes, "
-        "hoteles) son match=false cuando el usuario busca otro sector específico.\n"
+        "- Un negocio de rubro completamente distinto al buscado es match=false (ej: si el usuario busca "
+        "clínicas y el resultado es una ferretería, match=false).\n"
         "- confidence 1-3 solo para resultados que claramente NO son del sector.\n"
         "- confidence 8-10 para resultados que demuestran CLARAMENTE alineación sectorial.\n"
     )
