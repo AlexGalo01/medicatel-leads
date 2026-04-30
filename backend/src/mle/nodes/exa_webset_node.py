@@ -47,10 +47,21 @@ def _fair_num_results_for_query_slot(total_budget: int, slot: int, num_queries: 
     return min(MAX_EXA_RESULTS_PER_CALL, max(MIN_RESULTS_PER_QUERY, q))
 
 
-def _merge_exa_results(batches: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+def _merge_exa_results(
+    batches: list[list[dict[str, Any]]],
+    source_types: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Merge Exa results, optionally tagging each with source_type.
+
+    source_types: list de strings (una por batch) para etiquetar origen.
+    Si no se proporciona, no se agrega source_type.
+    """
     merged: dict[str, dict[str, Any]] = {}
     no_url_idx = 0
-    for batch in batches:
+    for batch_idx, batch in enumerate(batches):
+        source_type = None
+        if source_types and batch_idx < len(source_types):
+            source_type = source_types[batch_idx]
         for item in batch:
             if not isinstance(item, dict):
                 continue
@@ -61,7 +72,10 @@ def _merge_exa_results(batches: list[list[dict[str, Any]]]) -> list[dict[str, An
                 key = f"nourl:{no_url_idx}"
                 no_url_idx += 1
             if key not in merged:
-                merged[key] = item
+                item_copy = dict(item)
+                if source_type:
+                    item_copy["source_type"] = source_type
+                merged[key] = item_copy
     return list(merged.values())
 
 
@@ -254,7 +268,9 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
                 else:
                     keyword_batches.append(_extract_results(ko))
 
-            exa_results = _merge_exa_results(batches + keyword_batches)
+            # Etiquetar semantic + keyword antes del merge
+            all_source_types = ["exa_semantic"] * len(batches) + ["exa_keyword"] * len(keyword_batches)
+            exa_results = _merge_exa_results(batches + keyword_batches, source_types=all_source_types)
 
         # Complemento Brave Web Search: cubre directorios locales y páginas regionales
         brave_web_results: list[dict[str, Any]] = []
@@ -279,7 +295,14 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
                     len(brave_web_results),
                 )
 
-        exa_results = _merge_exa_results(batches + keyword_batches + [brave_web_results])
+        # Merge final con etiquetas de fuente
+        all_batches_final = batches + keyword_batches + [brave_web_results]
+        all_source_types_final = (
+            ["exa_semantic"] * len(batches)
+            + ["exa_keyword"] * len(keyword_batches)
+            + ["brave_web"] * (1 if brave_web_results else 0)
+        )
+        exa_results = _merge_exa_results(all_batches_final, source_types=all_source_types_final)
 
         logger.info(
             "Exa search node completado job_id=%s unicos_tras_merge=%s (exa+brave) llamadas=%s detalle_batches=%s",

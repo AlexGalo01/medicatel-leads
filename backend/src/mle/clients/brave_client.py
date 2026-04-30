@@ -35,7 +35,7 @@ def _normalize_brave_web_results(data: dict[str, Any]) -> list[dict[str, Any]]:
                 "title": title,
                 "text": description,
                 "highlights": highlights,
-                "source": "brave_web",
+                "source_type": "brave_web",
             })
         return items
     except Exception as exc:
@@ -143,10 +143,18 @@ class BraveSearchClient:
     ) -> list[dict[str, Any]]:
         """Busca en la web con Brave y normaliza resultados al formato Exa.
 
-        Pagina hasta `pages` veces (offset 0, 1, …). Degrade safe: retorna [] en error.
+        Simplifica queries muy largas (>120 chars) para evitar 422. Pagina hasta `pages` veces.
+        Degrade safe: retorna [] en error.
         """
         try:
             import httpx
+
+            # Simplificar query si es muy larga (Brave rechaza queries complejas con 422)
+            simplified_query = query.strip()
+            if len(simplified_query) > 120:
+                # Tomar solo las primeras palabras clave (tipicamente antes de "incluyendo", "con datos", etc)
+                parts = simplified_query.split()
+                simplified_query = " ".join(parts[:8])  # primeras ~8 palabras
 
             headers = {
                 "Accept": "application/json",
@@ -157,7 +165,7 @@ class BraveSearchClient:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 for offset in range(pages):
                     params: dict[str, Any] = {
-                        "q": query,
+                        "q": simplified_query,
                         "count": min(count, 20),
                         "offset": offset,
                         "extra_snippets": "true",
