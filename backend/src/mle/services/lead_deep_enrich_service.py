@@ -359,12 +359,9 @@ async def _opencli_evidence(
     # Si ya tenemos datos de Google Maps prefetched, usarlos directamente
     if prefetched_maps and isinstance(prefetched_maps, dict):
         out["google_maps"] = prefetched_maps
-        tasks = {
-            "google_search": opencli.google_search(google_q),
-        }
+        tasks = {}
     else:
         tasks = {
-            "google_search": opencli.google_search(google_q),
             "google_maps": opencli.google_maps(maps_q),
         }
 

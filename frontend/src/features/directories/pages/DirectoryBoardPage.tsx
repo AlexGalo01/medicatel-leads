@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 
 import {
+  createUrlScrapeJob,
   getDirectory,
   listOpportunities,
   listSearchJobs,
@@ -43,7 +44,7 @@ import type {
   SearchJobListItem,
 } from "../../../types";
 
-type ActiveTab = "board" | "searches";
+type ActiveTab = "board" | "searches" | "url-scraper";
 
 function formatRecent(iso: string): string {
   const d = new Date(iso);
@@ -335,6 +336,15 @@ export function DirectoryBoardPage(): JSX.Element {
           Búsquedas
           <span className="directory-board-tab-count">{searches.length}</span>
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "url-scraper"}
+          className={`directory-board-tab${activeTab === "url-scraper" ? " is-active" : ""}`}
+          onClick={() => setActiveTab("url-scraper")}
+        >
+          Importar URL
+        </button>
       </div>
 
       {/* Tablero */}
@@ -483,6 +493,66 @@ export function DirectoryBoardPage(): JSX.Element {
           )}
         </div>
       )}
+
+      {/* Importar URL */}
+      {activeTab === "url-scraper" && <UrlScraperPanel directoryId={directoryId} />}
     </section>
+  );
+}
+
+function UrlScraperPanel({ directoryId }: { directoryId: string }): JSX.Element {
+  const navigate = useNavigate();
+  const [targetUrl, setTargetUrl] = useState("");
+  const [userPrompt, setUserPrompt] = useState("");
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      createUrlScrapeJob({
+        target_url: targetUrl.trim(),
+        user_prompt: userPrompt.trim(),
+        directory_id: directoryId,
+      }),
+    onSuccess: (job) => navigate(`/url-scrape-jobs/${job.job_id}`),
+  });
+
+  return (
+    <div className="url-scraper-panel">
+      <h2>Importar desde URL</h2>
+      <p className="muted-text">
+        Ingresa la URL de un directorio o listado y describe qué información quieres extraer.
+      </p>
+      <form
+        className="url-scraper-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          createMutation.mutate();
+        }}
+      >
+        <label className="url-scraper-label">URL de la página</label>
+        <input
+          className="ui-input"
+          type="url"
+          value={targetUrl}
+          onChange={(e) => setTargetUrl(e.target.value)}
+          placeholder="https://ejemplo.com/directorio-medicos"
+          required
+        />
+        <label className="url-scraper-label">¿Qué quieres extraer?</label>
+        <textarea
+          className="ui-input"
+          value={userPrompt}
+          onChange={(e) => setUserPrompt(e.target.value)}
+          placeholder="Extrae todos los médicos con su nombre, especialidad, teléfono y ciudad"
+          rows={4}
+          required
+        />
+        {createMutation.isError && (
+          <p className="error-text">{(createMutation.error as Error).message}</p>
+        )}
+        <Button type="submit" disabled={createMutation.isPending} className="cta-button">
+          {createMutation.isPending ? "Iniciando extracción…" : "Extraer entradas"}
+        </Button>
+      </form>
+    </div>
   );
 }

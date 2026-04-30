@@ -118,6 +118,12 @@ class OpenCliClient:
         raw = await self._run_safe("instagram", ["instagram", "profile", query])
         return _normalize_generic_contact(raw, source="instagram")
 
+    async def url_extract(self, target_url: str) -> dict[str, Any]:
+        """Navega a una URL y retorna el contenido visible en texto plano para procesamiento LLM."""
+        if not target_url.strip():
+            return {}
+        return await self._run_safe("url_extract", ["--mode", "url_extract", "--url", target_url])
+
 
 def _first_str(d: dict[str, Any], *keys: str) -> str | None:
     for k in keys:

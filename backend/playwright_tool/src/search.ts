@@ -7,14 +7,15 @@ import * as fs from 'fs';
 
 const program = new Command();
 program
-  .option('--mode <mode>', 'google_search | google_maps', 'google_search')
+  .option('--mode <mode>', 'google_search | google_maps | url_extract', 'google_search')
   .option('--query <query>', 'Query string')
+  .option('--url <url>', 'Target URL for url_extract mode')
   .option('--state-file <path>', 'Browser state file', '/data/playwright-state.json')
   .option('--timeout <ms>', 'Timeout in milliseconds', '45000')
   .option('--chromium-path <path>', 'Path to Chromium binary', '/usr/bin/chromium')
   .parse();
 
-const { mode, query, stateFile, chromiumPath } = program.opts();
+const { mode, query, url, stateFile, chromiumPath } = program.opts();
 
 async function extractFromJsonLd(jsonLd: unknown[], key: string): Promise<string | null> {
   for (const obj of jsonLd) {
@@ -208,9 +209,44 @@ async function scrapeMapsPlace(page: any, query: string): Promise<Record<string,
   }
 }
 
+async function scrapeUrlContent(page: any, targetUrl: string): Promise<Record<string, unknown>> {
+  try {
+    await page.goto(targetUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
+    });
+
+    // Wait for dynamic content
+    await page.waitForTimeout(2500).catch(() => {});
+
+    // Extract visible text content, remove script/style/nav/footer noise
+    const textContent: string = await page.evaluate(() => {
+      const elements = document.querySelectorAll('script, style, nav, footer');
+      elements.forEach((el) => el.remove());
+      return document.body?.innerText ?? document.body?.textContent ?? '';
+    });
+
+    const pageTitle: string = await page.title().catch(() => '');
+
+    return {
+      text_content: textContent.slice(0, 80000),
+      page_title: pageTitle,
+      source_url: targetUrl,
+      source: 'playwright_url_extract',
+    };
+  } catch (error) {
+    console.error(`Error extracting URL: ${error}`);
+    return { source: 'playwright_url_extract', error: String(error), source_url: targetUrl };
+  }
+}
+
 async function main() {
-  if (!query) {
-    console.error('Error: --query is required');
+  if (!query && mode !== 'url_extract') {
+    console.error(`Error: --query is required for mode "${mode}"`);
+    process.exit(1);
+  }
+  if (!url && mode === 'url_extract') {
+    console.error('Error: --url is required for url_extract mode');
     process.exit(1);
   }
 
@@ -250,6 +286,8 @@ async function main() {
       result = await scrapeKnowledgePanel(page, query);
     } else if (mode === 'google_maps') {
       result = await scrapeMapsPlace(page, query);
+    } else if (mode === 'url_extract') {
+      result = await scrapeUrlContent(page, url);
     } else {
       result = { error: `Unknown mode: ${mode}` };
     }

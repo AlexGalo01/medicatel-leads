@@ -146,6 +146,18 @@ def _pg_apply_directories_migrations() -> list[str]:
     ]
 
 
+def _pg_apply_url_scrape_jobs_migration() -> list[str]:
+    """
+    Migración embebida para url_scrape_jobs.
+    La tabla la crea SQLModel.metadata.create_all; aquí solo creamos índices.
+    """
+    return [
+        "CREATE INDEX IF NOT EXISTS ix_url_scrape_jobs_status ON url_scrape_jobs (status)",
+        "CREATE INDEX IF NOT EXISTS ix_url_scrape_jobs_directory_id ON url_scrape_jobs (directory_id)",
+        "CREATE INDEX IF NOT EXISTS ix_url_scrape_jobs_created_at ON url_scrape_jobs (created_at DESC)",
+    ]
+
+
 # Mapa legacy stage → posición 0-indexed en el directorio "Sin clasificar"
 LEGACY_STAGES_ORDER = [
     "first_contact",
@@ -271,6 +283,8 @@ async def init_db() -> None:
         await connection.execute(
             text("ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS contact_type VARCHAR(32)")
         )
+        for stmt in _pg_apply_url_scrape_jobs_migration():
+            await connection.execute(text(stmt))
         await _seed_sin_clasificar_directory(connection)
         block = _pg_migration_sql_002()
         if not block:

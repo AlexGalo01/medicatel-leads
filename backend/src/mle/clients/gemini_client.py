@@ -205,6 +205,16 @@ class GeminiClient:
         raw_text = self._raw_text_from_payload(payload)
         return self._parse_json_object_from_text(raw_text)
 
+    async def complete_json_array_prompt(self, prompt: str) -> list[dict[str, Any]]:
+        """Genera una respuesta JSON array a partir de un prompt (para extracción multi-entrada)."""
+        import httpx
+
+        request_body = {"contents": [{"parts": [{"text": prompt}]}]}
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            payload = await self._post_with_retry(client, request_body)
+        raw_text = self._raw_text_from_payload(payload)
+        return self._parse_json_array_from_text(raw_text)
+
     def _build_search_plan_prompt(
         self,
         *,
@@ -316,6 +326,17 @@ class GeminiClient:
         if json_start < 0 or json_end < 0:
             raise ValueError("Gemini devolvio respuesta no JSON.")
         return dict(json.loads(raw_text[json_start : json_end + 1]))
+
+    def _parse_json_array_from_text(self, raw_text: str) -> list[dict[str, Any]]:
+        json_start = raw_text.find("[")
+        json_end = raw_text.rfind("]")
+        if json_start < 0 or json_end < 0:
+            return []
+        try:
+            result = json.loads(raw_text[json_start : json_end + 1])
+            return result if isinstance(result, list) else []
+        except (json.JSONDecodeError, ValueError):
+            return []
 
     def _parse_score_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         raw_text = self._raw_text_from_payload(payload)

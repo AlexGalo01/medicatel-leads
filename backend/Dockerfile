@@ -27,6 +27,10 @@ COPY playwright_tool /app/playwright_tool
 RUN cd /app/playwright_tool && npm install && npm run build && chmod +x /app/playwright_tool/bin/mle-search
 ENV CHROMIUM_PATH=/usr/bin/chromium
 
+# Install Playwright Chromium for Browser-Use (before USER appuser)
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN python -m playwright install chromium --with-deps
+
 RUN useradd --create-home --shell /bin/bash appuser
 RUN mkdir -p /app/exports /data/chrome-profile && chown -R appuser:appuser /app /data
 USER appuser

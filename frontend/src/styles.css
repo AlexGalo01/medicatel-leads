@@ -6767,3 +6767,340 @@ textarea {
   font-size: 13px;
 }
 
+
+/* ---- URL Scraper Panel (tab en DirectoryBoardPage) ---- */
+
+.url-scraper-panel {
+  max-width: 600px;
+  padding: 24px 0;
+}
+
+.url-scraper-panel h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  color: var(--color-text);
+}
+
+.url-scraper-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.url-scraper-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+/* ---- URL Scrape Job Page ---- */
+
+.url-scrape-job-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+.url-scrape-job-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 20px;
+}
+
+.url-scrape-job-back {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.url-scrape-job-back:hover {
+  color: var(--color-text);
+}
+
+.url-scrape-job-breadcrumb-sep {
+  color: var(--color-border);
+}
+
+.url-scrape-job-breadcrumb-current {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.url-scrape-job-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.url-scrape-job-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0 0 4px;
+}
+
+.url-scrape-job-url {
+  font-size: 13px;
+  margin: 0;
+}
+
+.url-scrape-job-source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.url-scrape-job-source-link:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.url-scrape-job-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.url-scrape-job-sel-count {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.url-scrape-job-progress-wrap {
+  margin-bottom: 20px;
+}
+
+.url-scrape-job-progress-bar {
+  height: 4px;
+  background: var(--color-primary);
+  border-radius: 2px;
+  transition: width 0.5s ease;
+  margin-bottom: 6px;
+}
+
+.url-scrape-job-progress-label {
+  font-size: 13px;
+  margin: 0;
+}
+
+.url-scrape-job-error {
+  padding: 16px;
+  background: var(--color-error-bg, #fff5f5);
+  border-radius: 8px;
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.url-scrape-job-success {
+  padding: 12px 16px;
+  background: var(--color-success-bg, #f0fdf4);
+  color: var(--color-success, #15803d);
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.url-scrape-job-select-bar {
+  display: flex;
+  align-items: center;
+  padding: 10px 0;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.url-scrape-job-check-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.url-scrape-job-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.url-scrape-job-card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.url-scrape-job-card:has(.url-scrape-job-card-check:checked) {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-tint);
+}
+
+.url-scrape-job-card-inner {
+  display: flex;
+  gap: 10px;
+  padding: 14px;
+  cursor: pointer;
+}
+
+.url-scrape-job-card-check {
+  flex-shrink: 0;
+  margin-top: 3px;
+  accent-color: var(--color-primary);
+}
+
+.url-scrape-job-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.url-scrape-job-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.url-scrape-job-card-link {
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.url-scrape-job-card-link:hover {
+  color: var(--color-primary);
+}
+
+.url-scrape-job-card-snippet {
+  font-size: 12px;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+.url-scrape-job-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.url-scrape-job-card-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-alt);
+  padding: 2px 6px;
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.url-scrape-job-empty {
+  padding: 40px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.url-scrape-job-empty p {
+  margin: 0;
+  font-size: 15px;
+  color: var(--color-text);
+}
+
+.url-scrape-job-select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+  gap: 16px;
+}
+
+.url-scrape-job-select-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.url-scrape-job-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.url-scrape-job-pagination-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.url-scrape-job-pagination-btn:hover:not(:disabled) {
+  background: var(--color-surface-alt);
+  border-color: var(--color-text-secondary);
+}
+
+.url-scrape-job-pagination-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.url-scrape-job-pagination-info {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+}

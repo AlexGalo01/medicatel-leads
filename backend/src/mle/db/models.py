@@ -201,3 +201,25 @@ class Lead(SQLModel, table=True):
     updated_at: datetime = Field(
         default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
     )
+
+
+class UrlScrapeJob(SQLModel, table=True):
+    """Job para scraping de URLs y extracción de directorios con LLM."""
+
+    __tablename__ = "url_scrape_jobs"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    target_url: str = Field(max_length=2000)
+    user_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    directory_id: UUID | None = Field(default=None, index=True, foreign_key="directories.id")
+    status: str = Field(default="pending", index=True, max_length=32)
+    progress: int = Field(default=0, ge=0, le=100)
+    metadata_json: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSON, nullable=False)
+    )
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
+    )

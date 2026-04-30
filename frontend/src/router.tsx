@@ -17,6 +17,7 @@ import { LeadDetailPage } from "./pages/LeadDetailPage";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { SearchPage } from "./pages/SearchPage";
+import { UrlScrapeJobPage } from "./pages/UrlScrapeJobPage";
 
 export const appRouter = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -33,6 +34,7 @@ export const appRouter = createBrowserRouter([
       { path: "search", element: <SearchPage /> },
       { path: "jobs/:jobId/result/:resultIndex", element: <JobExaResultDetailPage /> },
       { path: "jobs/:jobId", element: <JobSearchWorkspacePage /> },
+      { path: "url-scrape-jobs/:jobId", element: <UrlScrapeJobPage /> },
       { path: "jobs/:jobId/leads", element: <Navigate to=".." relative="path" replace /> },
       { path: "leads/:leadId", element: <LeadDetailPage /> },
       { path: "directories", element: <DirectoriesListPage /> },

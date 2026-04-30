@@ -404,3 +404,46 @@ export interface DirectoryEntriesListResponse {
   page_size: number;
   total: number;
 }
+
+// ---- URL Scraper ----
+
+export interface UrlScrapeJobCreateRequest {
+  target_url: string;
+  user_prompt: string;
+  directory_id?: string | null;
+}
+
+export interface UrlScrapeResultPreviewItem {
+  index: number;
+  title: string;
+  url: string;
+  snippet: string | null;
+  city: string;
+  phones: string[];
+  emails: string[];
+}
+
+export interface UrlScrapeJobStatusResponse {
+  job_id: string;
+  status: string;
+  progress: number;
+  target_url: string;
+  directory_id: string | null;
+  entries_count: number;
+  scrape_results_preview: UrlScrapeResultPreviewItem[];
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UrlScrapeJobListItem {
+  job_id: string;
+  target_url: string;
+  status: string;
+  entries_count: number;
+  created_at: string;
+}
+
+export interface UrlScrapeJobsListResponse {
+  items: UrlScrapeJobListItem[];
+}

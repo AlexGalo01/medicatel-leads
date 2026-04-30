@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
@@ -86,7 +86,7 @@ from mle.services.query_expansion_service import expand_user_search_query
 from mle.services.exa_more_results_service import append_exa_results_for_job
 from mle.services.profile_interpret_service import interpret_profile_texts
 from mle.services.profile_interpret_service import extract_profile_summary
-from mle.services.lead_deep_enrich_service import LeadCore, enrich_lead_contacts
+from mle.services.lead_deep_enrich_service import LeadCore, enrich_lead_contacts, EnrichmentResult
 from mle.clients.exa_client import ExaClient
 from mle.clients.opencli_client import OpenCliClient
 from mle.clients.llm_factory import get_llm_client, get_reviewer_llm_client
@@ -982,12 +982,15 @@ async def enrich_opportunity(opportunity_id: UUID):
     proposer = get_llm_client(st)
     reviewer = get_reviewer_llm_client(st)
 
-    async def generate():
-        try:
-            async def send_progress(msg: str):
-                progress_data = {"stage": msg}
-                yield f"data: {json.dumps(progress_data)}\n\n"
+    queue: asyncio.Queue[dict] = asyncio.Queue()
 
+    async def send_progress(msg: str):
+        """Coroutine que pone progreso en la queue (no async generator)."""
+        await queue.put({"stage": msg})
+
+    async def _run_enrichment():
+        """Ejecuta enriquecimiento y pone resultado en queue."""
+        try:
             result = await enrich_lead_contacts(
                 lead,
                 exa_client=exa_client,
@@ -998,26 +1001,109 @@ async def enrich_opportunity(opportunity_id: UUID):
                 exclude_linkedin=True,
                 progress_callback=send_progress,
             )
-
-            response_data = OpportunityEnrichResponse(
-                status=result.status,
-                message=result.message,
-                email=result.email,
-                phone=result.phone,
-                whatsapp=result.whatsapp,
-                address=result.address,
-                schedule_text=result.schedule_text,
-                website=result.website,
-                facebook_url=result.facebook_url,
-                instagram_url=result.instagram_url,
-                linkedin_url=result.linkedin_url,
-                description=result.description,
-                citations=result.citations,
-            )
-            yield f"event: done\ndata: {response_data.model_dump_json()}\n\n"
+            await queue.put({"__result__": result})
         except Exception as e:
+            await queue.put({"__error__": str(e)})
+
+    async def _persist_enrichment(enrichment_result: EnrichmentResult) -> None:
+        """Persiste los contactos y metadatos del enriquecimiento en la oportunidad."""
+        async with async_session_factory() as session:
+            opp_repo = OpportunitiesRepository(session)
+            current_opp = await opp_repo.get_by_id(opportunity_id)
+            if current_opp is None:
+                return
+
+            # Construir lista de contactos nuevos sin sobrescribir existentes del mismo kind
+            existing_contacts = [c for c in (current_opp.contacts or []) if isinstance(c, dict)]
+            existing_kinds = {str(c.get("kind", "")).lower() for c in existing_contacts}
+            new_contacts = list(existing_contacts)
+
+            for kind, value in [
+                ("email", enrichment_result.email),
+                ("phone", enrichment_result.phone),
+                ("whatsapp", enrichment_result.whatsapp),
+                ("website", enrichment_result.website),
+                ("linkedin", enrichment_result.linkedin_url),
+                ("facebook_url", enrichment_result.facebook_url),
+                ("instagram_url", enrichment_result.instagram_url),
+            ]:
+                if value and kind.lower() not in existing_kinds:
+                    new_contacts.append({
+                        "id": f"enrich-{kind}-{uuid4()}",
+                        "kind": kind,
+                        "value": str(value)[:500],
+                        "note": enrichment_result.contact_sources.get(kind),
+                        "role": None,
+                        "is_primary": len(new_contacts) == 0,
+                    })
+
+            # Guardar contactos
+            if new_contacts != existing_contacts:
+                await opp_repo.replace_contacts(current_opp, new_contacts)
+
+            # Guardar metadatos de enriquecimiento
+            overrides = {
+                "enrichment_status": enrichment_result.status,
+                "enrichment_message": enrichment_result.message,
+            }
+            if enrichment_result.address:
+                overrides["address"] = enrichment_result.address
+            if enrichment_result.schedule_text:
+                overrides["schedule_text"] = enrichment_result.schedule_text
+            if enrichment_result.description:
+                overrides["description"] = enrichment_result.description
+            await opp_repo.merge_profile_overrides(current_opp, overrides)
+
+    async def generate():
+        """Genera SSE events desde la queue."""
+        task = asyncio.create_task(_run_enrichment())
+        try:
+            while True:
+                item = await asyncio.wait_for(queue.get(), timeout=180)
+
+                if "__result__" in item:
+                    result: EnrichmentResult = item["__result__"]
+
+                    # Persistir enriquecimiento
+                    await _persist_enrichment(result)
+
+                    response_data = OpportunityEnrichResponse(
+                        status=result.status,
+                        message=result.message,
+                        email=result.email,
+                        phone=result.phone,
+                        whatsapp=result.whatsapp,
+                        address=result.address,
+                        schedule_text=result.schedule_text,
+                        website=result.website,
+                        facebook_url=result.facebook_url,
+                        instagram_url=result.instagram_url,
+                        linkedin_url=result.linkedin_url,
+                        description=result.description,
+                        citations=result.citations,
+                    )
+                    yield f"event: done\ndata: {response_data.model_dump_json()}\n\n"
+                    break
+
+                elif "__error__" in item:
+                    error_data = {"error": str(item["__error__"])}
+                    yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+                    break
+
+                else:
+                    # Progress event
+                    yield f"data: {json.dumps(item)}\n\n"
+
+        except asyncio.TimeoutError:
+            task.cancel()
+            error_data = {"error": "Timeout durante enriquecimiento"}
+            yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+        except Exception as e:
+            task.cancel()
             error_data = {"error": str(e)}
             yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+        finally:
+            task.cancel()
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -1512,6 +1598,10 @@ async def reopen_opportunity(
 
 
 # Incluir sub-routers al final: si no, FastAPI copia public/protected *vacíos* y /api/v1/* devuelve 404.
+from mle.api.url_scrape_routes import url_scrape_router
+
+protected_router.include_router(url_scrape_router)
+
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(public_router)
 api_router.include_router(protected_router)

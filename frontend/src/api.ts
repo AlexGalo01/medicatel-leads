@@ -30,6 +30,9 @@ import type {
   SearchJobCreateResponse,
   SearchJobsListResponse,
   SearchJobStatusResponse,
+  UrlScrapeJobCreateRequest,
+  UrlScrapeJobStatusResponse,
+  UrlScrapeJobsListResponse,
   UserPublic,
 } from "./types";
 
@@ -719,4 +722,46 @@ export async function reopenOpportunity(opportunityId: string): Promise<Opportun
     { method: "POST", body: JSON.stringify({}) },
   );
   return parseJsonResponse<OpportunityResponse>(response);
+}
+
+// ---- URL Scraper ----
+
+export async function createUrlScrapeJob(
+  payload: UrlScrapeJobCreateRequest,
+): Promise<UrlScrapeJobStatusResponse> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/url-scrape-jobs`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return parseJsonResponse<UrlScrapeJobStatusResponse>(response);
+}
+
+export async function getUrlScrapeJobStatus(jobId: string): Promise<UrlScrapeJobStatusResponse> {
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/url-scrape-jobs/${jobId}`);
+  return parseJsonResponse<UrlScrapeJobStatusResponse>(response);
+}
+
+export async function listUrlScrapeJobs(directoryId?: string): Promise<UrlScrapeJobsListResponse> {
+  const query = new URLSearchParams();
+  if (directoryId) query.set("directory_id", directoryId);
+  const response = await apiFetch(`${apiBaseUrl}/api/v1/url-scrape-jobs?${query}`);
+  return parseJsonResponse<UrlScrapeJobsListResponse>(response);
+}
+
+export async function pushScrapeEntriesToDirectory(
+  jobId: string,
+  directoryId: string,
+  entryIndices: number[] = [],
+): Promise<{ created: number; directory_id: string }> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/api/v1/url-scrape-jobs/${jobId}/push-to-directory`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        directory_id: directoryId,
+        entry_indices: entryIndices,
+      }),
+    },
+  );
+  return parseJsonResponse<{ created: number; directory_id: string }>(response);
 }

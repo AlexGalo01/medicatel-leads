@@ -367,3 +367,52 @@ class OpportunityBitacoraRequest(BaseModel):
 class OpportunityContactsReplaceRequest(BaseModel):
     contacts: list[OpportunityContactPayload] = Field(default_factory=list)
 
+
+# ---- URL Scraper ----
+
+
+class UrlScrapeJobCreateRequest(BaseModel):
+    target_url: str = Field(min_length=10, max_length=2000)
+    user_prompt: str = Field(min_length=5, max_length=2000)
+    directory_id: UUID | None = None
+
+
+class UrlScrapeResultPreviewItem(BaseModel):
+    index: int
+    title: str
+    url: str
+    snippet: str | None = None
+    city: str
+    phones: list[str] = Field(default_factory=list)
+    emails: list[str] = Field(default_factory=list)
+
+
+class UrlScrapeJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    progress: int
+    target_url: str
+    directory_id: str | None = None
+    entries_count: int = 0
+    scrape_results_preview: list[UrlScrapeResultPreviewItem] = Field(default_factory=list)
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class UrlScrapeJobListItemResponse(BaseModel):
+    job_id: str
+    target_url: str
+    status: str
+    entries_count: int = 0
+    created_at: datetime
+
+
+class UrlScrapeJobsListResponse(BaseModel):
+    items: list[UrlScrapeJobListItemResponse]
+
+
+class UrlScrapeJobPushRequest(BaseModel):
+    directory_id: UUID
+    entry_indices: list[int] = Field(default_factory=list)
+
