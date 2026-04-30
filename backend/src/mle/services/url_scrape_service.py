@@ -284,6 +284,13 @@ async def run_url_scrape_pipeline(job_id: UUID) -> None:
         page_num = 0
 
         while current_url and page_num < _MAX_PAGES:
+            # Check if job was cancelled
+            async with async_session_factory() as session:
+                repo = UrlScrapeJobsRepository(session)
+                current_job = await repo.get_by_id(job_id)
+                if current_job and current_job.status == "cancelled":
+                    logger.info("Job cancelled during Playwright phase job_id=%s", job_id)
+                    return
             page_num += 1
             progress = min(10 + page_num * 12, 85)
 
@@ -314,9 +321,13 @@ async def run_url_scrape_pipeline(job_id: UUID) -> None:
 
             current_url = next_url
 
-    # --- LLM extraction in parallel for all pages ---
+    # --- Check if cancelled before LLM extraction ---
     async with async_session_factory() as session:
         repo = UrlScrapeJobsRepository(session)
+        current_job = await repo.get_by_id(job_id)
+        if current_job and current_job.status == "cancelled":
+            logger.info("Job cancelled before LLM extraction job_id=%s", job_id)
+            return
         await repo.update_status(job_id, "running", 45)
 
     if pages_loaded:

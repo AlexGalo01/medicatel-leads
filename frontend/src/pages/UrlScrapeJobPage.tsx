@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, ExternalLink, MapPin, Phone, Mail } from "lucide-react";
 
-import { getDirectory, getUrlScrapeJobStatus, pushScrapeEntriesToDirectory } from "../api";
+import { cancelUrlScrapeJob, getDirectory, getUrlScrapeJobStatus, pushScrapeEntriesToDirectory } from "../api";
 import { Button } from "../components/ui/button";
 
 const ITEMS_PER_PAGE = 30;
@@ -46,6 +46,13 @@ export function UrlScrapeJobPage(): JSX.Element {
       setPushed(true);
       void queryClient.invalidateQueries({ queryKey: ["directory-items", directoryId] });
       setTimeout(() => navigate(`/directories/${directoryId}`), 1500);
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelUrlScrapeJob(jobId!),
+    onSuccess: () => {
+      void jobQuery.refetch();
     },
   });
 
@@ -134,6 +141,15 @@ export function UrlScrapeJobPage(): JSX.Element {
           <p className="muted-text url-scrape-job-progress-label">
             {job?.progress === 10 ? "Navegando la URL…" : "Procesando con IA…"} {job?.progress}%
           </p>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => cancelMutation.mutate()}
+            disabled={cancelMutation.isPending}
+            className="url-scrape-job-cancel-btn"
+          >
+            {cancelMutation.isPending ? "Cancelando…" : "Cancelar"}
+          </Button>
         </div>
       )}
 

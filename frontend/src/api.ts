@@ -765,3 +765,11 @@ export async function pushScrapeEntriesToDirectory(
   );
   return parseJsonResponse<{ created: number; directory_id: string }>(response);
 }
+
+export async function cancelUrlScrapeJob(jobId: string): Promise<{ status: string; job_id: string }> {
+  const response = await apiFetch(
+    `${apiBaseUrl}/api/v1/url-scrape-jobs/${jobId}/cancel`,
+    { method: "POST" },
+  );
+  return parseJsonResponse<{ status: string; job_id: string }>(response);
+}

@@ -6896,6 +6896,11 @@ textarea {
 .url-scrape-job-progress-label {
   font-size: 13px;
   margin: 0;
+  margin-bottom: 8px;
+}
+
+.url-scrape-job-cancel-btn {
+  margin-top: 8px;
 }
 
 .url-scrape-job-error {
