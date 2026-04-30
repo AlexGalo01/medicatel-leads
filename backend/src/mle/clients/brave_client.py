@@ -115,6 +115,7 @@ class BraveSearchClient:
             headers = {
                 "Accept": "application/json",
                 "Accept-Encoding": "gzip",
+                "Cache-Control": "no-cache",
                 "X-Subscription-Token": self.api_key,
             }
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
@@ -159,6 +160,7 @@ class BraveSearchClient:
             headers = {
                 "Accept": "application/json",
                 "Accept-Encoding": "gzip",
+                "Cache-Control": "no-cache",
                 "X-Subscription-Token": self.api_key,
             }
             all_items: list[dict[str, Any]] = []
@@ -171,7 +173,7 @@ class BraveSearchClient:
                         "extra_snippets": "true",
                     }
                     if country:
-                        params["country"] = country.lower()
+                        params["country"] = country.upper()
                     response = await client.get(
                         f"{self.BASE_URL}/web/search",
                         params=params,
