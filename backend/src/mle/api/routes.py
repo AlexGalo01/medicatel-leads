@@ -497,6 +497,9 @@ async def get_search_job_status(
     pipeline_mode_value = job.metadata_json.get("pipeline_mode")
     pipeline_mode = str(pipeline_mode_value) if pipeline_mode_value else None
 
+    suggested_urls_raw = job.metadata_json.get("suggested_source_urls")
+    suggested_source_urls: list[dict[str, str]] = suggested_urls_raw if isinstance(suggested_urls_raw, list) else []
+
     sp = job.metadata_json.get("search_plan")
     exa_cat: str | None = None
     if isinstance(sp, dict):
@@ -537,6 +540,7 @@ async def get_search_job_status(
         error_message=err_detail,
         awaiting_clarification=awaiting_clarification,
         clarifying_question=clarifying_display,
+        suggested_source_urls=suggested_source_urls,
     )
 
 

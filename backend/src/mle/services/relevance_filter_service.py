@@ -91,6 +91,18 @@ def _sector_intent_rules_block(user_query: str) -> str:
     )
 
 
+def _academic_exclusion_rules_block() -> str:
+    """Regla obligatoria para excluir páginas académicas e informacionales."""
+    return (
+        "*** REGLA DE EXCLUSIÓN — Páginas académicas e informacionales ***\n"
+        "- Páginas de universidad, facultad, plan de estudios, carrera académica, "
+        "artículo histórico o documental sobre el sector → match=false, confidence=0.\n"
+        "- URL que apunta a un PDF académico → match=false, confidence=0.\n"
+        "- Solo son válidos resultados que representen un contacto directo activo "
+        "(persona o empresa/clínica que ofrece el servicio buscado).\n"
+    )
+
+
 def _obituary_exclusion_rules_block() -> str:
     """Regla obligatoria para excluir obituarios y personas fallecidas."""
     return (
@@ -137,6 +149,45 @@ _OBITUARY_URL_FRAGMENTS = frozenset({
     "obituario", "obituarios", "in-memoriam", "fallecio", "fallecimiento",
 })
 
+_PDF_URL_RE = re.compile(r"\.pdf(\?.*)?$", re.IGNORECASE)
+
+_ACADEMIC_URL_FRAGMENTS = frozenset({
+    ".edu.",
+    ".edu/",
+    "/dmsdocument/",
+    "/oferta-academica/",
+    "/oferta_academica/",
+    "/carrera/",
+})
+
+_ACADEMIC_TITLE_KEYWORDS = frozenset({
+    "historia de la ", "historia del ",
+    "licenciatura en ", "licenciatura de ",
+    "carrera de psicolog", "plan de estudios",
+    "programa académico", "programa academico",
+    "oferta académica", "oferta academica",
+    "faculty of ", "school of ",
+})
+
+_DIRECTORY_TITLE_RE = re.compile(
+    r"(?i)"
+    r"(¿busca\s+(un|una|al)\s+)"
+    r"|(¿necesita\s+(un|una)\s+)"
+    r"|(directorio\s+de\s+)"
+    r"|(lista\s+de\s+\w+\s+en\s+)"
+    r"|(encuentra\s+(un|una|los|las|al)\s+\w+\s+en\s+)"
+    r"|(los\s+mejores\s+\w+\s+en\s+)"
+    r"|(las\s+mejores\s+\w+\s+en\s+)"
+    r"|(cerca\s+de\s+(usted|ti|tí)\b)"
+    r"|(¿dónde\s+(encontrar|hallar)\s+)"
+    r"|(compare\s+\w+\s+en\s+)"
+    r"|(find\s+(a|an|the\s+best)\s+\w+\s+(near|in)\s+)"
+    r"|(best\s+\w+\s+near\s+(me|you))"
+    r"|(compara\s+y\s+reserva)"
+    r"|(\d+\s+mejores?\s+\w+\s+en\s+)"
+    r"|(profesionales\s+en\s+\w+\s*[—–-])"
+)
+
 
 def _heuristic_obituary_drop_reason(item: dict[str, Any]) -> str | None:
     """Descarta obituarios/fallecidos por heurística antes de llamar a Gemini."""
@@ -153,6 +204,61 @@ def _heuristic_obituary_drop_reason(item: dict[str, Any]) -> str | None:
             return f"URL indica obituario/fallecimiento: '{frag}'"
 
     return None
+
+
+def _heuristic_academic_drop_reason(item: dict[str, Any]) -> str | None:
+    """Descarta páginas académicas, documentos PDF universitarios e informacionales."""
+    url = str(item.get("url") or "").lower()
+    title = str(item.get("title") or "").lower()
+
+    if _PDF_URL_RE.search(url):
+        return "URL apunta a un documento PDF."
+
+    url_path = url.split("?")[0]
+    for frag in _ACADEMIC_URL_FRAGMENTS:
+        if frag in url_path:
+            return f"URL de dominio/ruta académica: '{frag}'"
+
+    for kw in _ACADEMIC_TITLE_KEYWORDS:
+        if kw in title:
+            return f"Título académico/informacional: '{kw}'"
+
+    return None
+
+
+def _is_directory_source_page(item: dict[str, Any]) -> bool:
+    """True si el item parece una página de listado/directorio, no un contacto directo."""
+    title = str(item.get("title") or "").strip()
+    if not title:
+        return False
+    return bool(_DIRECTORY_TITLE_RE.search(title))
+
+
+def _heuristic_entity_page_for_people_search(item: dict[str, Any], exa_category: str | None) -> bool:
+    """
+    Detecta páginas de organización/entidad cuando se busca en modo 'people'.
+    Retorna True si el item es una organización que debe guardarse como directorio, no como lead.
+    """
+    if (exa_category or "").strip().lower() != "people":
+        return False
+
+    title = str(item.get("title") or "").strip().lower()
+    if not title:
+        return False
+
+    # Homepage indicators (Bienvenidos, Welcome, Contáctenos, etc.)
+    if re.search(r'\bbienvenidos\b', title):
+        return True
+    if re.search(r'\bcontácten(?:os|os)\b', title):
+        return True
+
+    # Organization indicators (Consultora, Consultoría, S.A., Ltda., etc.)
+    if re.search(r'\bconsultor[aí]s?\b', title):
+        return True
+    if re.search(r'\b(s\.a\.|s\.a|srl|s\.r\.l\.|ltda\.|c\.a\.|s\.a\.s\.|s\.a\.c\.|inc\.|corp\.)\b', title):
+        return True
+
+    return False
 
 
 def _heuristic_drop_reason(item: dict[str, Any], target_iso: str | None) -> str | None:
@@ -327,24 +433,60 @@ async def filter_exa_raw_results_by_relevance(
     if len(target_iso or "") != 2:
         target_iso = None
 
+    # Deduplicación por URL antes de heurísticas
+    seen_urls: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for _item in raw_results:
+        if not isinstance(_item, dict):
+            continue
+        _url = str(_item.get("url", "")).strip().lower().rstrip("/")
+        if _url and _url in seen_urls:
+            continue
+        if _url:
+            seen_urls.add(_url)
+        deduped.append(_item)
+    raw_results = deduped
+
+    # Extraer categoría Exa temprano (antes del loop heurístico)
+    exa_cat = relevance_criteria.get("exa_category")
+    exa_cat_s = str(exa_cat).strip().lower() if exa_cat is not None else ""
+
     heuristic_drop: set[int] = set()
     reasons: dict[int, str] = {}
+    directory_sources: list[dict[str, str]] = []
     for i, item in enumerate(raw_results):
         if not isinstance(item, dict):
             continue
         drop_reason = _heuristic_drop_reason(item, target_iso)
         if not drop_reason:
             drop_reason = _heuristic_obituary_drop_reason(item)
+        if not drop_reason:
+            drop_reason = _heuristic_academic_drop_reason(item)
         if drop_reason:
             heuristic_drop.add(i)
             reasons[i] = drop_reason
+            continue
+        if _is_directory_source_page(item):
+            directory_sources.append({
+                "url": str(item.get("url", "")).strip(),
+                "title": str(item.get("title", "")).strip(),
+            })
+            heuristic_drop.add(i)
+            reasons[i] = "Página de listado/directorio — guardada como fuente para explorar."
+            continue
+        if _heuristic_entity_page_for_people_search(item, exa_cat_s):
+            directory_sources.append({
+                "url": str(item.get("url", "")).strip(),
+                "title": str(item.get("title", "")).strip(),
+            })
+            heuristic_drop.add(i)
+            reasons[i] = "Organización/entidad en búsqueda de personas — guardada como fuente potencial."
+            continue
 
     pending_indices = [i for i in range(len(raw_results)) if i not in heuristic_drop]
     match_by_index: dict[int, bool] = {i: False for i in heuristic_drop}
 
     if pending_indices:
-        exa_cat = relevance_criteria.get("exa_category")
-        exa_cat_s = str(exa_cat).strip().lower() if exa_cat is not None else ""
         if exa_cat_s not in ("people", "company"):
             exa_cat_s = ""
 
@@ -377,6 +519,7 @@ async def filter_exa_raw_results_by_relevance(
                     )
                 entity_rules = _exa_category_entity_rules(exa_cat_s or None)
                 sector_rules = _sector_intent_rules_block(user_query)
+                academic_rules = _academic_exclusion_rules_block()
                 obituary_rules = _obituary_exclusion_rules_block()
                 professional_rules = _professional_intent_rules_block(
                     user_query, criteria_compact.get("role_or_stack_hint"),
@@ -388,6 +531,7 @@ async def filter_exa_raw_results_by_relevance(
                     f"{professional_rules}"
                     f"{geo_rules}"
                     f"{entity_rules}"
+                    f"{academic_rules}"
                     f"{obituary_rules}"
                     f"{sector_rules}"
                     "Cada ítem tiene index (posición global en la lista original), title, url, excerpt.\n"
@@ -458,4 +602,5 @@ async def filter_exa_raw_results_by_relevance(
     }
     if exa_for_meta:
         meta["relevance_filter_exa_category"] = exa_for_meta
+    meta["suggested_source_urls"] = [s for s in directory_sources if s["url"]]
     return kept, meta

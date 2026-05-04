@@ -1,25 +1,22 @@
-# Medicatel Lead Engine (MLE)
+# LeadGen AI
 
-Motor de prospeccion inteligente de leads para sector salud, con arquitectura de agentes y una interfaz web en React.
+Motor inteligente de prospección de leads B2B con agentes de IA, búsqueda multicanal (Exa + Brave) y pipeline de enriquecimiento. Encuentra, califica y gestiona leads directamente desde una interfaz web en React.
 
 ## Estado actual
 
 - Fase 1 implementada: contratos de datos con `Pydantic` + `SQLModel`.
-- Fase 2 implementada con pipeline real: `Planner -> Exa Search -> Scoring -> Storage/Export`.
-- Documentacion de frontend y contrato API disponibles en archivos markdown del proyecto.
+- Fase 2 implementada con pipeline real: `Planner -> Exa/Brave Search -> Scoring -> Enriquecimiento -> Storage/Export`.
+- Documentación de frontend, arquitectura API y referencias de búsqueda disponibles en archivos markdown del proyecto.
 
 ## Estructura
 
-- `backend/`: codigo Python del motor de agentes.
-- `DEVELOPMENT_PLAN.md`: roadmap maestro.
-- `DESIGN.md`: guia visual principal (Meta Store + referencia de hero minimal).
+- `backend/`: código Python del motor de agentes y API FastAPI.
+- `frontend/`: aplicación React con TypeScript y Vite.
+- `DESIGN.md`: guía visual principal (componentes, referencia visual).
 - `API_CONTRACT.md`: contrato base frontend-backend.
-- `FRONTEND_UI_ARCHITECTURE.md`: arquitectura de vistas React.
-- `FRONTEND_DESIGN_TOKENS.md`: tokens de diseno para UI.
-- `FRONTEND_ITERATIONS.md`: plan incremental de entregas frontend.
-- `SEARCH.md`: referencia activa de Exa Search usada por el pipeline.
-- `WEBSETS.md`: referencia adicional (no activa en este flujo).
-- `DOCS.md`: indice organizado de todos los archivos Markdown.
+- `FRONTEND_UI_ARCHITECTURE.md`: arquitectura de vistas y layouts React.
+- `SEARCH.md`: referencia activa de búsqueda (Exa + Brave) usada por el pipeline.
+- `DOCS.md`: índice organizado de todos los archivos Markdown.
 
 ## Quick start backend
 
@@ -60,7 +57,7 @@ Servicios:
 - Healthcheck backend: `http://localhost:8000/health`
 - PostgreSQL: `localhost:5432` (`medicatel/medicatel`)
 
-Comandos utiles:
+Comandos útiles:
 
 ```bash
 docker compose ps
@@ -69,25 +66,16 @@ docker compose logs -f frontend
 docker compose down
 ```
 
-Para borrar tambien los datos de Postgres:
+Para borrar también los datos de Postgres:
 
 ```bash
 docker compose down -v
 ```
 
-## Ejecutar demos de nodos
-
-```bash
-cd backend
-source .venv/bin/activate
-PYTHONPATH=src python3 -m mle.scripts.run_planner_demo
-PYTHONPATH=src python3 -m mle.scripts.run_exa_node_demo
-```
-
 ## Variables de entorno requeridas
 
 - `DATABASE_URL`
-- `EXA_API_KEY`
+- `EXA_API_KEY` o `BRAVE_API_KEY`
 - `GOOGLE_API_KEY`
 - `GOOGLE_MODEL` (opcional, default: `gemini-flash-latest`)
 - `LANGSMITH_TRACING`
@@ -96,14 +84,14 @@ PYTHONPATH=src python3 -m mle.scripts.run_exa_node_demo
 - `LANGSMITH_PROJECT`
 - `EXPORT_DIR` (opcional, default: `/app/exports` en Docker)
 
-## Contrato de busqueda actual
+## Contrato de búsqueda actual
 
-- El frontend y backend usan un input unico de busqueda (`query`) para crear jobs.
-- Endpoint de creacion:
+- El frontend y backend usan un input único de búsqueda (`query`) para crear jobs.
+- Endpoint de creación:
 
 ```json
 {
-  "query": "doctores de honduras con contacto directo",
+  "query": "directores de compras en empresas manufactureras con perfil LinkedIn activo",
   "contact_channels": ["email", "whatsapp", "linkedin"],
   "notes": "opcional"
 }

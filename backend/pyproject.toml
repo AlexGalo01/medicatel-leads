@@ -1,7 +1,7 @@
 [project]
 name = "medicatel-lead-engine"
 version = "0.1.0"
-description = "Backend base para Medicatel Lead Engine"
+description = "Backend de LeadGen AI — motor de prospección de leads con agentes IA"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115.0",

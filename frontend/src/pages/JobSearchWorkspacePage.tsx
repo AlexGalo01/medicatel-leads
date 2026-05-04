@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ChevronRight, Download, Loader2, Mail, Phone, Linkedin, MessageCircle } from "lucide-react";
 
 import {
@@ -63,8 +63,17 @@ export function JobSearchWorkspacePage(): JSX.Element {
   const location = useLocation();
   const passedState = location.state as JobSearchLocationState | null;
   const queryClient = useQueryClient();
-  const [tablePage, setTablePage] = useState(1);
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tablePage = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
+  const setTablePage = (newPage: number) => {
+    setSearchParams(
+      (prev: URLSearchParams) => { const n = new URLSearchParams(prev); n.set("page", String(newPage)); return n; },
+      { replace: true }
+    );
+  };
   const tablePageSize = 50;
+  const prevJobIdRef = React.useRef<string>("");
   const [workspaceClarifyReply, setWorkspaceClarifyReply] = useState("");
 
   const downloadCsvMutation = useMutation({
@@ -219,8 +228,15 @@ export function JobSearchWorkspacePage(): JSX.Element {
   const paginated = rows.slice(offset, offset + tablePageSize);
 
   useEffect(() => {
-    setTablePage(1);
-  }, [jobId, searchOnlyDemo]);
+    if (prevJobIdRef.current !== jobId) {
+      prevJobIdRef.current = jobId;
+      setSearchParams((prev: URLSearchParams) => {
+        const n = new URLSearchParams(prev);
+        n.delete("page");
+        return n;
+      }, { replace: true });
+    }
+  }, [jobId, searchOnlyDemo, setSearchParams]);
 
   useEffect(() => {
     setWorkspaceClarifyReply("");
@@ -459,7 +475,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
             variant="ghost"
             size="sm"
             disabled={currentPage <= 1}
-            onClick={() => setTablePage((v) => Math.max(1, v - 1))}
+            onClick={() => setTablePage(Math.max(1, currentPage - 1))}
           >
             Anterior
           </Button>
@@ -471,11 +487,48 @@ export function JobSearchWorkspacePage(): JSX.Element {
             variant="ghost"
             size="sm"
             disabled={currentPage >= totalPages}
-            onClick={() => setTablePage((v) => Math.min(totalPages, v + 1))}
+            onClick={() => setTablePage(Math.min(totalPages, currentPage + 1))}
           >
             Siguiente
           </Button>
         </div>
+      ) : null}
+
+      {(jobStatusQuery.data?.suggested_source_urls ?? []).length > 0 ? (
+        <section className="workspace-v3-sources">
+          <h3>Fuentes para explorar</h3>
+          <p className="muted-text">
+            {directoryId
+              ? "Estas páginas de directorio pueden contener más contactos. Impórtalas con el URL scraper."
+              : "Estos son directorios y páginas de listado que pueden contener más contactos del sector."}
+          </p>
+          <ul className="workspace-v3-sources-list">
+            {(jobStatusQuery.data?.suggested_source_urls ?? []).map((s) => (
+              <li key={s.url} className="workspace-v3-sources-item">
+                <span className="workspace-v3-sources-title">{s.title || s.url}</span>
+                {directoryId ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="workspace-v3-sources-btn"
+                    onClick={() => {
+                      navigate(`/directories/${directoryId}`, {
+                        state: { openUrlScraper: true, prefillUrl: s.url }
+                      });
+                    }}
+                  >
+                    Importar →
+                  </Button>
+                ) : (
+                  <a href={s.url} target="_blank" rel="noopener noreferrer" className="link-button">
+                    Abrir →
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
     </section>
   );

@@ -1,7 +1,7 @@
 {
   "name": "mle-search",
   "version": "1.0.0",
-  "description": "Playwright-based Google Search and Google Maps scraper for medical lead enrichment",
+  "description": "LeadGen AI — web scraping tool for lead enrichment",
   "main": "dist/search.js",
   "type": "module",
   "scripts": {

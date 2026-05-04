@@ -15,10 +15,10 @@ export function AppLayout(): JSX.Element {
       <aside className="app-sidebar" aria-label="Navegación principal">
         <div className="app-sidebar-brand ui-card">
           <span className="app-sidebar-brand-badge" aria-hidden>
-            AI
+            LG
           </span>
           <div className="app-sidebar-brand-copy">
-            <strong>AI CRM</strong>
+            <strong>LeadGen AI</strong>
           </div>
         </div>
 

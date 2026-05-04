@@ -325,6 +325,7 @@ export interface SearchJobStatusResponse {
   error_message?: string | null;
   awaiting_clarification?: boolean;
   clarifying_question?: string | null;
+  suggested_source_urls?: Array<{ url: string; title: string }>;
 }
 
 export interface LeadItem {

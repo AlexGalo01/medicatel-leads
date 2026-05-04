@@ -1,2 +1,2 @@
-"""Medicatel Lead Engine backend package."""
+"""LeadGen AI backend package."""
 

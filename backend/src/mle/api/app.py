@@ -13,7 +13,7 @@ from mle.observability import configure_langsmith_env
 
 def create_app() -> FastAPI:
     configure_logging()
-    app = FastAPI(title="Medicatel Lead Engine API", version="0.1.0")
+    app = FastAPI(title="LeadGen AI API", version="0.1.0")
     # allow_credentials=True no es compatible con allow_origins=["*"] (CORS del navegador).
     # El frontend usa fetch sin cookies cross-origin; credentials en false + * cubre dev local.
     app.add_middleware(

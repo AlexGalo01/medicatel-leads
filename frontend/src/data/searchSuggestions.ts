@@ -15,83 +15,74 @@ const ALL_SUGGESTIONS: SearchSuggestionTemplate[] = [
   {
     id: "li-1",
     focus: "linkedin",
-    title: "Cardiólogos en LinkedIn",
-    shortLabel: "Cardiología + LinkedIn",
+    title: "Directores de compras empresariales",
+    shortLabel: "Compras + LinkedIn",
     category: "LinkedIn",
     fullPrompt:
-      "Cardiólogos en Honduras con perfil público en LinkedIn, experiencia hospitalaria y señales de contacto profesional",
+      "Directores de compras en empresas manufactureras LATAM con perfil LinkedIn activo, experiencia B2B y señales de contacto profesional",
   },
   {
     id: "li-2",
     focus: "linkedin",
-    title: "Directores médicos",
-    shortLabel: "Director médico",
+    title: "Gerentes de TI empresas medianas",
+    shortLabel: "TI Gerencial",
     category: "LinkedIn",
     fullPrompt:
-      "Directores médicos o jefes de clínica en Centroamérica con presencia en LinkedIn y datos de contacto verificables",
+      "Gerentes de TI o CTO en empresas medianas de Centroamérica con presencia en LinkedIn y datos de contacto verificables",
   },
   {
     id: "li-3",
     focus: "linkedin",
-    title: "Oncólogos privados",
-    shortLabel: "Oncología privada",
+    title: "Directores de operaciones",
+    shortLabel: "Operaciones",
     category: "LinkedIn",
     fullPrompt:
-      "Oncólogos en práctica privada en Tegucigalpa u otras ciudades de Honduras, priorizar URLs de LinkedIn y biografías profesionales",
+      "Directores de operaciones o VP de operaciones en empresas de LATAM con práctica profesional verificable en LinkedIn y contacto indirecto visible",
   },
   {
     id: "ig-1",
     focus: "instagram",
-    title: "Clínicas con Instagram",
-    shortLabel: "Clínica + IG",
+    title: "Negocios con Instagram Business",
+    shortLabel: "Negocios IG",
     category: "Redes",
     fullPrompt:
-      "Clínicas privadas en Honduras con cuenta activa de Instagram, agenda o contacto por WhatsApp visible en la bio o publicaciones",
+      "Negocios y pequeñas empresas en LATAM con cuenta Instagram Business activa, contacto por WhatsApp visible en bio o publicaciones",
   },
   {
     id: "ig-2",
     focus: "instagram",
-    title: "Dermatólogos en redes",
-    shortLabel: "Dermatología social",
+    title: "Emprendedores B2B en redes",
+    shortLabel: "Emprendimiento social",
     category: "Redes",
     fullPrompt:
-      "Dermatólogos con presencia en Instagram o TikTok enlazado, que muestren consultorio y formas de reserva o contacto",
+      "Emprendedores y startups en LATAM con presencia en Instagram o LinkedIn enlazado, que muestren modelo de negocio y formas de contacto",
   },
   {
     id: "gen-1",
     focus: "general",
-    title: "Distribuidores equipo médico",
-    shortLabel: "Distribución médica",
+    title: "Distribuidores mayoristas",
+    shortLabel: "Distribución mayorista",
     category: "General",
     fullPrompt:
-      "Distribuidores de equipo médico en Centroamérica con email corporativo, teléfono o formulario de contacto claro",
+      "Distribuidores mayoristas o proveedores de servicios en Centroamérica con email corporativo, teléfono de ventas o formulario de contacto claro",
   },
   {
     id: "gen-2",
     focus: "general",
-    title: "Hospitales con ginecología",
-    shortLabel: "Ginecología hospital",
+    title: "Empresas logística y transporte",
+    shortLabel: "Logística",
     category: "General",
     fullPrompt:
-      "Hospitales con área de ginecología y obstetricia en Honduras, buscar página de staff o contacto de admisiones",
+      "Empresas de logística, transporte y distribución en LATAM con página de contacto clara y datos del responsable comercial o gerencia",
   },
   {
     id: "gen-3",
     focus: "general",
-    title: "Excluir listados masivos",
+    title: "Excluir directorios masivos",
     shortLabel: "Sin Excel / directorios",
     category: "Calidad",
     fullPrompt:
-      "Médicos especialistas en Honduras con perfil propio o sitio web de consultorio; excluir filas tipo Excel, directorios masivos sin dato de contacto directo y listados anónimos",
-  },
-  {
-    id: "gen-4",
-    focus: "general",
-    title: "WhatsApp prioritario",
-    shortLabel: "WhatsApp primero",
-    category: "General",
-    fullPrompt:
-      "Doctores y clínicas en Honduras donde se priorice encontrar número de WhatsApp de contacto o recepción verificable",
+      "Empresas y profesionales en LATAM con contacto directo y sitio web propio; excluir filas tipo Excel, directorios masivos sin dato de contacto individual y listados anónimos",
   },
 ];
 

@@ -86,6 +86,7 @@ class SearchJobStatusResponse(BaseModel):
     error_message: str | None = None
     awaiting_clarification: bool = False
     clarifying_question: str | None = None
+    suggested_source_urls: list[dict[str, str]] = Field(default_factory=list)
 
 
 class ProfileInterpretRequest(BaseModel):

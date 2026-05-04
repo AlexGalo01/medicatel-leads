@@ -6437,6 +6437,58 @@ textarea {
   text-align: center;
 }
 
+.workspace-v3-sources {
+  margin-top: var(--space-8);
+  padding: var(--space-5);
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-card);
+}
+
+.workspace-v3-sources h3 {
+  margin: 0 0 var(--space-2) 0;
+  font-size: var(--text-body);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.workspace-v3-sources > .muted-text {
+  display: block;
+  margin-bottom: var(--space-4);
+}
+
+.workspace-v3-sources-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.workspace-v3-sources-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+
+.workspace-v3-sources-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-small);
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.workspace-v3-sources-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 @media (max-width: 640px) {
   .workspace-v3-row-link {
     grid-template-columns: 32px 1fr auto;

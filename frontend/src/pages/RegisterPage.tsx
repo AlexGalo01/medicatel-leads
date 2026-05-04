@@ -72,7 +72,7 @@ export function RegisterPage(): JSX.Element {
     <div className="auth-login-page">
       <Card className="panel auth-login-card">
         <h1 className="auth-login-title">Crear cuenta</h1>
-        <p className="muted-text auth-login-sub">AI CRM — Lead Finder</p>
+        <p className="muted-text auth-login-sub">LeadGen AI — Lead Finder</p>
         <form className="auth-login-form" onSubmit={onSubmit}>
           <label className="opportunity-field">
             <span>Nombre visible</span>

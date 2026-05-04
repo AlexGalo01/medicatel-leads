@@ -15,7 +15,7 @@ export const opportunityStageLabel: Record<OpportunityStageKey, string> = {
   response: "Respuesta",
   documents_wait: "Espera de documentos",
   agreement_sign: "Firma de convenio",
-  medicatel_profile: "Creación de perfil Medicatel",
+  medicatel_profile: "Activación de cliente",
 };
 
 /** Etiquetas breves solo para la línea horizontal del embudo en ficha. */
@@ -25,7 +25,7 @@ export const opportunityJourneyLabelShort: Record<OpportunityStageKey, string> =
   response: "Respuesta",
   documents_wait: "Entrega doc.",
   agreement_sign: "Firma convenio",
-  medicatel_profile: "Perfil Medicatel",
+  medicatel_profile: "Activación",
 };
 
 export const responseOutcomeLabel: Record<OpportunityResponseOutcome, string> = {

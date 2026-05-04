@@ -22,6 +22,12 @@ class LeadsRepository:
         self.session = session
 
     async def create(self, lead: Lead) -> Lead:
+        if lead.email:
+            stmt = select(Lead).where(Lead.job_id == lead.job_id, Lead.email == lead.email)
+            result = await self.session.execute(stmt)
+            existing = result.scalars().first()
+            if existing:
+                return existing
         self.session.add(lead)
         await self.session.commit()
         await self.session.refresh(lead)

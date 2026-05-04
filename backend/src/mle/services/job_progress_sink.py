@@ -47,7 +47,7 @@ async def persist_pipeline_progress(job_id: UUID, state: LeadSearchGraphState) -
             base_meta["discarded_leads_count"] = len(state.discarded_leads)
 
             meta_from_state = state.langsmith_metadata or {}
-            for key in ("exa_results_preview", "pipeline_mode", "exa_accumulated_raw", "exa_more_rounds"):
+            for key in ("exa_results_preview", "pipeline_mode", "exa_accumulated_raw", "exa_more_rounds", "suggested_source_urls"):
                 if key in meta_from_state:
                     base_meta[key] = meta_from_state[key]
 

@@ -246,9 +246,9 @@ export function JobExaResultDetailPage(): JSX.Element {
   return (
     <section className="lead-detail-page lead-detail-page--two-col lead-detail-page--preview">
       <nav className="lead-detail-topbar" aria-label="Navegación del detalle">
-        <Link className="link-button lead-back-button" to={`/jobs/${jobId}`}>
+        <button type="button" className="link-button lead-back-button" onClick={() => navigate(-1)}>
           <ChevronLeft size={14} aria-hidden />
-        </Link>
+        </button>
       </nav>
 
       <div className="lead-detail-grid lead-detail-grid--proposal-b">
