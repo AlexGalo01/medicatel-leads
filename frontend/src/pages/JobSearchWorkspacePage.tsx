@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ChevronRight, Download, Loader2, Mail, Phone, Linkedin, MessageCircle } from "lucide-react";
@@ -73,7 +73,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
     );
   };
   const tablePageSize = 50;
-  const prevJobIdRef = React.useRef<string>("");
+  const prevJobIdRef = useRef<string>("");
   const [workspaceClarifyReply, setWorkspaceClarifyReply] = useState("");
 
   const downloadCsvMutation = useMutation({
