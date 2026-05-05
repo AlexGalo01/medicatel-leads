@@ -66,12 +66,11 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
                 additional_clean.append(text[:400])
 
     exa_cat = plan_dict.get("exa_category")
-    if exa_cat not in ("company", None):
+    if exa_cat not in ("company", "people", None):
         exa_cat = None
     if exa_cat == "":
         exa_cat = None
-    # No forzar categoría por defecto: si el LLM no especificó, Exa busca sin restricción de tipo
-    # (forzar "people" eliminaría resultados de empresas como restaurantes, clínicas, hoteles)
+    # Permitir "people" y "company"; si el LLM no especificó, Exa busca sin restricción de tipo
 
     search_config = ExaSearchConfig(
         query=base_query,

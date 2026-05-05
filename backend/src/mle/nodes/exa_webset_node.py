@@ -92,6 +92,10 @@ def _build_search_payload_for_query(
     exclude_domains = list(search_config.get("exclude_domains", []))
     exa_category = search_config.get("exa_category")
 
+    # category es incompatible con deep-reasoning en API Exa → degradar a neural
+    if exa_category in ("people", "company") and search_type in _DEEP_SEARCH_TYPES:
+        search_type = "neural"
+
     payload: dict[str, Any] = {
         "query": query,
         "type": search_type,
