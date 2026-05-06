@@ -46,6 +46,11 @@ async def persist_pipeline_progress(job_id: UUID, state: LeadSearchGraphState) -
             base_meta["retry_used"] = bool(state.retry_used)
             base_meta["discarded_leads_count"] = len(state.discarded_leads)
 
+            # Guardar errores si los hay
+            if state.errors:
+                base_meta["pipeline_errors"] = state.errors
+                logger.error("Pipeline errors para job_id=%s: %s", job_id, state.errors)
+
             meta_from_state = state.langsmith_metadata or {}
             for key in ("exa_results_preview", "pipeline_mode", "exa_accumulated_raw", "exa_more_rounds", "suggested_source_urls"):
                 if key in meta_from_state:
