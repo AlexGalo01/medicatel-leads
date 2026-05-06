@@ -15,7 +15,7 @@ from mle.state.graph_state import LeadSearchGraphState
 logger = logging.getLogger(__name__)
 
 PIPELINE_MODE_SEARCH_ONLY = "presearch_and_search_only"
-MAX_EXA_PREVIEW_ITEMS = 60
+MAX_EXA_PREVIEW_ITEMS = 80
 MAX_EXA_ACCUMULATED_RAW = 120
 
 

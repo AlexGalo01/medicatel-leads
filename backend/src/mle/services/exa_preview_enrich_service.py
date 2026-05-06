@@ -11,7 +11,7 @@ from mle.clients.llm_factory import get_llm_client
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 12
+BATCH_SIZE = 15
 ENRICH_TIMEOUT_SECONDS = 90.0
 MAX_SPECIALTY_LEN = 160
 MAX_CITY_LEN = 120
