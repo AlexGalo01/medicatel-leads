@@ -7,7 +7,6 @@ from typing import Any
 
 from langsmith import traceable
 
-from mle.clients.brave_client import BraveSearchClient
 from mle.clients.exa_client import ExaClient, exa_contents_highlights_config, finalize_exa_search_payload
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.core.config import effective_exa_search_timeout_seconds, get_settings
@@ -248,69 +247,13 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
 
         exa_results = _merge_exa_results(batches)
 
-        # Búsqueda complementaria keyword: cubre directorios y páginas web estáticas
-        # que el deep-reasoning semántico no alcanza
-        if valid_payloads:
-            keyword_payloads = []
-            for slot_idx, num_for_call, payload in valid_payloads[:3]:
-                kp = {**payload, "type": "keyword", "numResults": 30}
-                kp.pop("category", None)
-                keyword_payloads.append(kp)
-
-            async def _keyword_search(payload: dict[str, Any]) -> dict[str, Any]:
-                async with exa_semaphore:
-                    return await exa_client.search(payload)
-
-            keyword_outcomes = await asyncio.gather(
-                *[_keyword_search(kp) for kp in keyword_payloads],
-                return_exceptions=True,
-            )
-            keyword_batches: list[list[dict[str, Any]]] = []
-            for ko in keyword_outcomes:
-                if isinstance(ko, Exception):
-                    logger.warning("Exa keyword complementaria falló: %s", ko)
-                    keyword_batches.append([])
-                else:
-                    keyword_batches.append(_extract_results(ko))
-
-            # Etiquetar semantic + keyword antes del merge
-            all_source_types = ["exa_semantic"] * len(batches) + ["exa_keyword"] * len(keyword_batches)
-            exa_results = _merge_exa_results(batches + keyword_batches, source_types=all_source_types)
-
-        # Complemento Brave Web Search: cubre directorios locales y páginas regionales
-        brave_web_results: list[dict[str, Any]] = []
-        if valid_payloads and settings.brave_search_api_key and settings.brave_search_enabled:
-            brave = BraveSearchClient(
-                api_key=settings.brave_search_api_key,
-                timeout_seconds=settings.brave_search_timeout_seconds,
-            )
-            rel = planner_output.get("relevance_criteria") if isinstance(planner_output.get("relevance_criteria"), dict) else {}
-            country_iso2 = str(rel.get("country_iso2") or "").strip().upper() or None
-            main_query = str(planner_output.get("search_config", {}).get("query", "")).strip()
-            if main_query:
-                brave_web_results = await brave.web_search(
-                    query=main_query,
-                    country=country_iso2,
-                    count=20,
-                    pages=2,
-                )
-                logger.info(
-                    "Brave Web Search job_id=%s resultados=%s",
-                    state.job_id,
-                    len(brave_web_results),
-                )
-
-        # Merge final con etiquetas de fuente
-        all_batches_final = batches + keyword_batches + [brave_web_results]
-        all_source_types_final = (
-            ["exa_semantic"] * len(batches)
-            + ["exa_keyword"] * len(keyword_batches)
-            + ["brave_web"] * (1 if brave_web_results else 0)
-        )
-        exa_results = _merge_exa_results(all_batches_final, source_types=all_source_types_final)
+        # Búsqueda complementaria keyword: DESHABILITADA (MVP)
+        # TODO: reactivar cuando sea necesario con: additional_queries[:4] en planner_node
+        # Brave Web Search: DESHABILITADA (MVP)
+        # TODO: reactivar cuando sea necesario
 
         logger.info(
-            "Exa search node completado job_id=%s unicos_tras_merge=%s (exa+brave) llamadas=%s detalle_batches=%s",
+            "Exa search node completado job_id=%s resultados=%s llamadas=%s detalle_batches=%s",
             state.job_id,
             len(exa_results),
             len(batches),

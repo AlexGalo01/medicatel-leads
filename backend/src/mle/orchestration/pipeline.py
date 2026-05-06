@@ -8,7 +8,6 @@ from mle.observability.langsmith_setup import (
     trace_inputs_initial_state,
     trace_outputs_graph_state,
 )
-from mle.nodes.auto_enrich_node import auto_enrich_node
 from mle.nodes.company_anchor_node import company_anchor_node
 from mle.nodes.exa_webset_node import exa_webset_node
 from mle.nodes.planner_node import planner_node
@@ -78,7 +77,10 @@ async def run_lead_pipeline(initial_state: LeadSearchGraphState) -> LeadSearchGr
     if state_after_finalize.status == "error":
         return state_after_finalize
 
-    enrich_patch = await auto_enrich_node(state_after_finalize)
-    final_state = _apply_patch(state_after_finalize, enrich_patch)
+    # Auto-enrich deshabilitado (MVP) — evita OpenCLI Knowledge Panel + Google Maps
+    # TODO: reactivar cuando sea necesario
+    # enrich_patch = await auto_enrich_node(state_after_finalize)
+    # final_state = _apply_patch(state_after_finalize, enrich_patch)
+    final_state = state_after_finalize
     await persist_pipeline_progress(initial_state.job_id, final_state)
     return final_state

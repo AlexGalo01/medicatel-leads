@@ -36,12 +36,20 @@ def _preview_item(raw: dict[str, Any], index: int) -> dict[str, Any]:
         snippet = " | ".join(str(h) for h in highlights[:hl_slots])[:join_max]
     elif raw.get("text"):
         snippet = str(raw.get("text", ""))[:join_max]
+
+    # Extraer LinkedIn URL si está presente
+    linkedin_url = None
+    if url and "linkedin.com" in url.lower():
+        linkedin_url = url
+
     out = {
         "index": index + 1,
         "title": title or url or "Sin titulo",
         "url": url,
         "snippet": snippet or None,
     }
+    if linkedin_url:
+        out["linkedin_url"] = linkedin_url
     if "_prefetched_maps" in raw:
         out["_prefetched_maps"] = raw["_prefetched_maps"]
     return out
