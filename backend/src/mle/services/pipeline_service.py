@@ -51,7 +51,8 @@ async def run_job_pipeline(job_id: UUID) -> None:
     )
     final_state = await run_lead_pipeline(initial_state)
 
-    if final_state.status != "completed":
+    # Si hay errores en el pipeline, marcar como error
+    if final_state.status == "error" or final_state.errors:
         async with async_session_factory() as session:
             jobs_repository = JobsRepository(session)
             current_job = await jobs_repository.get_by_id(job_id)
@@ -66,5 +67,21 @@ async def run_job_pipeline(job_id: UUID) -> None:
                     "pipeline_stage": final_state.current_stage,
                 },
             )
-        logger.error("Pipeline finalizo con error job_id=%s", job_id)
+        logger.error("Pipeline finalizo con error job_id=%s: %s", job_id, final_state.errors)
+    else:
+        # Pipeline exitoso (sin errores)
+        async with async_session_factory() as session:
+            jobs_repository = JobsRepository(session)
+            current_job = await jobs_repository.get_by_id(job_id)
+            metadata_json = current_job.metadata_json if current_job is not None else {}
+            await jobs_repository.update_status(
+                job_id=job_id,
+                status="completed",
+                progress=100,
+                metadata_json={
+                    **metadata_json,
+                    "pipeline_stage": "done",
+                },
+            )
+        logger.info("Pipeline completado exitosamente job_id=%s", job_id)
 
