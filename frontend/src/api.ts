@@ -56,6 +56,18 @@ function normalizeApiOrigin(envValue: string | undefined): string {
 
 const apiBaseUrl = normalizeApiOrigin(import.meta.env.VITE_API_BASE_URL);
 
+/**
+ * Construye una URL de API manejando tanto URLs absolutas como relativas.
+ * - Si apiBaseUrl es absoluto (http://...), agrega /api/v1 al final
+ * - Si apiBaseUrl es relativo (/api), agrega /v1 al final
+ */
+function buildApiUrl(path: string): string {
+  if (apiBaseUrl.startsWith("http")) {
+    return `${apiBaseUrl}/api/v1${path}`;
+  }
+  return `${apiBaseUrl}/v1${path}`;
+}
+
 export const TOKEN_STORAGE_KEY = "mle_access_token";
 
 export function getAccessToken(): string | null {
@@ -123,7 +135,7 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 }
 
 export async function createSearchJob(payload: SearchJobCreateRequest): Promise<SearchJobCreateResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/search-jobs`, {
+  const response = await apiFetch(`${buildApiUrl("/search-jobs")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -135,7 +147,7 @@ export async function clarifySearchJob(
   jobId: string,
   payload: { reply: string },
 ): Promise<{ job_id: string; status: string }> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/search-jobs/${jobId}/clarify`, {
+  const response = await apiFetch(`${buildApiUrl("/search-jobs/${jobId}/clarify")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -144,7 +156,7 @@ export async function clarifySearchJob(
 }
 
 export async function getSearchJobStatus(jobId: string): Promise<SearchJobStatusResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/search-jobs/${jobId}`);
+  const response = await apiFetch(`${buildApiUrl("/search-jobs/${jobId}")}`);
   return parseJsonResponse<SearchJobStatusResponse>(response);
 }
 
@@ -167,19 +179,19 @@ export async function listSearchJobs(params: {
   if (params.directory_id) {
     query.set("directory_id", params.directory_id);
   }
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/search-jobs${query.toString() ? `?${query}` : ""}`);
+  const response = await apiFetch(`${buildApiUrl("/search-jobs")}${query.toString() ? `?${query}` : ""}`);
   return parseJsonResponse<SearchJobsListResponse>(response);
 }
 
 export async function cancelSearchJob(jobId: string): Promise<{ status: string; job_id: string }> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/search-jobs/${jobId}/cancel`, {
+  const response = await apiFetch(`${buildApiUrl("/search-jobs/${jobId}/cancel")}`, {
     method: "POST",
   });
   return parseJsonResponse<{ status: string; job_id: string }>(response);
 }
 
 export async function loadMoreExaResults(jobId: string, numResults = 40): Promise<ExaMoreResultsResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/search-jobs/${jobId}/exa-more`, {
+  const response = await apiFetch(`${buildApiUrl("/search-jobs/${jobId}/exa-more")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ num_results: numResults }),
@@ -188,7 +200,7 @@ export async function loadMoreExaResults(jobId: string, numResults = 40): Promis
 }
 
 export async function interpretProfileTexts(texts: string[]): Promise<ProfileInterpretResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/profiles/interpret`, {
+  const response = await apiFetch(`${buildApiUrl("/profiles/interpret")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ texts }),
@@ -200,7 +212,7 @@ export async function summarizeProfile(
   payload: ProfileSummaryRequest,
   options?: { signal?: AbortSignal },
 ): Promise<ProfileSummaryResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/profiles/summary`, {
+  const response = await apiFetch(`${buildApiUrl("/profiles/summary")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -226,7 +238,7 @@ export async function listDirectoryEntries(
     queryParams.set("page_size", String(params.pageSize));
   }
   const qs = queryParams.toString();
-  const url = `${apiBaseUrl}/api/v1/search-jobs/${jobId}/directory-entries${qs ? `?${qs}` : ""}`;
+  const url = `${buildApiUrl("/search-jobs/${jobId}/directory-entries")}${qs ? `?${qs}` : ""}`;
   const response = await apiFetch(url);
   return parseJsonResponse<DirectoryEntriesListResponse>(response);
 }
@@ -258,12 +270,12 @@ export async function listLeads(jobId: string, params: ListLeadsParams = {}): Pr
   if (typeof params.pageSize === "number") {
     queryParams.set("page_size", String(params.pageSize));
   }
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/leads?${queryParams.toString()}`);
+  const response = await apiFetch(`${buildApiUrl("/leads?${queryParams.toString()}")}`);
   return parseJsonResponse<LeadsListResponse>(response);
 }
 
 export async function getLeadDetail(leadId: string): Promise<LeadDetailResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/leads/${leadId}`);
+  const response = await apiFetch(`${buildApiUrl("/leads/${leadId}")}`);
   return parseJsonResponse<LeadDetailResponse>(response);
 }
 
@@ -271,7 +283,7 @@ export async function updateLeadCrm(
   leadId: string,
   payload: LeadCrmUpdateRequest,
 ): Promise<LeadDetailResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/leads/${leadId}/crm`, {
+  const response = await apiFetch(`${buildApiUrl("/leads/${leadId}/crm")}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -290,7 +302,7 @@ export async function exportLeads(jobId: string, filters: LeadsExportFilters = {
   if (filters.contact_filter?.trim() && filters.contact_filter.trim() !== "all") {
     payloadFilters.contact_filter = filters.contact_filter.trim();
   }
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/leads/export`, {
+  const response = await apiFetch(`${buildApiUrl("/leads/export")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -313,7 +325,7 @@ export async function downloadLeadsCsvFile(jobId: string, filters: LeadsExportFi
   if (filters.contact_filter?.trim() && filters.contact_filter.trim() !== "all") {
     queryParams.set("contact_filter", filters.contact_filter.trim());
   }
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/leads/export/file?${queryParams.toString()}`);
+  const response = await apiFetch(`${buildApiUrl("/leads/export/file?${queryParams.toString()}")}`);
   if (!response.ok) {
     const bodyText = await response.text();
     throw new Error(`Error al descargar CSV (${response.status}): ${bodyText || "Sin detalle"}`);
@@ -338,7 +350,7 @@ export async function getOpportunityByPreview(
     job_id: jobId,
     exa_preview_index: String(exaPreviewIndex),
   });
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities/by-preview?${query}`);
+  const response = await apiFetch(`${buildApiUrl("/opportunities/by-preview?${query}")}`);
   if (response.status === 404) {
     return null;
   }
@@ -348,7 +360,7 @@ export async function getOpportunityByPreview(
 export async function createOpportunityFromPreview(
   payload: OpportunityCreateFromPreviewRequest,
 ): Promise<OpportunityResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities/from-preview`, {
+  const response = await apiFetch(`${buildApiUrl("/opportunities/from-preview")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -378,12 +390,12 @@ export async function listOpportunities(params: {
   if (typeof params.limit === "number") {
     query.set("limit", String(params.limit));
   }
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities?${query}`);
+  const response = await apiFetch(`${buildApiUrl("/opportunities?${query}")}`);
   return parseJsonResponse<OpportunityListResponse>(response);
 }
 
 export async function getOpportunity(opportunityId: string): Promise<OpportunityResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities/${opportunityId}`);
+  const response = await apiFetch(`${buildApiUrl("/opportunities/${opportunityId}")}`);
   return parseJsonResponse<OpportunityResponse>(response);
 }
 
@@ -397,7 +409,7 @@ export async function patchOpportunity(
     contact_type?: "employee" | "company";
   },
 ): Promise<OpportunityResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities/${opportunityId}`, {
+  const response = await apiFetch(`${buildApiUrl("/opportunities/${opportunityId}")}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -410,7 +422,7 @@ export async function postOpportunityBitacora(
   text: string,
   author?: string,
 ): Promise<OpportunityResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities/${opportunityId}/bitacora`, {
+  const response = await apiFetch(`${buildApiUrl("/opportunities/${opportunityId}/bitacora")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, ...(author ? { author } : {}) }),
@@ -429,7 +441,7 @@ export async function putOpportunityContacts(
     is_primary: boolean;
   }>,
 ): Promise<OpportunityResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities/${opportunityId}/contacts`, {
+  const response = await apiFetch(`${buildApiUrl("/opportunities/${opportunityId}/contacts")}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ contacts }),
@@ -458,7 +470,7 @@ export async function enrichOpportunity(
   onProgress?: (message: string) => void,
 ): Promise<OpportunityEnrichResult> {
   const response = await apiFetch(
-    `${apiBaseUrl}/api/v1/opportunities/${opportunityId}/enrich`,
+    `${buildApiUrl("/opportunities/${opportunityId}/enrich")}`,
     {
       method: "POST",
       headers: { Accept: "text/event-stream" },
@@ -521,7 +533,7 @@ export async function enrichOpportunity(
 }
 
 export async function authLogin(email: string, password: string): Promise<LoginResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/auth/login`, {
+  const response = await apiFetch(`${buildApiUrl("/auth/login")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -530,7 +542,7 @@ export async function authLogin(email: string, password: string): Promise<LoginR
 }
 
 export async function authRegister(body: RegisterRequest): Promise<LoginResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/auth/register`, {
+  const response = await apiFetch(`${buildApiUrl("/auth/register")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -539,17 +551,17 @@ export async function authRegister(body: RegisterRequest): Promise<LoginResponse
 }
 
 export async function authMe(): Promise<UserPublic> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/auth/me`);
+  const response = await apiFetch(`${buildApiUrl("/auth/me")}`);
   return parseJsonResponse<UserPublic>(response);
 }
 
 export async function listAdminUsers(): Promise<AdminUsersListResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/admin/users`);
+  const response = await apiFetch(`${buildApiUrl("/admin/users")}`);
   return parseJsonResponse<AdminUsersListResponse>(response);
 }
 
 export async function createAdminUser(body: AdminCreateUserRequest): Promise<UserPublic> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/admin/users`, {
+  const response = await apiFetch(`${buildApiUrl("/admin/users")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -561,7 +573,7 @@ export async function updateAdminUser(
   userId: string,
   body: AdminUpdateUserRequest,
 ): Promise<UserPublic> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/admin/users/${userId}`, {
+  const response = await apiFetch(`${buildApiUrl("/admin/users/${userId}")}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -570,7 +582,7 @@ export async function updateAdminUser(
 }
 
 export async function deleteAdminUser(userId: string): Promise<void> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/admin/users/${userId}`, {
+  const response = await apiFetch(`${buildApiUrl("/admin/users/${userId}")}`, {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -586,7 +598,7 @@ export async function createManualOpportunity(body: {
   source_url?: string;
   snippet?: string | null;
 }): Promise<OpportunityResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/opportunities/manual`, {
+  const response = await apiFetch(`${buildApiUrl("/opportunities/manual")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -596,7 +608,7 @@ export async function createManualOpportunity(body: {
 
 export async function deleteOpportunity(opportunityId: string): Promise<void> {
   const response = await apiFetch(
-    `${apiBaseUrl}/api/v1/opportunities/${opportunityId}`,
+    `${buildApiUrl("/opportunities/${opportunityId}")}`,
     { method: "DELETE" },
   );
   if (!response.ok) {
@@ -610,17 +622,17 @@ export async function deleteOpportunity(opportunityId: string): Promise<void> {
 // ============================================================================
 
 export async function listDirectories(): Promise<DirectoryListResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories`);
+  const response = await apiFetch(`${buildApiUrl("/directories")}`);
   return parseJsonResponse<DirectoryListResponse>(response);
 }
 
 export async function getDirectory(directoryId: string): Promise<Directory> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories/${directoryId}`);
+  const response = await apiFetch(`${buildApiUrl("/directories/${directoryId}")}`);
   return parseJsonResponse<Directory>(response);
 }
 
 export async function createDirectory(payload: DirectoryCreateRequest): Promise<Directory> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories`, {
+  const response = await apiFetch(`${buildApiUrl("/directories")}`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -631,7 +643,7 @@ export async function updateDirectory(
   directoryId: string,
   payload: DirectoryUpdateRequest,
 ): Promise<Directory> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories/${directoryId}`, {
+  const response = await apiFetch(`${buildApiUrl("/directories/${directoryId}")}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
@@ -639,7 +651,7 @@ export async function updateDirectory(
 }
 
 export async function deleteDirectory(directoryId: string): Promise<void> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories/${directoryId}`, {
+  const response = await apiFetch(`${buildApiUrl("/directories/${directoryId}")}`, {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -652,7 +664,7 @@ export async function addDirectoryStep(
   directoryId: string,
   payload: DirectoryStepCreate,
 ): Promise<DirectoryStep> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/directories/${directoryId}/steps`, {
+  const response = await apiFetch(`${buildApiUrl("/directories/${directoryId}/steps")}`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -665,7 +677,7 @@ export async function updateDirectoryStep(
   payload: DirectoryStepUpdate,
 ): Promise<DirectoryStep> {
   const response = await apiFetch(
-    `${apiBaseUrl}/api/v1/directories/${directoryId}/steps/${stepId}`,
+    `${buildApiUrl("/directories/${directoryId}/steps/${stepId}")}`,
     { method: "PATCH", body: JSON.stringify(payload) },
   );
   return parseJsonResponse<DirectoryStep>(response);
@@ -676,7 +688,7 @@ export async function reorderDirectorySteps(
   stepIds: string[],
 ): Promise<DirectoryStep[]> {
   const response = await apiFetch(
-    `${apiBaseUrl}/api/v1/directories/${directoryId}/steps/reorder`,
+    `${buildApiUrl("/directories/${directoryId}/steps/reorder")}`,
     { method: "POST", body: JSON.stringify({ step_ids: stepIds }) },
   );
   return parseJsonResponse<DirectoryStep[]>(response);
@@ -688,7 +700,7 @@ export async function deleteDirectoryStep(
   moveItemsToStepId?: string,
 ): Promise<void> {
   const response = await apiFetch(
-    `${apiBaseUrl}/api/v1/directories/${directoryId}/steps/${stepId}`,
+    `${buildApiUrl("/directories/${directoryId}/steps/${stepId}")}`,
     {
       method: "DELETE",
       body: JSON.stringify({ move_items_to_step_id: moveItemsToStepId ?? null }),
@@ -705,7 +717,7 @@ export async function moveOpportunityStep(
   direction: "forward" | "backward",
 ): Promise<OpportunityResponse> {
   const response = await apiFetch(
-    `${apiBaseUrl}/api/v1/opportunities/${opportunityId}/step`,
+    `${buildApiUrl("/opportunities/${opportunityId}/step")}`,
     { method: "PATCH", body: JSON.stringify({ direction }) },
   );
   return parseJsonResponse<OpportunityResponse>(response);
@@ -717,7 +729,7 @@ export async function terminateOpportunity(
   note?: string | null,
 ): Promise<OpportunityResponse> {
   const response = await apiFetch(
-    `${apiBaseUrl}/api/v1/opportunities/${opportunityId}/terminate`,
+    `${buildApiUrl("/opportunities/${opportunityId}/terminate")}`,
     { method: "POST", body: JSON.stringify({ outcome, note: note ?? null }) },
   );
   return parseJsonResponse<OpportunityResponse>(response);
@@ -725,7 +737,7 @@ export async function terminateOpportunity(
 
 export async function reopenOpportunity(opportunityId: string): Promise<OpportunityResponse> {
   const response = await apiFetch(
-    `${apiBaseUrl}/api/v1/opportunities/${opportunityId}/reopen`,
+    `${buildApiUrl("/opportunities/${opportunityId}/reopen")}`,
     { method: "POST", body: JSON.stringify({}) },
   );
   return parseJsonResponse<OpportunityResponse>(response);
@@ -736,7 +748,7 @@ export async function reopenOpportunity(opportunityId: string): Promise<Opportun
 export async function createUrlScrapeJob(
   payload: UrlScrapeJobCreateRequest,
 ): Promise<UrlScrapeJobStatusResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/url-scrape-jobs`, {
+  const response = await apiFetch(`${buildApiUrl("/url-scrape-jobs")}`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -744,14 +756,14 @@ export async function createUrlScrapeJob(
 }
 
 export async function getUrlScrapeJobStatus(jobId: string): Promise<UrlScrapeJobStatusResponse> {
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/url-scrape-jobs/${jobId}`);
+  const response = await apiFetch(`${buildApiUrl("/url-scrape-jobs/${jobId}")}`);
   return parseJsonResponse<UrlScrapeJobStatusResponse>(response);
 }
 
 export async function listUrlScrapeJobs(directoryId?: string): Promise<UrlScrapeJobsListResponse> {
   const query = new URLSearchParams();
   if (directoryId) query.set("directory_id", directoryId);
-  const response = await apiFetch(`${apiBaseUrl}/api/v1/url-scrape-jobs?${query}`);
+  const response = await apiFetch(`${buildApiUrl("/url-scrape-jobs?${query}")}`);
   return parseJsonResponse<UrlScrapeJobsListResponse>(response);
 }
 
@@ -761,7 +773,7 @@ export async function pushScrapeEntriesToDirectory(
   entryIndices: number[] = [],
 ): Promise<{ created: number; directory_id: string }> {
   const response = await apiFetch(
-    `${apiBaseUrl}/api/v1/url-scrape-jobs/${jobId}/push-to-directory`,
+    `${buildApiUrl("/url-scrape-jobs/${jobId}/push-to-directory")}`,
     {
       method: "POST",
       body: JSON.stringify({
@@ -775,7 +787,7 @@ export async function pushScrapeEntriesToDirectory(
 
 export async function cancelUrlScrapeJob(jobId: string): Promise<{ status: string; job_id: string }> {
   const response = await apiFetch(
-    `${apiBaseUrl}/api/v1/url-scrape-jobs/${jobId}/cancel`,
+    `${buildApiUrl("/url-scrape-jobs/${jobId}/cancel")}`,
     { method: "POST" },
   );
   return parseJsonResponse<{ status: string; job_id: string }>(response);
