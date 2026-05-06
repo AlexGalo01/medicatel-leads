@@ -60,6 +60,7 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
     Una ronda extra de Exa con consulta variada; solo añade URLs no vistas.
     Solo para jobs en modo demo (presearch_and_search_only) con datos previos.
     """
+    logger.info("append_exa_results_for_job iniciado: job_id=%s, num_results=%s", job_id, num_results)
     n = min(MAX_EXA_RESULTS_PER_CALL, max(1, int(num_results)))
     settings = get_settings()
 
@@ -67,10 +68,12 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
         repo = JobsRepository(session)
         job = await repo.get_by_id(job_id)
         if job is None:
+            logger.error("Job no encontrado: job_id=%s", job_id)
             return {"ok": False, "error": "Job no encontrado"}
 
         meta = dict(job.metadata_json or {})
         if str(meta.get("pipeline_mode")) != "presearch_and_search_only":
+            logger.error("pipeline_mode incorrecto: job_id=%s, mode=%s", job_id, meta.get("pipeline_mode"))
             return {"ok": False, "error": "Cargar más resultados solo está disponible en la vista demo de búsqueda Exa"}
 
         raw = meta.get("exa_accumulated_raw")
@@ -109,17 +112,20 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
         if isinstance(rel_c, dict) and rel_c:
             minimal_planner["relevance_criteria"] = rel_c
         payload = _build_search_payload_for_query(minimal_planner, query, n)
+        logger.info("Llamando a EXA: job_id=%s, query=%s", job_id, query)
         exa = ExaClient(
             api_key=settings.exa_api_key,
             timeout_seconds=effective_exa_search_timeout_seconds(settings),
         )
         try:
             response = await exa.search(payload)
+            logger.info("EXA exitoso: job_id=%s", job_id)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Exa cargar-mas fallo job_id=%s: %s", job_id, exc)
             return {"ok": False, "error": f"Exa: {exc!s}"}
 
         batch = _extract_results(response)
+        logger.info("Extrayendo resultados EXA: job_id=%s, batch_size=%s", job_id, len(batch))
         logger.info(
             "Exa cargar-mas job_id=%s pedidos=%s recibidos=%s urls_ya_vistas=%s",
             job_id,
@@ -156,12 +162,18 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
                 h_one.get("relevance_heuristic_only_kept"),
             )
 
+        logger.info("Construyendo preview: job_id=%s, merged_count=%s", job_id, len(merged))
         preview = _build_exa_preview(merged)
+        logger.info("Preview construido: job_id=%s, preview_items=%s", job_id, len(preview))
+
+        logger.info("Enriqueciendo preview LLM: job_id=%s, preview_count=%s", job_id, len(preview))
         try:
             preview = await enrich_exa_preview_rows(preview)
+            logger.info("Preview enriquecido: job_id=%s, items=%s", job_id, len(preview))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Enriquecimiento preview tras cargar mas omitido job_id=%s: %s", job_id, exc)
+            logger.warning("Enriquecimiento preview tras cargar mas omitido job_id=%s: %s", job_id, exc, exc_info=True)
 
+        logger.info("Guardando metadata actualizada: job_id=%s", job_id)
         meta["exa_accumulated_raw"] = merged
         meta["exa_results_preview"] = preview
         meta["exa_more_rounds"] = rounds + 1
@@ -174,6 +186,13 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
             status=job.status,
             progress=job.progress,
             metadata_json=meta,
+        )
+        logger.info(
+            "append_exa_results_for_job completado: job_id=%s, added=%s, total=%s, preview=%s",
+            job_id,
+            len(new_items),
+            len(merged),
+            len(preview),
         )
 
         return {
