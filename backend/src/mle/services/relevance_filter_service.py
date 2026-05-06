@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Calidad sobre latencia: lotes pequeños para mejor precisión del modelo
 DEFAULT_CHUNK_SIZE = 8
-DEFAULT_CONFIDENCE_THRESHOLD = 6
+DEFAULT_CONFIDENCE_THRESHOLD = 8
 
 
 def _exa_category_entity_rules(exa_category: str | None) -> str:
@@ -69,10 +69,11 @@ def _professional_intent_rules_block(user_query: str, role_or_stack_hint: str | 
         f"DEBES verificar que cada resultado sea DIRECTAMENTE del sector/profesión buscada.\n"
         f"- match=true SOLO si título o excerpt demuestran que el resultado ES del sector/profesión objetivo.\n"
         f"- match=false INMEDIATAMENTE si el resultado es de OTRO sector, rubro o actividad.\n"
-        f"  Si el título del resultado pertenece claramente a un rubro diferente al buscado → match=false, confidence=1.\n"
-        f"  Ejemplo: si el usuario busca 'clínicas dentales' y el resultado es una ferretería o una escuela de idiomas → match=false.\n"
-        f"- El nombre comercial por sí solo NO prueba nada. Verifica el excerpt.\n"
-        f"- Si no puedes confirmar con certeza que el resultado es del sector buscado → match=false y confidence=1.\n"
+        f"  Si el título menciona EXPLÍCITAMENTE una profesión/rol diferente (educador, ingeniero, contador, IT, etc.) → match=false, confidence=1.\n"
+        f"  Ejemplo: si el usuario busca 'psicólogos' y el título dice 'Profesional de Educación' o 'Ingeniero Industrial' → MATCH=FALSE AUTOMÁTICAMENTE.\n"
+        f"- El nombre comercial por sí solo NO prueba nada. Verifica el excerpt para confirmar profesión.\n"
+        f"- Si no puedes confirmar con CERTEZA que el resultado es del sector buscado (ni educador, ni IT, ni otro sector diferente) → match=false y confidence=1.\n"
+        f"- REGLA CRÍTICA: Cuando en duda sobre profesión → DESCARTA, no conserves. Buscamos precisión, no cobertura.\n"
     )
 
 
@@ -536,12 +537,13 @@ async def filter_exa_raw_results_by_relevance(
                     f"{sector_rules}"
                     "Cada ítem tiene index (posición global en la lista original), title, url, excerpt.\n"
                     "Para CADA ítem pregúntate: ¿Este resultado ES realmente del sector/rubro/profesión que busca el usuario? "
+                    "Si el título menciona OTRA profesión explícitamente (educador, ingeniero, IT, etc.) → MATCH=FALSE AUTOMÁTICAMENTE. "
                     "Si la respuesta no es un SÍ claro → match=false.\n"
                     "Devuelve SOLO JSON con la forma exacta:\n"
                     '{"verdicts":[{"index":0,"match":true,"confidence":8,"reason_es":"breve"}]}\n'
                     "- confidence (entero 0-10): qué tan seguro estás de que el resultado ES del sector buscado. "
                     "10 = 100% seguro que sí es. 1-3 = dudoso o parece ser de otro sector. "
-                    "Si confidence < 6, el resultado será descartado automáticamente.\n"
+                    "Si confidence < 8, el resultado será descartado automáticamente. Solo marca confidence≥8 si estás MUY SEGURO de que es del sector.\n"
                     "Debes incluir un veredicto por cada index enviado (un objeto por index).\n"
                     f"Ítems: {json.dumps(items_payload, ensure_ascii=False)}"
                 )
