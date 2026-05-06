@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 
 from langsmith import traceable
@@ -15,6 +16,8 @@ from mle.nodes.relevance_filter_node import relevance_filter_node
 from mle.nodes.search_finalize_node import search_finalize_node
 from mle.services.job_progress_sink import persist_pipeline_progress
 from mle.state.graph_state import LeadSearchGraphState
+
+logger = logging.getLogger(__name__)
 
 
 def _apply_patch(state: LeadSearchGraphState, patch: dict[str, object]) -> LeadSearchGraphState:
@@ -47,40 +50,57 @@ async def run_lead_pipeline(initial_state: LeadSearchGraphState) -> LeadSearchGr
     Pipeline demo: planner + Exa + filtro de relevancia + cierre con vista previa.
     Ver AGENT_TO_DO.md para reactivar limpieza, reintento y persistencia de leads.
     """
-    planner_patch = await planner_node(initial_state)
-    state_after_planner = _apply_patch(initial_state, planner_patch)
-    await persist_pipeline_progress(initial_state.job_id, state_after_planner)
-    if state_after_planner.status == "error":
-        return state_after_planner
+    job_id = initial_state.job_id
+    try:
+        logger.info("Pipeline iniciado: job_id=%s", job_id)
 
-    anchor_patch = await company_anchor_node(state_after_planner)
-    state_after_anchor = _apply_patch(state_after_planner, anchor_patch)
-    await persist_pipeline_progress(initial_state.job_id, state_after_anchor)
-    if state_after_anchor.status == "error":
-        return state_after_anchor
+        logger.info("Ejecutando planner_node: job_id=%s", job_id)
+        planner_patch = await planner_node(initial_state)
+        state_after_planner = _apply_patch(initial_state, planner_patch)
+        await persist_pipeline_progress(job_id, state_after_planner)
+        if state_after_planner.status == "error":
+            logger.error("Planner falló: job_id=%s, errors=%s", job_id, state_after_planner.errors)
+            return state_after_planner
 
-    exa_patch = await exa_webset_node(state_after_anchor)
-    state_after_exa = _apply_patch(state_after_planner, exa_patch)
-    await persist_pipeline_progress(initial_state.job_id, state_after_exa)
-    if state_after_exa.status == "error":
-        return state_after_exa
+        logger.info("Ejecutando company_anchor_node: job_id=%s", job_id)
+        anchor_patch = await company_anchor_node(state_after_planner)
+        state_after_anchor = _apply_patch(state_after_planner, anchor_patch)
+        await persist_pipeline_progress(job_id, state_after_anchor)
+        if state_after_anchor.status == "error":
+            logger.error("Anchor falló: job_id=%s, errors=%s", job_id, state_after_anchor.errors)
+            return state_after_anchor
 
-    relevance_patch = await relevance_filter_node(state_after_exa)
-    state_after_relevance = _apply_patch(state_after_exa, relevance_patch)
-    await persist_pipeline_progress(initial_state.job_id, state_after_relevance)
-    if state_after_relevance.status == "error":
-        return state_after_relevance
+        logger.info("Ejecutando exa_webset_node: job_id=%s", job_id)
+        exa_patch = await exa_webset_node(state_after_anchor)
+        state_after_exa = _apply_patch(state_after_anchor, exa_patch)
+        logger.info("Exa resultados: job_id=%s, count=%s", job_id, len(state_after_exa.exa_raw_results))
+        await persist_pipeline_progress(job_id, state_after_exa)
+        if state_after_exa.status == "error":
+            logger.error("Exa falló: job_id=%s, errors=%s", job_id, state_after_exa.errors)
+            return state_after_exa
 
-    finalize_patch = await search_finalize_node(state_after_relevance)
-    state_after_finalize = _apply_patch(state_after_relevance, finalize_patch)
-    await persist_pipeline_progress(initial_state.job_id, state_after_finalize)
-    if state_after_finalize.status == "error":
-        return state_after_finalize
+        logger.info("Ejecutando relevance_filter_node: job_id=%s", job_id)
+        relevance_patch = await relevance_filter_node(state_after_exa)
+        state_after_relevance = _apply_patch(state_after_exa, relevance_patch)
+        logger.info("Relevance filtrados: job_id=%s, count=%s", job_id, len(state_after_relevance.leads))
+        await persist_pipeline_progress(job_id, state_after_relevance)
+        if state_after_relevance.status == "error":
+            logger.error("Relevance filter falló: job_id=%s, errors=%s", job_id, state_after_relevance.errors)
+            return state_after_relevance
 
-    # Auto-enrich deshabilitado (MVP) — evita OpenCLI Knowledge Panel + Google Maps
-    # TODO: reactivar cuando sea necesario
-    # enrich_patch = await auto_enrich_node(state_after_finalize)
-    # final_state = _apply_patch(state_after_finalize, enrich_patch)
-    final_state = state_after_finalize
-    await persist_pipeline_progress(initial_state.job_id, final_state)
-    return final_state
+        logger.info("Ejecutando search_finalize_node: job_id=%s", job_id)
+        finalize_patch = await search_finalize_node(state_after_relevance)
+        state_after_finalize = _apply_patch(state_after_relevance, finalize_patch)
+        logger.info("Finalize completado: job_id=%s", job_id)
+        await persist_pipeline_progress(job_id, state_after_finalize)
+        if state_after_finalize.status == "error":
+            logger.error("Finalize falló: job_id=%s, errors=%s", job_id, state_after_finalize.errors)
+            return state_after_finalize
+
+        logger.info("Pipeline completado exitosamente: job_id=%s", job_id)
+        final_state = state_after_finalize
+        await persist_pipeline_progress(job_id, final_state)
+        return final_state
+    except Exception as exc:
+        logger.exception("Pipeline exception no capturada: job_id=%s, error=%s", job_id, exc)
+        raise

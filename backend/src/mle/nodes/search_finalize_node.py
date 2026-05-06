@@ -76,11 +76,16 @@ async def search_finalize_node(state: LeadSearchGraphState) -> dict[str, object]
     """
     await asyncio.sleep(0)
     accumulated = [dict(item) for item in state.exa_raw_results[:MAX_EXA_ACCUMULATED_RAW] if isinstance(item, dict)]
+    logger.info("search_finalize: job_id=%s acumulados=%s", state.job_id, len(accumulated))
+
     preview = _build_exa_preview(accumulated)
+    logger.info("search_finalize: preview inicial job_id=%s items=%s", state.job_id, len(preview))
+
     try:
         preview = await enrich_exa_preview_rows(preview)
+        logger.info("search_finalize: preview enriquecido job_id=%s items=%s", state.job_id, len(preview))
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Enriquecimiento preview Exa omitido job_id=%s: %s", state.job_id, exc)
+        logger.warning("Enriquecimiento preview Exa omitido job_id=%s: %s", state.job_id, exc, exc_info=True)
 
     finalize_heuristic_meta: dict[str, Any] = {}
     planner_out = state.planner_output if isinstance(state.planner_output, dict) else {}
