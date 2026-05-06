@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 MAX_DIRECTORY_EXA_CALLS = 8
 MIN_RESULTS_PER_QUERY = 8
 MAX_EXA_RESULTS_PER_CALL = 100
+_DEEP_SEARCH_TYPES = ("deep-reasoning",)
 
 
 def _queries_from_planner(planner_output: dict[str, Any]) -> list[str]:
