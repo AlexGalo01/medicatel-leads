@@ -8,7 +8,7 @@ from typing import Any
 from langsmith import traceable
 
 from mle.clients.brave_client import BraveSearchClient
-from mle.clients.exa_client import ExaClient, exa_contents_full_config, finalize_exa_search_payload
+from mle.clients.exa_client import ExaClient, exa_contents_highlights_config, finalize_exa_search_payload
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.core.config import effective_exa_search_timeout_seconds, get_settings
 from mle.state.graph_state import LeadSearchGraphState
@@ -108,11 +108,11 @@ def _build_search_payload_for_query(
         payload["userLocation"] = iso
     if exa_category in ("people", "company"):
         payload["category"] = exa_category
-    payload["contents"] = exa_contents_full_config(
-        text_max_characters=settings.exa_text_max_characters,
-        highlights_max_characters=settings.exa_highlights_max_characters,
-        subpages=settings.exa_subpages,
+    payload["contents"] = exa_contents_highlights_config(
+        max_characters=settings.exa_highlights_max_characters,
     )
+    if settings.exa_subpages > 0:
+        payload["contents"]["subpages"] = settings.exa_subpages
     if include_domains:
         payload["includeDomains"] = include_domains
     if exclude_domains:

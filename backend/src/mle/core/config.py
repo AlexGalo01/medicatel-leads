@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # Texto completo de cada resultado (contents.text.maxCharacters) — alimenta filtro de relevancia y auto-enrich.
     exa_text_max_characters: int = Field(default=12_000, ge=2_000, le=100_000, alias="EXA_TEXT_MAX_CHARACTERS")
     # Número de subpáginas a crawlear por resultado (páginas /contacto, /about, etc.).
-    exa_subpages: int = Field(default=2, ge=0, le=5, alias="EXA_SUBPAGES")
+    exa_subpages: int = Field(default=0, ge=0, le=5, alias="EXA_SUBPAGES")
     # Tamaño máximo del snippet de vista previa tras unir highlights/text (UI y JSON del job).
     exa_preview_snippet_max_chars: int = Field(default=12_000, ge=2_000, le=100_000, alias="EXA_PREVIEW_SNIPPET_MAX_CHARS")
     exa_preview_num_highlights: int = Field(default=16, ge=4, le=32, alias="EXA_PREVIEW_NUM_HIGHLIGHTS")
