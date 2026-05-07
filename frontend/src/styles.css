@@ -7282,3 +7282,143 @@ textarea.ui-input {
   font-weight: 500;
   white-space: nowrap;
 }
+
+/* Save opportunity modal and checkbox */
+
+.workspace-v3-row-with-checkbox {
+  display: flex;
+  align-items: center;
+}
+
+.workspace-v3-row-checkbox {
+  margin-right: var(--space-3);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.workspace-v3-saved-badge {
+  font-size: var(--text-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-success, #22c55e);
+  padding: 2px 8px;
+  background: var(--color-success-tint, rgba(34, 197, 94, 0.1));
+  border-radius: var(--radius-chip);
+  white-space: nowrap;
+}
+
+.modal-overlay-save-opp {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-save-opp {
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+  padding: var(--space-6);
+  max-width: 520px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+}
+
+.modal-save-opp-title {
+  margin: 0 0 var(--space-2) 0;
+  font-size: var(--text-body);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.modal-save-opp-subtitle {
+  margin: 0 0 var(--space-4) 0;
+  font-size: var(--text-small);
+  color: var(--color-text-secondary);
+}
+
+.modal-save-opp-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--text-small);
+}
+
+.modal-save-opp-empty {
+  padding: var(--space-3);
+  text-align: center;
+}
+
+.modal-save-opp-directory {
+  margin-bottom: var(--space-3);
+}
+
+.modal-save-opp-dir-btn {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-body);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.modal-save-opp-dir-btn:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-tint);
+}
+
+.modal-save-opp-dir-btn.is-selected {
+  border: 2px solid var(--color-primary);
+  background: var(--color-primary-tint);
+  font-weight: var(--font-weight-semibold);
+}
+
+.modal-save-opp-steps {
+  margin-top: var(--space-2);
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.modal-save-opp-step-btn {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-small);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.modal-save-opp-step-btn:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-tint);
+}
+
+.modal-save-opp-step-btn.is-selected {
+  border: 2px solid var(--color-primary);
+  background: var(--color-primary-tint);
+  font-weight: var(--font-weight-semibold);
+}
+
+.modal-save-opp-actions {
+  margin-top: var(--space-6);
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
