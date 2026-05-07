@@ -149,12 +149,15 @@ def _pg_apply_directories_migrations() -> list[str]:
 def _pg_apply_url_scrape_jobs_migration() -> list[str]:
     """
     Migración embebida para url_scrape_jobs.
-    La tabla la crea SQLModel.metadata.create_all; aquí solo creamos índices.
+    La tabla la crea SQLModel.metadata.create_all; aquí solo creamos índices y fijamos FKs.
     """
     return [
         "CREATE INDEX IF NOT EXISTS ix_url_scrape_jobs_status ON url_scrape_jobs (status)",
         "CREATE INDEX IF NOT EXISTS ix_url_scrape_jobs_directory_id ON url_scrape_jobs (directory_id)",
         "CREATE INDEX IF NOT EXISTS ix_url_scrape_jobs_created_at ON url_scrape_jobs (created_at DESC)",
+        "ALTER TABLE url_scrape_jobs DROP CONSTRAINT IF EXISTS url_scrape_jobs_directory_id_fkey",
+        "ALTER TABLE url_scrape_jobs ADD CONSTRAINT url_scrape_jobs_directory_id_fkey "
+        "FOREIGN KEY (directory_id) REFERENCES directories(id) ON DELETE CASCADE",
     ]
 
 

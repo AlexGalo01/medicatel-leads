@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, DateTime, JSON, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, JSON, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID as pg_UUID
 from sqlmodel import Field, SQLModel
 
 
@@ -211,7 +212,16 @@ class UrlScrapeJob(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     target_url: str = Field(max_length=2000)
     user_prompt: str = Field(sa_column=Column(Text, nullable=False))
-    directory_id: UUID | None = Field(default=None, index=True, foreign_key="directories.id")
+    directory_id: UUID | None = Field(
+        default=None,
+        index=True,
+        sa_column=Column(
+            pg_UUID(as_uuid=True),
+            ForeignKey("directories.id", ondelete="CASCADE"),
+            nullable=True,
+            index=True,
+        ),
+    )
     status: str = Field(default="pending", index=True, max_length=32)
     progress: int = Field(default=0, ge=0, le=100)
     metadata_json: dict[str, Any] = Field(
