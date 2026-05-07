@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ChevronRight, Download, Loader2, Mail, Phone, Linkedin, MessageCircle } from "lucide-react";
+import { ChevronRight, Download, FileSpreadsheet, Loader2, Mail, Phone, Linkedin, MessageCircle } from "lucide-react";
 
 import {
   cancelSearchJob,
   clarifySearchJob,
   downloadLeadsCsvFile,
+  downloadLeadsXlsxFile,
   getDirectory,
   getSearchJobStatus,
   listLeads,
@@ -58,6 +59,14 @@ function initial(text: string): string {
   return t ? t.charAt(0).toUpperCase() : "?";
 }
 
+const LOADING_MESSAGES = [
+  "Buscando en la web…",
+  "Enriqueciendo datos…",
+  "Verificando contactos…",
+  "Analizando resultados…",
+  "Casi listo…",
+];
+
 export function JobSearchWorkspacePage(): JSX.Element {
   const { jobId = "" } = useParams();
   const location = useLocation();
@@ -75,9 +84,14 @@ export function JobSearchWorkspacePage(): JSX.Element {
   const tablePageSize = 50;
   const prevJobIdRef = useRef<string>("");
   const [workspaceClarifyReply, setWorkspaceClarifyReply] = useState("");
+  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
 
   const downloadCsvMutation = useMutation({
     mutationFn: () => downloadLeadsCsvFile(jobId, {}),
+  });
+
+  const downloadXlsxMutation = useMutation({
+    mutationFn: () => downloadLeadsXlsxFile(jobId, {}),
   });
 
   const jobStatusQuery = useQuery({
@@ -127,6 +141,15 @@ export function JobSearchWorkspacePage(): JSX.Element {
   );
   const isProcessing =
     (jobStatus === "pending" || jobStatus === "running") && !awaitingClarification;
+
+  useEffect(() => {
+    if (!isProcessing) return;
+    const timer = setInterval(() => {
+      setLoadingMessageIndex((prev) => (prev + 1) % LOADING_MESSAGES.length);
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [isProcessing]);
+
   const pipelineMode = jobStatusQuery.data?.pipeline_mode ?? null;
   const searchOnlyDemo =
     pipelineMode === "presearch_and_search_only" ||
@@ -317,16 +340,28 @@ export function JobSearchWorkspacePage(): JSX.Element {
               </Button>
             ) : null}
             {jobStatus === "completed" && !searchOnlyDemo ? (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={downloadCsvMutation.isPending}
-                onClick={() => downloadCsvMutation.mutate()}
-              >
-                <Download size={13} aria-hidden />
-                {downloadCsvMutation.isPending ? "Generando…" : "Exportar"}
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={downloadCsvMutation.isPending}
+                  onClick={() => downloadCsvMutation.mutate()}
+                >
+                  <Download size={13} aria-hidden />
+                  {downloadCsvMutation.isPending ? "Generando…" : "Exportar"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={downloadXlsxMutation.isPending}
+                  onClick={() => downloadXlsxMutation.mutate()}
+                >
+                  <FileSpreadsheet size={13} aria-hidden />
+                  {downloadXlsxMutation.isPending ? "Generando…" : "Excel"}
+                </Button>
+              </>
             ) : null}
           </div>
         </div>
@@ -405,7 +440,10 @@ export function JobSearchWorkspacePage(): JSX.Element {
             )}
           </div>
         ) : isProcessing && rows.length === 0 ? (
-          <p className="workspace-v3-empty muted-text">Esperando resultados…</p>
+          <div className="workspace-v3-empty">
+            <div className="workspace-v3-loading-spinner" />
+            <p className="workspace-v3-loading-message">{LOADING_MESSAGES[loadingMessageIndex]}</p>
+          </div>
         ) : rows.length === 0 ? (
           <p className="workspace-v3-empty muted-text">Sin coincidencias.</p>
         ) : (

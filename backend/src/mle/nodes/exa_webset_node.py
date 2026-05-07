@@ -83,6 +83,7 @@ def _build_search_payload_for_query(
     planner_output: dict[str, Any],
     query: str,
     num_results: int,
+    slot_idx: int = 0,
 ) -> dict[str, Any]:
     settings = get_settings()
     search_config = planner_output.get("search_config", {})
@@ -91,6 +92,11 @@ def _build_search_payload_for_query(
     include_domains = list(search_config.get("include_domains", []))
     exclude_domains = list(search_config.get("exclude_domains", []))
     exa_category = search_config.get("exa_category")
+
+    # Estrategia de dos slots: slot 1 (main query) usa categoria del LLM,
+    # slot 2+ (additional_queries) siempre usa null para máxima cobertura
+    if slot_idx > 0:
+        exa_category = None
 
     # category es incompatible con deep-reasoning en API Exa → degradar a neural
     if exa_category in ("people", "company") and search_type in _DEEP_SEARCH_TYPES:
@@ -150,6 +156,7 @@ async def _run_slot_with_prefetch(
     semaphore: asyncio.Semaphore,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Ejecuta un slot Exa y retorna los resultados."""
+    query = str(payload.get("query", "")).strip()
     async with semaphore:
         search_response = await exa_client.search(payload)
     batch_results = _extract_results(search_response)
@@ -158,6 +165,25 @@ async def _run_slot_with_prefetch(
         "Exa slot job_id=%s slot=%s/%s pedidos=%s recibidos=%s",
         job_id, slot_idx + 1, n_queries, num_for_call, len(batch_results),
     )
+
+    # Log detallado de TODAS las respuestas crudas de EXA
+    logger.info("=" * 80)
+    logger.info("EXA RAW RESULTS — slot=%s/%s query=%s", slot_idx + 1, n_queries, query)
+    logger.info("=" * 80)
+    for idx, item in enumerate(batch_results, 1):
+        url = str(item.get("url", "")).strip()
+        title = str(item.get("title", "")).strip()
+        highlights = item.get("highlights", [])
+        snippet = " ".join(highlights[:2]) if highlights else "(sin snippet)"
+        logger.info(
+            "[%d] URL: %s | TITLE: %s | SNIPPET: %s",
+            idx,
+            url,
+            title,
+            snippet[:150],
+        )
+    logger.info("=" * 80)
+
     return batch_results, search_response
 
 
@@ -206,7 +232,7 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
         valid_payloads: list[tuple[int, int, dict[str, Any]]] = []
         for slot_idx, query_text in enumerate(queries):
             num_for_call = per_slot[slot_idx] if slot_idx < len(per_slot) else per_slot[-1]
-            payload = _build_search_payload_for_query(planner_output, query_text, num_for_call)
+            payload = _build_search_payload_for_query(planner_output, query_text, num_for_call, slot_idx=slot_idx)
             payload = _ensure_non_empty_query(payload, fallback_query=state.query_text)
             if not str(payload.get("query", "")).strip():
                 continue

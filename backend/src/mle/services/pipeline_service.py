@@ -14,9 +14,8 @@ from mle.state.graph_state import LeadSearchGraphState
 logger = logging.getLogger(__name__)
 
 
-def _build_query_text(base_query: str, channels: list[str]) -> str:
-    channels_text = ", ".join(channels) if channels else "email, whatsapp, linkedin"
-    return f"{base_query} con contacto {channels_text}"
+def _build_query_text(base_query: str) -> str:
+    return base_query
 
 
 @traceable(name="search_job_pipeline", run_type="chain", process_inputs=trace_inputs_job_id)
@@ -33,7 +32,7 @@ async def run_job_pipeline(job_id: UUID) -> None:
         search_plan: dict[str, object] = dict(raw_plan) if isinstance(raw_plan, dict) else {}
 
         base_query = str(job.metadata_json.get("query_text", "")).strip() or job.specialty
-        query_text = _build_query_text(base_query=base_query, channels=job.requested_contact_channels)
+        query_text = _build_query_text(base_query=base_query)
         await jobs_repository.update_status(
             job_id=job.id,
             status="running",

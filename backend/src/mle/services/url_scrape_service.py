@@ -11,10 +11,10 @@ from openai import AsyncOpenAI
 from playwright.async_api import async_playwright
 from pydantic import BaseModel, Field as PydanticField
 
-from mle.clients.exa_client import ExaClient, exa_contents_full_config
+from mle.clients.brave_client import BraveSearchClient
 from mle.db.base import async_session_factory
 from mle.repositories.url_scrape_jobs_repository import UrlScrapeJobsRepository
-from mle.core.config import effective_exa_search_timeout_seconds, get_settings
+from mle.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,27 @@ _BROWSER_ARGS = [
     "--disable-dev-shm-usage",
     "--disable-extensions",
 ]
+
+_NAV_PLAN_PROMPT = """\
+Eres un agente de navegación web. Se te dará:
+1. La estructura de una página web (título, links de nav, inputs, botones)
+2. Una instrucción del usuario
+
+Analiza y devuelve la mejor acción para cumplir la instrucción.
+Devuelve SOLO JSON, sin markdown:
+{
+  "strategy": "nav_link" | "search_input" | "scrape_directly",
+  "nav_link_href": "URL exacta del link (solo si strategy=nav_link)",
+  "nav_link_text": "texto del link (solo si strategy=nav_link)",
+  "search_query": "términos de búsqueda (solo si strategy=search_input)",
+  "reasoning": "explicación breve"
+}
+
+Prioridad de decisión:
+1. Si hay un link de nav/menú que claramente coincide con la instrucción → nav_link
+2. Si la instrucción implica buscar algo y hay input de búsqueda → search_input
+3. Si la página ya tiene el contenido directamente → scrape_directly
+"""
 
 _EXTRACT_SYSTEM_PROMPT = """\
 Eres un extractor de datos estructurados. Se te dará texto visible de una página web de directorio.
@@ -46,6 +67,19 @@ Devuelve SOLO el JSON, sin markdown, sin explicación.
 No inventes datos que no estén en el texto.
 """
 
+_SEARCH_INPUT_SELECTORS = [
+    'input[type="search"]',
+    'input[name*="search" i]',
+    'input[name*="busca" i]',
+    'input[name="q"]',
+    'input[placeholder*="busca" i]',
+    'input[placeholder*="search" i]',
+    'input[placeholder*="doctor" i]',
+    'input[placeholder*="nombre" i]',
+    '.search input[type="text"]',
+    '#search input',
+]
+
 
 class _ScrapedEntry(BaseModel):
     display_title: str = ""
@@ -59,13 +93,11 @@ class _ScrapedEntry(BaseModel):
     social_urls: list[str] = PydanticField(default_factory=list)
 
 
-async def _discover_pages_via_exa(
+async def _discover_pages_via_brave(
     target_url: str,
-    user_prompt: str,
-    settings: Any,
-    exa_client: ExaClient,
+    brave_client: BraveSearchClient,
 ) -> list[tuple[str, str]]:
-    """Descubre páginas del directorio via Exa en paralelo.
+    """Descubre páginas del directorio via Brave Search.
 
     Retorna lista de (page_text, source_url) deduplicada por URL.
     Si falla, retorna lista vacía (fallback a Playwright).
@@ -78,79 +110,53 @@ async def _discover_pages_via_exa(
         if not domain:
             return []
 
-        # Task 1: Obtener la página principal + subpáginas
-        contents_payload: dict[str, Any] = {
-            "ids": [target_url],
-            "text": {"maxCharacters": 60000},
-            "highlights": {"maxCharacters": 5000},
-            "subpages": 5,
-        }
+        # Construir query usando el path de la URL (no el user_prompt, que es instrucción para el LLM)
+        path_keywords = urlparse(target_url).path.strip("/").replace("-", " ").replace("/", " ").strip()
+        brave_query = f"site:{domain} {path_keywords}" if path_keywords else f"site:{domain}"
 
-        # Task 2: Buscar más páginas del directorio via keyword search en el dominio
-        search_query = user_prompt[:500] if user_prompt.strip() else "directorio médico clínica hospital"
-        search_payload: dict[str, Any] = {
-            "query": search_query,
-            "type": "keyword",
-            "numResults": min(_MAX_PAGES, 30),
-            "includeDomains": [domain],
-            "contents": exa_contents_full_config(
-                text_max_characters=60000,
-                highlights_max_characters=5000,
-                subpages=0,
-            ),
-        }
-
-        # Ejecutar en paralelo
-        results = await asyncio.gather(
-            exa_client.get_contents(contents_payload),
-            exa_client.search(search_payload),
-            return_exceptions=True,
+        # Buscar en Brave con hasta 2 páginas (40 resultados)
+        results = await brave_client.web_search(
+            query=brave_query,
+            count=20,
+            pages=2,
         )
 
         pages: dict[str, str] = {}  # Dedup por URL
 
-        # Procesar contenidos de la página principal
-        if isinstance(results[0], dict):
-            contents_response = results[0]
-            for item in contents_response.get("results", []):
-                if not isinstance(item, dict):
-                    continue
-                url = str(item.get("url", "")).strip()
-                text = str(item.get("text", "")).strip()
-                if url and text:
-                    pages[url] = text
+        # Procesar resultados de Brave
+        # Cada resultado tiene: url, title, text (description), highlights (lista de snippets)
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url", "")).strip()
+            if not url or url in pages:
+                continue
 
-            # Procesar subpáginas
-            for item in contents_response.get("results", []):
-                if not isinstance(item, dict):
-                    continue
-                for subpage in item.get("subpages", []):
-                    if not isinstance(subpage, dict):
-                        continue
-                    url = str(subpage.get("url", "")).strip()
-                    text = str(subpage.get("text", "")).strip()
-                    if url and text:
-                        pages[url] = text
+            # Combinar text (description) + highlights (extra_snippets)
+            text_parts = []
+            text = str(item.get("text", "")).strip()
+            if text:
+                text_parts.append(text)
 
-        # Procesar resultados de búsqueda
-        if isinstance(results[1], dict):
-            search_response = results[1]
-            for item in search_response.get("results", []):
-                if not isinstance(item, dict):
-                    continue
-                url = str(item.get("url", "")).strip()
-                text = str(item.get("text", "")).strip()
-                if url and text and url not in pages:
-                    pages[url] = text
+            highlights = item.get("highlights")
+            if isinstance(highlights, list):
+                for h in highlights:
+                    h_str = str(h).strip()
+                    if h_str and h_str not in text_parts:
+                        text_parts.append(h_str)
+
+            combined_text = "\n".join(text_parts)
+            if combined_text:
+                pages[url] = combined_text
 
         logger.info(
-            "Exa discover_pages target_url=%s domain=%s found=%s",
+            "Brave discover_pages target_url=%s domain=%s found=%s",
             target_url, domain, len(pages),
         )
-        return list(pages.items())
+        return [(text, url) for url, text in pages.items()]
 
     except Exception as exc:
-        logger.warning("Exa discover_pages falló para %s (fallback a Playwright): %s", target_url, exc)
+        logger.warning("Brave discover_pages falló para %s (fallback a Playwright): %s", target_url, exc)
         return []
 
 
@@ -201,6 +207,217 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
             return text, next_url
         finally:
             await browser.close()
+
+
+async def _scrape_url_text(url: str) -> str:
+    """Scrape full visible text from a single URL using Playwright."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=_BROWSER_ARGS)
+        try:
+            page = await browser.new_page()
+            await page.goto(url, wait_until="networkidle", timeout=30_000)
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await page.wait_for_timeout(1_500)
+            return await page.inner_text("body")
+        finally:
+            await browser.close()
+
+
+async def _fetch_pages_content(
+    url_pairs: list[tuple[str, str]],
+    job_id: UUID,
+) -> list[tuple[str, str]]:
+    """Given (snippet, url) pairs from Brave, scrape full content with Playwright."""
+    results: list[tuple[str, str]] = []
+    for _, url in url_pairs:
+        try:
+            text = await asyncio.wait_for(_scrape_url_text(url), timeout=45)
+            if text.strip():
+                results.append((text, url))
+                logger.info("Scraped %d chars from %s job_id=%s", len(text), url, job_id)
+        except Exception as exc:
+            logger.warning("Failed to scrape %s job_id=%s: %s", url, job_id, exc)
+    return results
+
+
+async def _capture_page_structure(page: Any) -> str:
+    """Capture structured info from page: nav links, inputs, buttons."""
+    structure = await page.evaluate("""() => {
+        const navLinks = Array.from(
+            document.querySelectorAll('nav a, header a, .navbar a, .menu a, .nav a')
+        ).slice(0, 40).map(a => ({
+            text: a.innerText.trim().replace(/\\s+/g, ' '),
+            href: a.href
+        })).filter(a => a.text && a.text.length < 80);
+
+        const inputs = Array.from(
+            document.querySelectorAll('input:not([type=hidden]), textarea')
+        ).map(i => ({ type: i.type, name: i.name, placeholder: i.placeholder }));
+
+        const buttons = Array.from(
+            document.querySelectorAll('button, a.btn, a[class*="button"]')
+        ).slice(0, 20).map(b => ({ text: b.innerText.trim().replace(/\\s+/g, ' ') }))
+         .filter(b => b.text);
+
+        const headings = Array.from(
+            document.querySelectorAll('h1, h2')
+        ).slice(0, 5).map(h => h.innerText.trim());
+
+        return JSON.stringify({
+            title: document.title,
+            headings,
+            nav_links: navLinks,
+            inputs,
+            buttons,
+        });
+    }""")
+    return structure
+
+
+async def _plan_page_navigation(
+    page_snapshot: str, user_prompt: str, settings: Any
+) -> dict[str, Any]:
+    """Use LLM to decide navigation strategy based on page structure and user prompt."""
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    response = await client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {"role": "system", "content": _NAV_PLAN_PROMPT},
+            {"role": "user", "content": f"Instrucción: {user_prompt}\n\nEstructura de la página:\n{page_snapshot}"},
+        ],
+        temperature=0,
+        response_format={"type": "json_object"},
+    )
+    raw = response.choices[0].message.content or "{}"
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"strategy": "scrape_directly", "reasoning": "parse error"}
+
+
+async def _navigate_and_scrape(
+    target_url: str,
+    user_prompt: str,
+    settings: Any,
+    job_id: UUID,
+) -> list[tuple[str, str]]:
+    """Navigate using LLM-guided strategy and scrape results with pagination."""
+    results: list[tuple[str, str]] = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=_BROWSER_ARGS)
+        try:
+            page = await browser.new_page()
+            await page.goto(target_url, wait_until="networkidle", timeout=30_000)
+            await page.wait_for_timeout(1_500)
+
+            # 1. Capture page structure
+            snapshot = await _capture_page_structure(page)
+            logger.info("Page snapshot captured, %d chars job_id=%s", len(snapshot), job_id)
+
+            # 2. LLM decides navigation strategy
+            plan = await _plan_page_navigation(snapshot, user_prompt, settings)
+            strategy = plan.get("strategy", "scrape_directly")
+            logger.info("Nav plan: strategy=%s reasoning=%r job_id=%s",
+                        strategy, plan.get("reasoning"), job_id)
+
+            # 3. Execute strategy
+            if strategy == "nav_link":
+                href = plan.get("nav_link_href", "")
+                link_text = plan.get("nav_link_text", "")
+                if href:
+                    clicked = False
+                    try:
+                        el = await page.query_selector(f'a[href="{href}"]')
+                        if not el:
+                            clicked = await page.evaluate(
+                                f"""() => {{
+                                    const links = document.querySelectorAll('nav a, header a, .navbar a, .menu a');
+                                    for (const a of links) {{
+                                        if (a.innerText.trim().toLowerCase().includes('{link_text.lower()}')) {{
+                                            a.click(); return true;
+                                        }}
+                                    }}
+                                    return false;
+                                }}"""
+                            )
+                        else:
+                            await el.click()
+                            clicked = True
+                    except Exception as exc:
+                        logger.warning("Nav click failed job_id=%s: %s", job_id, exc)
+
+                    if clicked or href:
+                        if not clicked:
+                            await page.goto(href, wait_until="networkidle", timeout=30_000)
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=10_000)
+                        except Exception:
+                            pass
+                        await page.wait_for_timeout(2_000)
+
+            elif strategy == "search_input":
+                query = plan.get("search_query", "")
+                if query:
+                    search_input = None
+                    for selector in _SEARCH_INPUT_SELECTORS:
+                        el = await page.query_selector(selector)
+                        if el and await el.is_visible():
+                            search_input = el
+                            break
+                    if search_input:
+                        await search_input.click()
+                        await search_input.fill(query)
+                        submitted = False
+                        for btn_sel in ['button[type="submit"]', 'form button', 'button[class*="search" i]']:
+                            btn = await page.query_selector(btn_sel)
+                            if btn and await btn.is_visible():
+                                await btn.click()
+                                submitted = True
+                                break
+                        if not submitted:
+                            await search_input.press("Enter")
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=15_000)
+                        except Exception:
+                            pass
+                        await page.wait_for_timeout(3_000)
+
+            # 4. Scrape + paginate
+            page_count = 0
+            while page_count < _MAX_PAGES:
+                page_count += 1
+                current_url = page.url
+                text = await page.inner_text("body")
+                if text.strip():
+                    results.append((text, current_url))
+                    logger.info("Nav page %d: %d chars job_id=%s", page_count, len(text), job_id)
+
+                next_url: str | None = await page.evaluate("""() => {
+                    const currentSelectors = ['.page-numbers.current', '.wp-pagenavi span.current',
+                        '.pagination .active', '[aria-current="page"]'];
+                    for (const sel of currentSelectors) {
+                        const cur = document.querySelector(sel);
+                        if (cur) {
+                            let el = cur.nextElementSibling;
+                            while (el) { if (el.tagName === 'A' && el.href) return el.href; el = el.nextElementSibling; }
+                        }
+                    }
+                    const nextSelectors = ['a.next', 'a[rel="next"]', '.page-numbers.next',
+                        'a[class*="next"]', 'a[aria-label*="next" i]', 'a[aria-label*="siguiente" i]'];
+                    for (const sel of nextSelectors) {
+                        const el = document.querySelector(sel);
+                        if (el && el.href) return el.href;
+                    }
+                    return null;
+                }""")
+
+                if not next_url or next_url == current_url:
+                    break
+                await page.goto(next_url, wait_until="networkidle", timeout=30_000)
+                await page.wait_for_timeout(1_500)
+        finally:
+            await browser.close()
+    return results
 
 
 async def _extract_entries_with_llm(
@@ -257,29 +474,40 @@ async def run_url_scrape_pipeline(job_id: UUID) -> None:
             return
         await repo.update_status(job_id, "running", 10)
 
-    exa_client = ExaClient(
-        api_key=settings.exa_api_key,
-        timeout_seconds=effective_exa_search_timeout_seconds(settings),
-    )
+    brave_client = BraveSearchClient(api_key=settings.brave_search_api_key)
 
     all_entries: list[_ScrapedEntry] = []
     pages_loaded: list[tuple[str, str]] = []
 
-    # --- Try Exa first (faster, parallel) ---
+    # --- Strategy 1: LLM-guided navigation ---
     try:
         pages_loaded = await asyncio.wait_for(
-            _discover_pages_via_exa(job.target_url, job.user_prompt, settings, exa_client),
-            timeout=60,
+            _navigate_and_scrape(job.target_url, job.user_prompt, settings, job_id),
+            timeout=180,
         )
-        logger.info("Exa discovered %d pages job_id=%s", len(pages_loaded), job_id)
-    except asyncio.TimeoutError:
-        logger.warning("Exa discover timeout, falling back to Playwright job_id=%s", job_id)
+        logger.info("LLM navigation found %d pages job_id=%s", len(pages_loaded), job_id)
     except Exception as exc:
-        logger.warning("Exa discover failed (fallback to Playwright) job_id=%s: %s", job_id, exc)
+        logger.warning("LLM navigation failed job_id=%s: %s", job_id, exc)
 
-    # --- Fallback to Playwright if Exa found nothing ---
+    # --- Strategy 2: Brave discovery + Playwright scraping ---
     if not pages_loaded:
-        logger.info("No pages from Exa, using Playwright pagination job_id=%s", job_id)
+        try:
+            brave_url_pairs = await asyncio.wait_for(
+                _discover_pages_via_brave(job.target_url, brave_client),
+                timeout=60,
+            )
+            logger.info("Brave discovered %d URLs job_id=%s", len(brave_url_pairs), job_id)
+            if brave_url_pairs:
+                pages_loaded = await _fetch_pages_content(brave_url_pairs[:_MAX_PAGES], job_id)
+                logger.info("Scraped full content for %d pages job_id=%s", len(pages_loaded), job_id)
+        except asyncio.TimeoutError:
+            logger.warning("Brave discover timeout, falling back to Playwright job_id=%s", job_id)
+        except Exception as exc:
+            logger.warning("Brave discover failed (fallback to Playwright) job_id=%s: %s", job_id, exc)
+
+    # --- Fallback to Playwright if Brave found nothing ---
+    if not pages_loaded:
+        logger.info("No pages from Brave, using Playwright pagination job_id=%s", job_id)
         current_url: str | None = job.target_url
         page_num = 0
 

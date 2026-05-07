@@ -342,6 +342,34 @@ export async function downloadLeadsCsvFile(jobId: string, filters: LeadsExportFi
   URL.revokeObjectURL(objectUrl);
 }
 
+export async function downloadLeadsXlsxFile(jobId: string, filters: LeadsExportFilters = {}): Promise<void> {
+  const queryParams = new URLSearchParams({ job_id: jobId });
+  if (typeof filters.min_score === "number") {
+    queryParams.set("min_score", String(filters.min_score));
+  }
+  if (filters.q?.trim()) {
+    queryParams.set("q", filters.q.trim());
+  }
+  if (filters.contact_filter?.trim() && filters.contact_filter.trim() !== "all") {
+    queryParams.set("contact_filter", filters.contact_filter.trim());
+  }
+  const response = await apiFetch(`${buildApiUrl(`/leads/export/xlsx?${queryParams.toString()}`)}`);
+  if (!response.ok) {
+    const bodyText = await response.text();
+    throw new Error(`Error al descargar Excel (${response.status}): ${bodyText || "Sin detalle"}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = `leads_${jobId}.xlsx`;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export async function getOpportunityByPreview(
   jobId: string,
   exaPreviewIndex: number,

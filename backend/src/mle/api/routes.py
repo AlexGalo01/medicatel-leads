@@ -80,7 +80,7 @@ from mle.schemas.directories import (
 )
 from mle.services.jwt_service import create_access_token
 from mle.services.passwords import hash_password, verify_password
-from mle.services.export_service import export_leads_to_csv
+from mle.services.export_service import export_leads_to_csv, export_leads_to_xlsx
 from mle.services.pipeline_service import run_job_pipeline
 from mle.services.query_expansion_service import expand_user_search_query
 from mle.services.exa_more_results_service import append_exa_results_for_job
@@ -846,6 +846,60 @@ async def export_leads_file(
         path=str(export_path),
         filename=f"leads_{job_id}.csv",
         media_type="text/csv; charset=utf-8",
+    )
+
+
+@protected_router.get("/leads/export/xlsx")
+async def export_leads_xlsx_file(
+    job_id: UUID = Query(...),
+    min_score: float | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=200),
+    contact_filter: str | None = Query(default=None, max_length=40),
+    _u: User = Depends(require_permission("use_search")),
+) -> FileResponse:
+    async with async_session_factory() as session:
+        leads_repository = LeadsRepository(session)
+        leads_page = await leads_repository.list_by_job(
+            job_id=job_id,
+            min_score=min_score,
+            name_query=q,
+            contact_filter=contact_filter,
+            page=1,
+            page_size=5000,
+        )
+
+    leads_payload = [
+        {
+            "full_name": lead.full_name,
+            "specialty": lead.specialty,
+            "country": lead.country,
+            "city": lead.city,
+            "score": lead.score,
+            "score_reasoning": lead.score_reasoning,
+            "email": lead.contacts.email,
+            "whatsapp": lead.contacts.whatsapp,
+            "phone": lead.contacts.phone,
+            "linkedin_url": str(lead.contacts.linkedin_url) if lead.contacts.linkedin_url else None,
+            "address": lead.address,
+            "schedule_text": lead.schedule_text,
+            "primary_source_url": lead.primary_source_url,
+        }
+        for lead in leads_page.items
+    ]
+    settings = get_settings()
+    export_path_str = export_leads_to_xlsx(
+        job_id=job_id,
+        leads=leads_payload,
+        export_dir_path=settings.export_dir,
+    )
+    export_path = Path(export_path_str)
+    if not export_path.is_file():
+        raise HTTPException(status_code=500, detail="No se pudo generar el archivo Excel")
+
+    return FileResponse(
+        path=str(export_path),
+        filename=f"leads_{job_id}.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 

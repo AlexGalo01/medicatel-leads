@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from mle.clients.exa_client import ExaClient
+from mle.clients.llm_factory import get_llm_client
 from mle.core.config import effective_exa_search_timeout_seconds, get_settings
 from mle.db.base import async_session_factory
 from mle.nodes.exa_webset_node import (
@@ -16,7 +17,10 @@ from mle.nodes.exa_webset_node import (
 from mle.nodes.search_finalize_node import MAX_EXA_ACCUMULATED_RAW, _build_exa_preview
 from mle.repositories.jobs_repository import JobsRepository
 from mle.services.exa_preview_enrich_service import enrich_exa_preview_rows
-from mle.services.relevance_filter_service import filter_exa_list_heuristic_only
+from mle.services.relevance_filter_service import (
+    filter_exa_list_heuristic_only,
+    filter_exa_raw_results_by_relevance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +130,25 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
 
         batch = _extract_results(response)
         logger.info("Extrayendo resultados EXA: job_id=%s, batch_size=%s", job_id, len(batch))
+
+        # Log detallado de TODAS las respuestas crudas de EXA
+        logger.info("=" * 80)
+        logger.info("EXA RAW RESULTS — query=%s", query)
+        logger.info("=" * 80)
+        for idx, item in enumerate(batch, 1):
+            url = str(item.get("url", "")).strip()
+            title = str(item.get("title", "")).strip()
+            highlights = item.get("highlights", [])
+            snippet = " ".join(highlights[:2]) if highlights else "(sin snippet)"
+            logger.info(
+                "[%d] URL: %s | TITLE: %s | SNIPPET: %s",
+                idx,
+                url,
+                title,
+                snippet[:150],
+            )
+        logger.info("=" * 80)
+
         logger.info(
             "Exa cargar-mas job_id=%s pedidos=%s recibidos=%s urls_ya_vistas=%s",
             job_id,
@@ -161,6 +184,55 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
                 h_one.get("relevance_heuristic_only_drops"),
                 h_one.get("relevance_heuristic_only_kept"),
             )
+
+        # Apply LLM-based sector relevance filter to new items
+        if new_items and isinstance(rel_c, dict):
+            llm = get_llm_client(settings)
+            try:
+                filtered_new, llm_metadata = await filter_exa_raw_results_by_relevance(
+                    raw_results=new_items,
+                    user_query=main_q,
+                    relevance_criteria=rel_c,
+                    gemini_client=llm,
+                )
+
+                # Log detallado de LLM filtering decisions
+                logger.info("=" * 80)
+                logger.info("LLM RELEVANCE FILTER — sector/profesion objetivo: %s", rel_c.get("role_or_stack_hint", main_q))
+                logger.info("=" * 80)
+                kept_set = {str(item.get("url", "")).strip().lower().rstrip("/") for item in filtered_new}
+                for item in new_items:
+                    url = str(item.get("url", "")).strip()
+                    title = str(item.get("title", "")).strip()
+                    url_key = url.lower().rstrip("/")
+                    status = "✓ KEPT" if url_key in kept_set else "✗ DROPPED"
+                    logger.info(
+                        "%s | %s | %s",
+                        status,
+                        title[:60],
+                        url[:70],
+                    )
+                logger.info("=" * 80)
+                logger.info(
+                    "LLM Filter Summary: total=%s, kept=%s, dropped=%s",
+                    len(new_items),
+                    llm_metadata.get("relevance_filter_kept", 0),
+                    llm_metadata.get("relevance_filter_dropped", 0),
+                )
+
+                # Replace merged list: remove the new_items that didn't pass LLM filter
+                merged = [
+                    item for item in merged
+                    if str(item.get("url", "")).strip().lower().rstrip("/") in kept_set
+                    or item in raw  # Keep all items from the original raw list
+                ]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Exa cargar-mas LLM relevance filter omitido job_id=%s: %s",
+                    job_id,
+                    exc,
+                    exc_info=True,
+                )
 
         logger.info("Construyendo preview: job_id=%s, merged_count=%s", job_id, len(merged))
         preview = _build_exa_preview(merged)

@@ -1040,22 +1040,55 @@ a:hover {
 
 .search-command-card {
   border-radius: 18px;
-  padding: 18px;
+  padding: 24px;
   display: grid;
-  gap: 14px;
+  gap: 20px;
   width: min(860px, 100%);
 }
 
 .search-command-form {
   display: grid;
-  gap: 12px;
+  gap: 16px;
+}
+
+.search-mode-tabs {
+  display: flex;
+  margin: -24px -24px 20px -24px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.search-mode-tabs .search-command-tab {
+  flex: 1;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 12px 16px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.search-mode-tabs .search-command-tab.is-active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+  background: transparent;
+}
+
+.search-mode-tabs .search-command-tab:hover:not(.is-active) {
+  color: var(--color-text);
+  background: transparent;
 }
 
 .search-command-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 
 .search-command-tab {
@@ -1088,6 +1121,12 @@ a:hover {
   background: #fff;
   padding: 10px 10px 10px 44px;
   min-height: 72px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.search-command-input-row:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: var(--focus-ring);
 }
 
 .search-command-search-icon {
@@ -1115,13 +1154,19 @@ a:hover {
   padding: 14px 20px;
   font-size: 15px;
   font-weight: 600;
-  min-width: 198px;
+  min-width: 160px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   min-height: 52px;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.search-command-submit:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  box-shadow: var(--shadow-primary-hover);
 }
 
 .search-command-submit:disabled {
@@ -4662,11 +4707,11 @@ textarea {
 .admin-page-title {
   font-size: 22px;
   font-weight: 700;
-  margin: 0 0 0.25rem;
+  margin: 0 0 0.5rem;
 }
 
 .admin-section-card {
-  padding: 1.25rem 1.5rem;
+  padding: 2rem;
   border-radius: 14px;
 }
 
@@ -4679,13 +4724,13 @@ textarea {
 .admin-create-form {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 1.5rem;
 }
 
 .admin-form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
+  gap: 1rem;
 }
 
 @media (max-width: 540px) {
@@ -4701,9 +4746,9 @@ textarea {
 }
 
 .admin-field-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: #374151;
+  font-size: var(--text-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
 }
 
 .admin-users-list {
@@ -4809,17 +4854,22 @@ textarea {
 }
 
 .admin-permissions-fieldset {
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  padding: 1rem 1.25rem;
   grid-column: 1 / -1;
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .admin-permissions-fieldset legend {
-  font-size: 13px;
-  font-weight: 600;
-  padding: 0 0.25rem;
+  font-size: var(--text-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  padding: 0 0.5rem;
+  margin-bottom: 0.25rem;
 }
 
 .admin-perm-checkbox {
@@ -4828,6 +4878,8 @@ textarea {
   gap: 0.375rem;
   font-size: 13px;
   cursor: pointer;
+  padding: 4px 0;
+  color: var(--color-text);
   padding: 0.125rem 0;
 }
 
@@ -6130,7 +6182,9 @@ textarea {
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
-  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-4);
 }
 
 .search-command-directory-label {
@@ -6275,6 +6329,36 @@ textarea {
   100% { transform: translateX(100%); }
 }
 
+.workspace-v3-loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-right-color: var(--color-primary);
+  border-radius: 50%;
+  animation: workspaceV3Spin 1s linear infinite;
+}
+
+@keyframes workspaceV3Spin {
+  to { transform: rotate(360deg); }
+}
+
+.workspace-v3-loading-message {
+  font-size: var(--text-body);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+  min-height: 1.5em;
+  animation: workspaceV3MessageFade 4s ease-in-out infinite;
+}
+
+@keyframes workspaceV3MessageFade {
+  0% { opacity: 1; }
+  40% { opacity: 1; }
+  50% { opacity: 0.5; }
+  60% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
 .workspace-v3-inline-error {
   margin: 0;
 }
@@ -6284,12 +6368,21 @@ textarea {
   border-radius: var(--radius-card);
   background: var(--color-surface);
   overflow: hidden;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
 }
 
 .workspace-v3-empty {
-  padding: var(--space-12) var(--space-6);
+  padding: var(--space-8) var(--space-5);
   text-align: center;
   margin: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
 }
 
 .workspace-v3-failure {
@@ -6819,6 +6912,32 @@ textarea {
   font-size: 13px;
 }
 
+/* ---- Input and textarea styles ---- */
+
+.ui-input {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  font-size: var(--text-body);
+  font-family: inherit;
+  width: 100%;
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ui-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--focus-ring);
+}
+
+textarea.ui-input {
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+}
 
 /* ---- URL Scraper Panel (tab en DirectoryBoardPage) ---- */
 
@@ -6843,8 +6962,10 @@ textarea {
 
 .url-scraper-label {
   font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  display: block;
+  margin-bottom: 4px;
 }
 
 /* ---- URL Scrape Job Page ---- */
