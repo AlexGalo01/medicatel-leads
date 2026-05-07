@@ -1,11 +1,11 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Building2, Folder, Loader2, Search, Users } from "lucide-react";
+import { Building2, Folder, Link as LinkIcon, Loader2, Search, Users } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import type { JobSearchLocationState } from "./JobSearchWorkspacePage";
 
-import { clarifySearchJob, createSearchJob, listDirectories } from "../api";
+import { clarifySearchJob, createSearchJob, createUrlScrapeJob, listDirectories } from "../api";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Input } from "../components/ui/input";
@@ -29,6 +29,9 @@ export function SearchPage(): JSX.Element {
   const [clarifyContext, setClarifyContext] = useState<{ jobId: string; question: string } | null>(null);
   const [clarifyReply, setClarifyReply] = useState("");
   const [showDirectoryModal, setShowDirectoryModal] = useState(false);
+  const [activeMode, setActiveMode] = useState<"search" | "import">("search");
+  const [targetUrl, setTargetUrl] = useState("");
+  const [userPrompt, setUserPrompt] = useState("");
   const searchFocus: SearchFocus = "general";
   const contactChannels = defaultChannelsForFocus(searchFocus);
   const directoriesQuery = useQuery({
@@ -85,6 +88,16 @@ export function SearchPage(): JSX.Element {
       setClarifyReply("");
       navigateToJob(jobId);
     },
+  });
+
+  const urlScrapeMutation = useMutation({
+    mutationFn: () =>
+      createUrlScrapeJob({
+        target_url: targetUrl.trim(),
+        user_prompt: userPrompt.trim(),
+        directory_id: directoryId || null,
+      }),
+    onSuccess: (job) => navigate(`/url-scrape-jobs/${job.job_id}`),
   });
 
   const onSubmit = (event: FormEvent<HTMLFormElement>): void => {
@@ -209,89 +222,188 @@ export function SearchPage(): JSX.Element {
 
           <Card className="search-command-card panel">
             <CardContent>
-          <form className="search-command-form" onSubmit={onSubmit}>
-            <div className="search-command-tabs" role="group" aria-label="Categoría Exa">
-              {EXA_CATEGORY_OPTIONS.map((opt) => {
-                const selected = exaCategoryUi === opt.value;
-                const icon =
-                  opt.value === "people" ? (
-                    <Users size={15} aria-hidden />
-                  ) : (
-                    <Building2 size={15} aria-hidden />
+          <div className="search-mode-tabs" role="group" aria-label="Modo de búsqueda">
+            <button
+              type="button"
+              className={`search-command-tab${activeMode === "search" ? " is-active" : ""}`}
+              onClick={() => setActiveMode("search")}
+            >
+              <Search size={15} aria-hidden />
+              <span>Búsqueda EXA</span>
+            </button>
+            <button
+              type="button"
+              className={`search-command-tab${activeMode === "import" ? " is-active" : ""}`}
+              onClick={() => setActiveMode("import")}
+            >
+              <LinkIcon size={15} aria-hidden />
+              <span>Importar URL</span>
+            </button>
+          </div>
+
+          {activeMode === "search" ? (
+            <form className="search-command-form" onSubmit={onSubmit}>
+              <div className="search-command-tabs" role="group" aria-label="Categoría Exa">
+                {EXA_CATEGORY_OPTIONS.map((opt) => {
+                  const selected = exaCategoryUi === opt.value;
+                  const icon =
+                    opt.value === "people" ? (
+                      <Users size={15} aria-hidden />
+                    ) : (
+                      <Building2 size={15} aria-hidden />
+                    );
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className={`search-command-tab${selected ? " is-active" : ""}`}
+                      onClick={() => setExaCategoryUi(opt.value)}
+                    >
+                      {icon}
+                      <span>{opt.label}</span>
+                    </button>
                   );
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className={`search-command-tab${selected ? " is-active" : ""}`}
-                    onClick={() => setExaCategoryUi(opt.value)}
-                  >
-                    {icon}
-                    <span>{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="search-command-directory-row">
-              <div className="search-command-directory-select-wrapper">
-                <label className="search-command-directory-label">
-                  <Folder size={14} aria-hidden />
-                  <span>Directorio destino</span>
-                </label>
-                <SearchableSelect
-                  value={directoryId}
-                  onChange={setDirectoryId}
-                  options={(directoriesQuery.data?.items ?? []).map((d) => ({
-                    id: d.id,
-                    name: d.name,
-                  }))}
-                  placeholder="Buscar directorio..."
-                  required
-                  ariaLabel="Directorio destino"
-                />
+                })}
               </div>
-              <Link to="/directories/new?returnTo=/search" className="link-button">
-                + Crear directorio
-              </Link>
-            </div>
 
-            <div className="search-command-input-row">
-              <Search className="search-command-search-icon" aria-hidden />
+              <div className="search-command-directory-row">
+                <div className="search-command-directory-select-wrapper">
+                  <label className="search-command-directory-label">
+                    <Folder size={14} aria-hidden />
+                    <span>Directorio destino</span>
+                  </label>
+                  <SearchableSelect
+                    value={directoryId}
+                    onChange={setDirectoryId}
+                    options={(directoriesQuery.data?.items ?? []).map((d) => ({
+                      id: d.id,
+                      name: d.name,
+                    }))}
+                    placeholder="Buscar directorio..."
+                    required
+                    ariaLabel="Directorio destino"
+                  />
+                </div>
+                <Link to="/directories/new?returnTo=/search" className="link-button">
+                  + Crear directorio
+                </Link>
+              </div>
+
+              <div className="search-command-input-row">
+                <Search className="search-command-search-icon" aria-hidden />
+                <Input
+                  className="search-command-input"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={queryPlaceholder}
+                  required
+                  minLength={3}
+                  maxLength={500}
+                  aria-label="Consulta de búsqueda"
+                />
+                <Button
+                  className="search-command-submit"
+                  type="submit"
+                  disabled={createJobMutation.isPending}
+                >
+                  {createJobMutation.isPending ? (
+                    <>
+                      <Loader2 className="search-submit-icon spin" aria-hidden />
+                      <span>Buscando…</span>
+                    </>
+                  ) : (
+                    <span>Ejecutar búsqueda</span>
+                  )}
+                </Button>
+              </div>
+
+              {createJobMutation.isError ? (
+                <p className="error-text" role="alert">
+                  {createJobMutation.error instanceof Error
+                    ? createJobMutation.error.message
+                    : "No se pudo crear el trabajo de búsqueda."}
+                </p>
+              ) : null}
+            </form>
+          ) : (
+            <form
+              className="search-command-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!directoryId) {
+                  setShowDirectoryModal(true);
+                  return;
+                }
+                urlScrapeMutation.mutate();
+              }}
+            >
+              <div className="search-command-directory-row">
+                <div className="search-command-directory-select-wrapper">
+                  <label className="search-command-directory-label">
+                    <Folder size={14} aria-hidden />
+                    <span>Directorio destino</span>
+                  </label>
+                  <SearchableSelect
+                    value={directoryId}
+                    onChange={setDirectoryId}
+                    options={(directoriesQuery.data?.items ?? []).map((d) => ({
+                      id: d.id,
+                      name: d.name,
+                    }))}
+                    placeholder="Buscar directorio..."
+                    required
+                    ariaLabel="Directorio destino"
+                  />
+                </div>
+                <Link to="/directories/new?returnTo=/search" className="link-button">
+                  + Crear directorio
+                </Link>
+              </div>
+
+              <label className="url-scraper-label">URL de la página</label>
               <Input
-                className="search-command-input"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={queryPlaceholder}
+                className="ui-input"
+                type="url"
+                value={targetUrl}
+                onChange={(e) => setTargetUrl(e.target.value)}
+                placeholder="https://ejemplo.com/directorio-medicos"
                 required
-                minLength={3}
-                maxLength={500}
-                aria-label="Consulta de búsqueda"
               />
+
+              <label className="url-scraper-label">¿Qué quieres extraer?</label>
+              <textarea
+                className="ui-input"
+                value={userPrompt}
+                onChange={(e) => setUserPrompt(e.target.value)}
+                placeholder="Extrae todos los médicos con su nombre, teléfono y ciudad"
+                rows={4}
+                required
+              />
+
+              {urlScrapeMutation.isError ? (
+                <p className="error-text" role="alert">
+                  {urlScrapeMutation.error instanceof Error
+                    ? urlScrapeMutation.error.message
+                    : "No se pudo crear el trabajo de importación."}
+                </p>
+              ) : null}
+
               <Button
-                className="search-command-submit"
                 type="submit"
-                disabled={createJobMutation.isPending}
+                disabled={urlScrapeMutation.isPending}
+                className="search-command-submit"
               >
-                {createJobMutation.isPending ? (
+                {urlScrapeMutation.isPending ? (
                   <>
                     <Loader2 className="search-submit-icon spin" aria-hidden />
-                    <span>Buscando…</span>
+                    <span>Iniciando extracción…</span>
                   </>
                 ) : (
-                  <span>Ejecutar búsqueda</span>
+                  <span>Extraer entradas</span>
                 )}
               </Button>
-            </div>
-
-            {createJobMutation.isError ? (
-              <p className="error-text" role="alert">
-                {createJobMutation.error instanceof Error
-                  ? createJobMutation.error.message
-                  : "No se pudo crear el trabajo de búsqueda."}
-              </p>
-            ) : null}
-          </form>
+            </form>
+          )}
             </CardContent>
           </Card>
         </section>
