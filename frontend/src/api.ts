@@ -370,6 +370,24 @@ export async function downloadLeadsXlsxFile(jobId: string, filters: LeadsExportF
   URL.revokeObjectURL(objectUrl);
 }
 
+export async function downloadPreviewXlsxFile(jobId: string): Promise<void> {
+  const response = await apiFetch(`${buildApiUrl(`/jobs/${jobId}/export/preview/xlsx`)}`);
+  if (!response.ok) {
+    const bodyText = await response.text();
+    throw new Error(`Error al descargar Excel (${response.status}): ${bodyText || "Sin detalle"}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = `preview_${jobId}.xlsx`;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export async function getOpportunityByPreview(
   jobId: string,
   exaPreviewIndex: number,

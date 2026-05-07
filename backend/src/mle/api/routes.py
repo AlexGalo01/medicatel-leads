@@ -80,7 +80,7 @@ from mle.schemas.directories import (
 )
 from mle.services.jwt_service import create_access_token
 from mle.services.passwords import hash_password, verify_password
-from mle.services.export_service import export_leads_to_csv, export_leads_to_xlsx
+from mle.services.export_service import export_leads_to_csv, export_leads_to_xlsx, export_preview_to_xlsx
 from mle.services.pipeline_service import run_job_pipeline
 from mle.services.query_expansion_service import expand_user_search_query
 from mle.services.exa_more_results_service import append_exa_results_for_job
@@ -899,6 +899,50 @@ async def export_leads_xlsx_file(
     return FileResponse(
         path=str(export_path),
         filename=f"leads_{job_id}.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@protected_router.get("/jobs/{job_id}/export/preview/xlsx")
+async def export_preview_xlsx_file(
+    job_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> FileResponse:
+    """Export exa_results_preview (search-only mode) to Excel."""
+    async with async_session_factory() as session:
+        jobs_repo = JobsRepository(session)
+        job = await jobs_repo.get_by_id(job_id)
+        if job is None:
+            _raise_not_found("Job")
+
+    preview_raw = job.metadata_json.get("exa_results_preview", [])
+    preview_rows = []
+    if isinstance(preview_raw, list):
+        for idx, row in enumerate(preview_raw):
+            if isinstance(row, dict):
+                preview_rows.append({
+                    "index": idx + 1,
+                    "title": row.get("title", ""),
+                    "specialty": row.get("specialty", ""),
+                    "city": row.get("city", ""),
+                    "linkedin_url": row.get("linkedin_url", ""),
+                    "url": row.get("url", ""),
+                    "snippet": row.get("snippet", ""),
+                })
+
+    settings = get_settings()
+    export_path_str = export_preview_to_xlsx(
+        job_id=job_id,
+        rows=preview_rows,
+        export_dir_path=settings.export_dir,
+    )
+    export_path = Path(export_path_str)
+    if not export_path.is_file():
+        _raise_not_found("Export file")
+
+    return FileResponse(
+        path=str(export_path),
+        filename=f"preview_{job_id}.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 

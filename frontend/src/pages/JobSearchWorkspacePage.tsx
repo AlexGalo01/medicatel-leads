@@ -8,6 +8,7 @@ import {
   clarifySearchJob,
   downloadLeadsCsvFile,
   downloadLeadsXlsxFile,
+  downloadPreviewXlsxFile,
   getDirectory,
   getSearchJobStatus,
   listLeads,
@@ -92,6 +93,10 @@ export function JobSearchWorkspacePage(): JSX.Element {
 
   const downloadXlsxMutation = useMutation({
     mutationFn: () => downloadLeadsXlsxFile(jobId, {}),
+  });
+
+  const downloadPreviewXlsxMutation = useMutation({
+    mutationFn: () => downloadPreviewXlsxFile(jobId),
   });
 
   const jobStatusQuery = useQuery({
@@ -326,18 +331,30 @@ export function JobSearchWorkspacePage(): JSX.Element {
               </Button>
             ) : null}
             {jobStatus === "completed" && searchOnlyDemo && previewRows.length > 0 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={exaMoreMutation.isPending}
-                onClick={() => {
-                  setExaMoreMessage(null);
-                  exaMoreMutation.mutate();
-                }}
-              >
-                {exaMoreMutation.isPending ? "Cargando…" : "Cargar más"}
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={downloadPreviewXlsxMutation.isPending}
+                  onClick={() => downloadPreviewXlsxMutation.mutate()}
+                >
+                  <FileSpreadsheet size={13} aria-hidden />
+                  {downloadPreviewXlsxMutation.isPending ? "Generando…" : "Excel"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={exaMoreMutation.isPending}
+                  onClick={() => {
+                    setExaMoreMessage(null);
+                    exaMoreMutation.mutate();
+                  }}
+                >
+                  {exaMoreMutation.isPending ? "Cargando…" : "Cargar más"}
+                </Button>
+              </>
             ) : null}
             {jobStatus === "completed" && !searchOnlyDemo ? (
               <>

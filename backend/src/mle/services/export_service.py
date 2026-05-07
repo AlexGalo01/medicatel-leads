@@ -87,3 +87,45 @@ def export_leads_to_xlsx(job_id: UUID, leads: list[dict[str, Any]], export_dir_p
 
     wb.save(export_path)
     return str(export_path)
+
+
+def export_preview_to_xlsx(job_id: UUID, rows: list[dict[str, Any]], export_dir_path: str) -> str:
+    """Export exa_results_preview rows to Excel (search-only mode)."""
+    export_dir = Path(export_dir_path)
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    export_path = export_dir / f"preview_{job_id}.xlsx"
+
+    columns = [
+        ("index", "#"),
+        ("title", "Nombre / Título"),
+        ("specialty", "Especialidad"),
+        ("city", "Ciudad"),
+        ("linkedin_url", "LinkedIn"),
+        ("url", "URL"),
+        ("snippet", "Descripción"),
+    ]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Resultados"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
+    for col_idx, (_, header_label) in enumerate(columns, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header_label)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for row_idx, row in enumerate(rows, start=2):
+        for col_idx, (field, _) in enumerate(columns, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=row.get(field) or "")
+
+    for col in ws.columns:
+        max_len = max((len(str(cell.value or "")) for cell in col), default=10)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 60)
+
+    ws.freeze_panes = "A2"
+    wb.save(export_path)
+    return str(export_path)
