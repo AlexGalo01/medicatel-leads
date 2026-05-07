@@ -547,26 +547,29 @@ export function JobSearchWorkspacePage(): JSX.Element {
         ) : (
           <ul className="workspace-v3-list">
             {paginated.map((row) => (
-              <li key={row.id} className="workspace-v3-row workspace-v3-row-with-checkbox">
-                {/* Checkbox for search-only mode */}
+              <li key={row.id} className="workspace-v3-row">
+                {/* Checkbox wrapper for search-only mode */}
                 {searchOnlyDemo && row.previewIndex != null && !oppByPreviewIndex.has(row.previewIndex) && (
-                  <input
-                    type="checkbox"
-                    className="workspace-v3-row-checkbox"
-                    checked={selectedIndices.has(row.previewIndex)}
-                    onChange={() => {
-                      setSelectedIndices((prev) => {
-                        const next = new Set(prev);
-                        next.has(row.previewIndex!) ? next.delete(row.previewIndex!) : next.add(row.previewIndex!);
-                        return next;
-                      });
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
+                  <label className="workspace-v3-checkbox-label">
+                    <input
+                      type="checkbox"
+                      className="workspace-v3-checkbox-input"
+                      checked={selectedIndices.has(row.previewIndex)}
+                      onChange={() => {
+                        setSelectedIndices((prev) => {
+                          const next = new Set(prev);
+                          next.has(row.previewIndex!) ? next.delete(row.previewIndex!) : next.add(row.previewIndex!);
+                          return next;
+                        });
+                      }}
+                    />
+                  </label>
                 )}
                 <Link to={row.href} className="workspace-v3-row-link">
-                  <span className="workspace-v3-avatar" aria-hidden>{initial(row.title)}</span>
-                  <div className="workspace-v3-row-main">
+                  <span className="workspace-v3-avatar" aria-hidden>
+                    {initial(row.title)}
+                  </span>
+                  <div className="workspace-v3-row-content">
                     <div className="workspace-v3-row-title-line">
                       <strong className="workspace-v3-row-title">{row.title}</strong>
                       {row.enriched ? (
@@ -579,15 +582,17 @@ export function JobSearchWorkspacePage(): JSX.Element {
                       <span className="workspace-v3-row-sub muted-text">{row.subtitle}</span>
                     ) : null}
                   </div>
-                  {/* Show saved badge if already has an opportunity */}
-                  {oppByPreviewIndex.has(row.previewIndex ?? -1) && (
-                    <span className="workspace-v3-saved-badge">
-                      ✓ Oportunidad
-                    </span>
-                  )}
-                  {row.stepLabel ? (
-                    <span className="workspace-v3-row-step">{row.stepLabel}</span>
-                  ) : null}
+                  <div className="workspace-v3-row-actions">
+                    {/* Show saved badge if already has an opportunity */}
+                    {oppByPreviewIndex.has(row.previewIndex ?? -1) && (
+                      <span className="workspace-v3-saved-badge">
+                        ✓ Oportunidad
+                      </span>
+                    )}
+                    {row.stepLabel ? (
+                      <span className="workspace-v3-row-step">{row.stepLabel}</span>
+                    ) : null}
+                  </div>
                   <ChevronRight size={14} aria-hidden className="workspace-v3-row-chevron" />
                 </Link>
               </li>

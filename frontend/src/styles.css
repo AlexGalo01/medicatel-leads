@@ -6407,11 +6407,26 @@ textarea {
 }
 
 .workspace-v3-row {
+  display: flex;
+  align-items: stretch;
   border-bottom: 1px solid var(--color-border);
 }
 
 .workspace-v3-row:last-child {
   border-bottom: none;
+}
+
+.workspace-v3-checkbox-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-4);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.workspace-v3-checkbox-input {
+  cursor: pointer;
 }
 
 .workspace-v3-row-link {
@@ -6423,6 +6438,8 @@ textarea {
   text-decoration: none;
   color: var(--color-text);
   transition: background 0.15s ease;
+  flex: 1;
+  min-width: 0;
 }
 
 .workspace-v3-row-link:hover {
@@ -6441,13 +6458,15 @@ textarea {
   font-family: var(--font-display);
   font-weight: var(--font-weight-semibold);
   font-size: 14px;
+  flex-shrink: 0;
 }
 
-.workspace-v3-row-main {
+.workspace-v3-row-content {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow: hidden;
 }
 
 .workspace-v3-row-title-line {
@@ -6510,6 +6529,13 @@ textarea {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-chip);
   white-space: nowrap;
+}
+
+.workspace-v3-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
 
 .workspace-v3-row-chevron {
@@ -7284,17 +7310,6 @@ textarea.ui-input {
 }
 
 /* Save opportunity modal and checkbox */
-
-.workspace-v3-row-with-checkbox {
-  display: flex;
-  align-items: center;
-}
-
-.workspace-v3-row-checkbox {
-  margin-right: var(--space-3);
-  flex-shrink: 0;
-  cursor: pointer;
-}
 
 .workspace-v3-saved-badge {
   font-size: var(--text-small);
