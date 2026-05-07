@@ -214,7 +214,6 @@ class UrlScrapeJob(SQLModel, table=True):
     user_prompt: str = Field(sa_column=Column(Text, nullable=False))
     directory_id: UUID | None = Field(
         default=None,
-        index=True,
         sa_column=Column(
             pg_UUID(as_uuid=True),
             ForeignKey("directories.id", ondelete="CASCADE"),
