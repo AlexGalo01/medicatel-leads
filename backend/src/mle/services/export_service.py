@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -9,11 +11,28 @@ import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 
 
-def export_leads_to_csv(job_id: UUID, leads: list[dict[str, Any]], export_dir_path: str) -> str:
+def _sanitize_filename(text: str) -> str:
+    """Sanitize text to be safe for use in filenames."""
+    # Remove/replace invalid filename characters
+    sanitized = re.sub(r'[<>:"/\\|?*]', '', text)
+    # Remove extra spaces and replace with single space
+    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+    return sanitized
+
+
+def export_leads_to_csv(job_id: UUID, leads: list[dict[str, Any]], export_dir_path: str, query_text: str | None = None) -> str:
     export_dir = Path(export_dir_path)
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    export_path = export_dir / f"leads_{job_id}.csv"
+    # Build filename with query and date if available
+    if query_text:
+        sanitized_query = _sanitize_filename(query_text)
+        date_str = datetime.now().strftime("%d %m %Y")
+        filename = f"{sanitized_query} {date_str}.csv"
+    else:
+        filename = f"leads_{job_id}.csv"
+
+    export_path = export_dir / filename
     columns = [
         "full_name",
         "specialty",
@@ -35,12 +54,20 @@ def export_leads_to_csv(job_id: UUID, leads: list[dict[str, Any]], export_dir_pa
     return str(export_path)
 
 
-def export_leads_to_xlsx(job_id: UUID, leads: list[dict[str, Any]], export_dir_path: str) -> str:
+def export_leads_to_xlsx(job_id: UUID, leads: list[dict[str, Any]], export_dir_path: str, query_text: str | None = None) -> str:
     """Export leads to Excel format with formatting."""
     export_dir = Path(export_dir_path)
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    export_path = export_dir / f"leads_{job_id}.xlsx"
+    # Build filename with query and date if available
+    if query_text:
+        sanitized_query = _sanitize_filename(query_text)
+        date_str = datetime.now().strftime("%d %m %Y")
+        filename = f"{sanitized_query} {date_str}.xlsx"
+    else:
+        filename = f"leads_{job_id}.xlsx"
+
+    export_path = export_dir / filename
 
     columns = [
         ("full_name", "Nombre"),
@@ -89,12 +116,20 @@ def export_leads_to_xlsx(job_id: UUID, leads: list[dict[str, Any]], export_dir_p
     return str(export_path)
 
 
-def export_preview_to_xlsx(job_id: UUID, rows: list[dict[str, Any]], export_dir_path: str) -> str:
+def export_preview_to_xlsx(job_id: UUID, rows: list[dict[str, Any]], export_dir_path: str, query_text: str | None = None) -> str:
     """Export exa_results_preview rows to Excel (search-only mode)."""
     export_dir = Path(export_dir_path)
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    export_path = export_dir / f"preview_{job_id}.xlsx"
+    # Build filename with query and date if available
+    if query_text:
+        sanitized_query = _sanitize_filename(query_text)
+        date_str = datetime.now().strftime("%d %m %Y")
+        filename = f"{sanitized_query} {date_str}.xlsx"
+    else:
+        filename = f"preview_{job_id}.xlsx"
+
+    export_path = export_dir / filename
 
     columns = [
         ("index", "#"),

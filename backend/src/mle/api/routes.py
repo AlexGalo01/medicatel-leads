@@ -764,6 +764,7 @@ async def export_leads(
 
     async with async_session_factory() as session:
         leads_repository = LeadsRepository(session)
+        jobs_repo = JobsRepository(session)
         leads_page = await leads_repository.list_by_job(
             job_id=job_id,
             min_score=parsed_min_score,
@@ -772,6 +773,8 @@ async def export_leads(
             page=1,
             page_size=5000,
         )
+        # Get job to extract query_text
+        job = await jobs_repo.get_by_id(job_id)
 
     leads_payload = [
         {
@@ -787,11 +790,18 @@ async def export_leads(
         }
         for lead in leads_page.items
     ]
+
+    # Extract query text from job metadata
+    query_text = None
+    if job and isinstance(job.metadata_json, dict):
+        query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or "").strip() or None
+
     settings = get_settings()
     export_path = export_leads_to_csv(
         job_id=job_id,
         leads=leads_payload,
         export_dir_path=settings.export_dir,
+        query_text=query_text,
     )
     return LeadsExportResponse(
         download_path=export_path,
@@ -809,6 +819,7 @@ async def export_leads_file(
 ) -> FileResponse:
     async with async_session_factory() as session:
         leads_repository = LeadsRepository(session)
+        jobs_repo = JobsRepository(session)
         leads_page = await leads_repository.list_by_job(
             job_id=job_id,
             min_score=min_score,
@@ -817,6 +828,8 @@ async def export_leads_file(
             page=1,
             page_size=5000,
         )
+        # Get job to extract query_text
+        job = await jobs_repo.get_by_id(job_id)
 
     leads_payload = [
         {
@@ -832,19 +845,29 @@ async def export_leads_file(
         }
         for lead in leads_page.items
     ]
+
+    # Extract query text from job metadata
+    query_text = None
+    if job and isinstance(job.metadata_json, dict):
+        query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or "").strip() or None
+
     settings = get_settings()
     export_path_str = export_leads_to_csv(
         job_id=job_id,
         leads=leads_payload,
         export_dir_path=settings.export_dir,
+        query_text=query_text,
     )
     export_path = Path(export_path_str)
     if not export_path.is_file():
         raise HTTPException(status_code=500, detail="No se pudo generar el archivo CSV")
 
+    # Use the filename from export_path (which includes query and date)
+    filename = export_path.name
+
     return FileResponse(
         path=str(export_path),
-        filename=f"leads_{job_id}.csv",
+        filename=filename,
         media_type="text/csv; charset=utf-8",
     )
 
@@ -859,6 +882,7 @@ async def export_leads_xlsx_file(
 ) -> FileResponse:
     async with async_session_factory() as session:
         leads_repository = LeadsRepository(session)
+        jobs_repo = JobsRepository(session)
         leads_page = await leads_repository.list_by_job(
             job_id=job_id,
             min_score=min_score,
@@ -867,6 +891,8 @@ async def export_leads_xlsx_file(
             page=1,
             page_size=5000,
         )
+        # Get job to extract query_text
+        job = await jobs_repo.get_by_id(job_id)
 
     leads_payload = [
         {
@@ -886,19 +912,29 @@ async def export_leads_xlsx_file(
         }
         for lead in leads_page.items
     ]
+
+    # Extract query text from job metadata
+    query_text = None
+    if job and isinstance(job.metadata_json, dict):
+        query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or "").strip() or None
+
     settings = get_settings()
     export_path_str = export_leads_to_xlsx(
         job_id=job_id,
         leads=leads_payload,
         export_dir_path=settings.export_dir,
+        query_text=query_text,
     )
     export_path = Path(export_path_str)
     if not export_path.is_file():
         raise HTTPException(status_code=500, detail="No se pudo generar el archivo Excel")
 
+    # Use the filename from export_path (which includes query and date)
+    filename = export_path.name
+
     return FileResponse(
         path=str(export_path),
-        filename=f"leads_{job_id}.xlsx",
+        filename=filename,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
@@ -914,6 +950,9 @@ async def export_preview_xlsx_file(
         job = await jobs_repo.get_by_id(job_id)
         if job is None:
             _raise_not_found("Job")
+
+    # Extract query text from metadata
+    query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or "").strip() or None
 
     preview_raw = job.metadata_json.get("exa_results_preview", [])
     preview_rows = []
@@ -935,14 +974,18 @@ async def export_preview_xlsx_file(
         job_id=job_id,
         rows=preview_rows,
         export_dir_path=settings.export_dir,
+        query_text=query_text,
     )
     export_path = Path(export_path_str)
     if not export_path.is_file():
         _raise_not_found("Export file")
 
+    # Use the filename from export_path (which includes query and date)
+    filename = export_path.name
+
     return FileResponse(
         path=str(export_path),
-        filename=f"preview_{job_id}.xlsx",
+        filename=filename,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
