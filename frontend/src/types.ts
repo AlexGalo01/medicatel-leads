@@ -297,6 +297,7 @@ export interface OpportunityListResponse {
 export interface OpportunityCreateFromPreviewRequest {
   job_id: string;
   exa_preview_index: number;
+  step_id?: string;
 }
 
 export interface SearchJobStatusResponse {

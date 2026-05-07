@@ -15,7 +15,7 @@ from mle.state.graph_state import LeadSearchGraphState
 logger = logging.getLogger(__name__)
 
 MAX_DIRECTORY_EXA_CALLS = 8
-MIN_RESULTS_PER_QUERY = 8
+MIN_RESULTS_PER_QUERY = 35
 MAX_EXA_RESULTS_PER_CALL = 100
 _DEEP_SEARCH_TYPES = ("deep-reasoning",)
 
@@ -203,7 +203,7 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             raise ValueError("No existe planner_output para ejecutar Exa Search.")
 
         search_config = planner_output.get("search_config", {})
-        per_query_budget = min(MAX_EXA_RESULTS_PER_CALL, int(search_config.get("num_results", 50)))
+        per_query_budget = min(MAX_EXA_RESULTS_PER_CALL, max(MIN_RESULTS_PER_QUERY, int(search_config.get("num_results", 50))))
 
         queries = _queries_from_planner(planner_output)
         if not queries:

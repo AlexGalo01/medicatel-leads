@@ -6,11 +6,13 @@ import { ChevronRight, Download, FileSpreadsheet, Loader2, Mail, Phone, Linkedin
 import {
   cancelSearchJob,
   clarifySearchJob,
+  createOpportunityFromPreview,
   downloadLeadsCsvFile,
   downloadLeadsXlsxFile,
   downloadPreviewXlsxFile,
   getDirectory,
   getSearchJobStatus,
+  listDirectories,
   listLeads,
   listOpportunities,
   loadMoreExaResults,
@@ -53,6 +55,7 @@ interface RowData {
   stepLabel: string | null;
   href: string;
   enriched: boolean;
+  previewIndex: number | null;
 }
 
 function initial(text: string): string {
@@ -123,6 +126,32 @@ export function JobSearchWorkspacePage(): JSX.Element {
       void queryClient.invalidateQueries({ queryKey: ["job-status", jobId] });
     },
     onError: (error: Error) => setExaMoreMessage(error.message),
+  });
+
+  // Opportunity selection and modal state
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [selectedDirectoryId, setSelectedDirectoryId] = useState<string | null>(null);
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const directoriesQuery = useQuery({
+    queryKey: ["directories"],
+    queryFn: listDirectories,
+    staleTime: 60_000,
+    enabled: saveModalOpen,
+  });
+
+  const saveAsOppMutation = useMutation({
+    mutationFn: (previewIndex: number) =>
+      createOpportunityFromPreview({
+        job_id: jobId,
+        exa_preview_index: previewIndex,
+        step_id: selectedStepId || undefined,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["job-opportunities", jobId] });
+    },
   });
 
   const clarifyWorkspaceMutation = useMutation({
@@ -229,6 +258,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
           stepLabel: stepName ?? null,
           href: `/jobs/${jobId}/result/${idx}`,
           enriched: r.enrichment_status === "enriched",
+          previewIndex: idx,
         };
       });
     }
@@ -245,6 +275,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
         stepLabel: null,
         href: `/leads/${lead.lead_id}`,
         enriched: hasAny,
+        previewIndex: null,
       };
     });
   }, [searchOnlyDemo, previewRows, persistedLeads, jobId, oppByPreviewIndex, stepNameById]);
@@ -265,6 +296,29 @@ export function JobSearchWorkspacePage(): JSX.Element {
       }, { replace: true });
     }
   }, [jobId, searchOnlyDemo, setSearchParams]);
+
+  const handleSaveSelected = async () => {
+    if (!selectedStepId) return;
+    setSaving(true);
+    const toSave = Array.from(selectedIndices);
+    for (const previewIndex of toSave) {
+      await createOpportunityFromPreview({
+        job_id: jobId,
+        exa_preview_index: previewIndex,
+        step_id: selectedStepId,
+      });
+    }
+    void queryClient.invalidateQueries({ queryKey: ["job-opportunities", jobId] });
+    setSelectedIndices(new Set());
+    setSaveModalOpen(false);
+    setSelectedDirectoryId(null);
+    setSelectedStepId(null);
+    setSaving(false);
+  };
+
+  const unsavedCount = rows.filter(
+    (r) => r.previewIndex != null && !oppByPreviewIndex.has(r.previewIndex),
+  ).length;
 
   useEffect(() => {
     setWorkspaceClarifyReply("");
@@ -332,6 +386,33 @@ export function JobSearchWorkspacePage(): JSX.Element {
             ) : null}
             {jobStatus === "completed" && searchOnlyDemo && previewRows.length > 0 ? (
               <>
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  disabled={unsavedCount === 0 || saving}
+                  onClick={() => {
+                    const notSaved = rows
+                      .filter((r) => r.previewIndex != null && !oppByPreviewIndex.has(r.previewIndex!))
+                      .map((r) => r.previewIndex!);
+                    setSelectedIndices(new Set(notSaved));
+                    setSaveModalOpen(true);
+                  }}
+                  className="btn-save-all-opp"
+                >
+                  {saving ? "Guardando…" : `Guardar todos (${unsavedCount})`}
+                </Button>
+                {selectedIndices.size > 0 && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={selectedIndices.size === 0 || saving}
+                    onClick={() => setSaveModalOpen(true)}
+                  >
+                    Crear Oportunidades ({selectedIndices.size})
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant="secondary"
@@ -467,6 +548,22 @@ export function JobSearchWorkspacePage(): JSX.Element {
           <ul className="workspace-v3-list">
             {paginated.map((row) => (
               <li key={row.id} className="workspace-v3-row">
+                {/* Checkbox for search-only mode */}
+                {searchOnlyDemo && row.previewIndex != null && !oppByPreviewIndex.has(row.previewIndex) && (
+                  <input
+                    type="checkbox"
+                    checked={selectedIndices.has(row.previewIndex)}
+                    onChange={() => {
+                      setSelectedIndices((prev) => {
+                        const next = new Set(prev);
+                        next.has(row.previewIndex!) ? next.delete(row.previewIndex!) : next.add(row.previewIndex!);
+                        return next;
+                      });
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ marginRight: "8px" }}
+                  />
+                )}
                 <Link to={row.href} className="workspace-v3-row-link">
                   <span className="workspace-v3-avatar" aria-hidden>{initial(row.title)}</span>
                   <div className="workspace-v3-row-main">
@@ -482,36 +579,12 @@ export function JobSearchWorkspacePage(): JSX.Element {
                       <span className="workspace-v3-row-sub muted-text">{row.subtitle}</span>
                     ) : null}
                   </div>
-                  <div className="workspace-v3-row-chips" onClick={(e) => e.preventDefault()}>
-                    <span
-                      className={`workspace-v3-chip${row.email ? " is-on" : ""}`}
-                      title={row.email || "Sin correo"}
-                      aria-label={row.email ? `Correo: ${row.email}` : "Sin correo"}
-                    >
-                      <Mail size={13} aria-hidden />
+                  {/* Show saved badge if already has an opportunity */}
+                  {oppByPreviewIndex.has(row.previewIndex ?? -1) && (
+                    <span className="workspace-v3-saved-badge" style={{ marginRight: "8px" }}>
+                      ✓ Oportunidad
                     </span>
-                    <span
-                      className={`workspace-v3-chip${row.phone ? " is-on" : ""}`}
-                      title={row.phone || "Sin teléfono"}
-                      aria-label={row.phone ? `Teléfono: ${row.phone}` : "Sin teléfono"}
-                    >
-                      <Phone size={13} aria-hidden />
-                    </span>
-                    <span
-                      className={`workspace-v3-chip${row.whatsapp ? " is-on" : ""}`}
-                      title={row.whatsapp || "Sin WhatsApp"}
-                      aria-label={row.whatsapp ? `WhatsApp: ${row.whatsapp}` : "Sin WhatsApp"}
-                    >
-                      <MessageCircle size={13} aria-hidden />
-                    </span>
-                    <span
-                      className={`workspace-v3-chip${row.linkedin ? " is-on" : ""}`}
-                      title={row.linkedin || "Sin LinkedIn"}
-                      aria-label={row.linkedin ? "LinkedIn disponible" : "Sin LinkedIn"}
-                    >
-                      <Linkedin size={13} aria-hidden />
-                    </span>
-                  </div>
+                  )}
                   {row.stepLabel ? (
                     <span className="workspace-v3-row-step">{row.stepLabel}</span>
                   ) : null}
@@ -585,6 +658,145 @@ export function JobSearchWorkspacePage(): JSX.Element {
           </ul>
         </section>
       ) : null}
+
+      {/* Modal de selección de directorio */}
+      {saveModalOpen && (
+        <div
+          className="modal-overlay"
+          onClick={() => setSaveModalOpen(false)}
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+          }}
+        >
+          <div
+            className="modal-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: "white",
+              borderRadius: "8px",
+              padding: "24px",
+              maxWidth: "500px",
+              maxHeight: "80vh",
+              overflowY: "auto",
+              boxShadow: "0 10px 25px rgba(0, 0, 0, 0.1)",
+            }}
+          >
+            <h3 style={{ marginTop: 0, marginBottom: "8px" }}>¿A qué directorio enviar?</h3>
+            <p style={{ marginBottom: "16px", color: "#666", fontSize: "14px" }}>
+              {selectedIndices.size} resultado(s) seleccionado(s)
+            </p>
+
+            {directoriesQuery.isLoading && (
+              <div style={{ textAlign: "center", padding: "20px" }}>Cargando directorios...</div>
+            )}
+
+            {directoriesQuery.data?.items.map((dir) => (
+              <div key={dir.id} style={{ marginBottom: "12px" }}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedDirectoryId((d) => (d === dir.id ? null : dir.id))
+                  }
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    textAlign: "left",
+                    border: selectedDirectoryId === dir.id ? "2px solid #6366f1" : "1px solid #ddd",
+                    borderRadius: "6px",
+                    backgroundColor: selectedDirectoryId === dir.id ? "#f0f4ff" : "white",
+                    cursor: "pointer",
+                    fontWeight: selectedDirectoryId === dir.id ? "600" : "normal",
+                  }}
+                >
+                  {dir.name}
+                </button>
+                {selectedDirectoryId === dir.id && (
+                  <div style={{ marginTop: "8px", paddingLeft: "8px" }}>
+                    {dir.steps
+                      .filter((s) => !s.is_terminal)
+                      .map((step) => (
+                        <button
+                          key={step.id}
+                          type="button"
+                          onClick={() => setSelectedStepId(step.id)}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            padding: "8px 12px",
+                            marginBottom: "6px",
+                            textAlign: "left",
+                            border:
+                              selectedStepId === step.id
+                                ? "2px solid #6366f1"
+                                : "1px solid #e5e7eb",
+                            borderRadius: "4px",
+                            backgroundColor:
+                              selectedStepId === step.id ? "#f0f4ff" : "white",
+                            cursor: "pointer",
+                            fontSize: "14px",
+                            fontWeight: selectedStepId === step.id ? "600" : "normal",
+                          }}
+                        >
+                          {step.name}
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            <div
+              style={{
+                marginTop: "20px",
+                display: "flex",
+                gap: "8px",
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setSaveModalOpen(false)}
+                style={{
+                  padding: "8px 16px",
+                  border: "1px solid #ddd",
+                  borderRadius: "4px",
+                  backgroundColor: "white",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSelected}
+                disabled={!selectedStepId || saving}
+                style={{
+                  padding: "8px 16px",
+                  border: "none",
+                  borderRadius: "4px",
+                  backgroundColor: !selectedStepId || saving ? "#ccc" : "#6366f1",
+                  color: "white",
+                  cursor: !selectedStepId || saving ? "not-allowed" : "pointer",
+                  fontSize: "14px",
+                  fontWeight: "600",
+                }}
+              >
+                {saving ? "Guardando…" : `Guardar ${selectedIndices.size} oportunidades`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

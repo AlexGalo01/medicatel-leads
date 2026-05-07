@@ -334,6 +334,7 @@ class OpportunityListResponse(BaseModel):
 class OpportunityCreateFromPreviewRequest(BaseModel):
     job_id: UUID
     exa_preview_index: int = Field(ge=1)
+    step_id: UUID | None = None
 
 
 class OpportunityCreateManualRequest(BaseModel):

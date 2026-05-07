@@ -57,7 +57,7 @@ from mle.api.schemas import (
     UserPublic,
 )
 from mle.db.base import async_session_factory
-from mle.db.models import Opportunity, User
+from mle.db.models import Opportunity, User, DirectoryStep
 from mle.repositories.directories_repository import DirectoriesRepository
 from mle.repositories.directory_entries_repository import DirectoryEntriesRepository
 from mle.repositories.jobs_repository import JobsRepository
@@ -1031,6 +1031,17 @@ async def create_opportunity_from_preview(
                     detail="No hay fila de vista previa Exa con ese índice para este job.",
                 ) from exc
             raise HTTPException(status_code=400, detail="Datos de oportunidad no válidos.") from exc
+
+        # If step_id is provided and this is a new opportunity, assign it to the step
+        if payload.step_id and created:
+            result = await session.execute(select(DirectoryStep).where(DirectoryStep.id == payload.step_id))
+            step = result.scalars().first()
+            if step is None:
+                raise HTTPException(status_code=400, detail="El step especificado no existe.")
+            opp.current_step_id = step.id
+            opp.directory_id = step.directory_id
+            await session.commit()
+
         await session.refresh(opp)
         owner = await _load_owner_user(session, opp)
     response.status_code = 201 if created else 200
