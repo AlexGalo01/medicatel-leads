@@ -88,7 +88,7 @@ from mle.services.profile_interpret_service import interpret_profile_texts
 from mle.services.profile_interpret_service import extract_profile_summary
 from mle.services.lead_deep_enrich_service import LeadCore, enrich_lead_contacts, EnrichmentResult
 from mle.clients.exa_client import ExaClient
-from mle.clients.opencli_client import OpenCliClient
+from mle.clients.brave_client import BraveSearchClient
 from mle.clients.llm_factory import get_llm_client, get_reviewer_llm_client
 from mle.core.config import get_settings, effective_exa_search_timeout_seconds
 from mle.schemas.leads import LeadRead
@@ -1151,13 +1151,11 @@ async def enrich_opportunity(opportunity_id: UUID):
         api_key=st.exa_api_key,
         timeout_seconds=effective_exa_search_timeout_seconds(st),
     )
-    opencli = OpenCliClient(st)
     proposer = get_llm_client(st)
     reviewer = get_reviewer_llm_client(st)
 
     brave = None
     if st.brave_search_api_key and st.brave_search_enabled:
-        from mle.clients.brave_client import BraveSearchClient
         brave = BraveSearchClient(
             api_key=st.brave_search_api_key,
             timeout_seconds=st.brave_search_timeout_seconds,
@@ -1175,7 +1173,6 @@ async def enrich_opportunity(opportunity_id: UUID):
             result = await enrich_lead_contacts(
                 lead,
                 exa_client=exa_client,
-                opencli=opencli,
                 proposer=proposer,
                 reviewer=reviewer,
                 settings=st,
