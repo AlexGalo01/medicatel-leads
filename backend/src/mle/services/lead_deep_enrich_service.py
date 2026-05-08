@@ -320,6 +320,92 @@ async def _deep_fetch_contacts(
     return merged
 
 
+async def _generate_brave_search_query(lead: LeadCore, proposer: GeminiClient) -> str:
+    """Usa Gemini para generar la query de Brave más efectiva para el lead."""
+    prompt = (
+        "Genera una query de búsqueda web corta para encontrar datos de contacto "
+        "(teléfono, dirección, email) de este profesional médico.\n"
+        "REGLAS:\n"
+        "- Extrae solo el nombre real (ignora texto después de '|', '/' o '-')\n"
+        "- Incluye especialidad médica en español (máximo 2 palabras)\n"
+        "- Incluye ciudad y país\n"
+        "- Máximo 8 palabras en total\n"
+        f"full_name: {lead.full_name}\n"
+        f"specialty: {lead.specialty}\n"
+        f"city: {lead.city}\n"
+        f"country: {lead.country}\n"
+        'Devuelve SOLO JSON: {"query": "texto de la query"}'
+    )
+    try:
+        result = await proposer.complete_json_prompt(prompt)
+        q = str(result.get("query", "")).strip()
+        if q:
+            return q
+    except Exception:  # noqa: BLE001
+        pass
+    # Fallback determinista
+    name = re.split(r"[|/\-]", lead.full_name)[0].strip()
+    return " ".join(p for p in [name, lead.specialty, lead.city, lead.country] if p)[:120]
+
+
+async def _brave_web_evidence(
+    brave: BraveSearchClient,
+    exa_client: ExaClient,
+    lead: LeadCore,
+    proposer: GeminiClient,
+) -> tuple[str, list[dict[str, str]]]:
+    """Búsqueda Brave web + fetch de top 3 URLs → evidence string + regex contacts."""
+    try:
+        query = await _generate_brave_search_query(lead, proposer)
+        # Mapear país a ISO (Brave acepta None para no mapeados)
+        _COUNTRY_ISO = {
+            "Honduras": "HN", "Mexico": "MX", "Guatemala": "GT",
+            "El Salvador": "SV", "Costa Rica": "CR", "Panama": "PA",
+            "Colombia": "CO", "Venezuela": "VE", "Peru": "PE",
+            "Argentina": "AR", "Chile": "CL", "España": "ES"
+        }
+        country_iso = _COUNTRY_ISO.get(lead.country)
+
+        brave_items = await brave.web_search(query, country=country_iso, count=10, pages=1)
+        top3_urls = [item["url"] for item in brave_items[:3] if item.get("url")]
+        if not top3_urls:
+            return ("", [])
+
+        # Fetch contenido completo con Exa
+        contents_payload: dict[str, Any] = {
+            "ids": top3_urls,
+            "text": {"maxCharacters": 50000},
+            "highlights": {"maxCharacters": 8000},
+            "subpages": 2,
+        }
+        response = await exa_client.get_contents(contents_payload)
+        full_items = _extract_results(response)
+
+        # Enriquecer items de Brave con texto completo de Exa
+        url_to_full = {item.get("url", ""): item for item in full_items}
+        enriched = []
+        for bi in brave_items[:3]:
+            url = bi.get("url", "")
+            ei = url_to_full.get(url)
+            enriched.append({**bi, "text": ei.get("text", bi.get("text", ""))} if ei else bi)
+
+        evidence = _flatten_evidence(enriched)
+
+        # Extraer regex contacts del texto completo
+        regex_contacts: list[dict[str, str]] = []
+        for item in full_items:
+            if item.get("text"):
+                regex_contacts.extend(_extract_regex_contacts(item["text"], item.get("url", "")))
+            for sp in item.get("subpages") or []:
+                if sp.get("text"):
+                    regex_contacts.extend(_extract_regex_contacts(sp["text"], sp.get("url", "")))
+
+        return (evidence, regex_contacts)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("_brave_web_evidence falló: %s", exc)
+        return ("", [])
+
+
 # ---------------- OpenCLI evidence ----------------
 
 
@@ -551,17 +637,29 @@ async def enrich_lead_contacts(
         )
     )
 
+    brave_task: asyncio.Task | None = None
+    if brave is not None and st.brave_search_enabled:
+        brave_task = asyncio.create_task(
+            _brave_web_evidence(brave, exa_client, lead, proposer)
+        )
+
     # Esperar a opencli y deep_fetch en paralelo
     if progress_callback:
         await progress_callback("Consultando Google Maps y Knowledge Panel...")
 
-    opencli_results, deep_contacts = await asyncio.gather(opencli_task, deep_fetch_task)
+    if brave_task is not None:
+        opencli_results, deep_contacts, (brave_evidence, brave_regex) = await asyncio.gather(
+            opencli_task, deep_fetch_task, brave_task
+        )
+    else:
+        opencli_results, deep_contacts = await asyncio.gather(opencli_task, deep_fetch_task)
+        brave_evidence, brave_regex = "", []
 
     if progress_callback:
         await progress_callback("Verificando datos con inteligencia artificial...")
 
-    # Combinar todos los contactos directos (regex + deep_fetch), deduplicar
-    all_direct_contacts = regex_contacts + deep_contacts
+    # Combinar todos los contactos directos (regex + deep_fetch + brave), deduplicar
+    all_direct_contacts = regex_contacts + deep_contacts + brave_regex
     seen = set()
     unique_direct_contacts = []
     for c in all_direct_contacts:
@@ -624,6 +722,10 @@ async def enrich_lead_contacts(
                 "confidence": "high",
                 "source": "direct_regex",
             })
+
+    # Añadir evidencia de Brave si la hay
+    if brave_evidence.strip():
+        evidence = evidence + "\n\n--- FUENTES BRAVE WEB SEARCH ---\n" + brave_evidence
 
     # Si no hay evidencia ni de Exa ni de OpenCLI, termina no_verified_data.
     if not evidence.strip() and not any([result.phone, result.address, result.schedule_text]):

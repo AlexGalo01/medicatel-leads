@@ -269,68 +269,65 @@ export function JobExaResultDetailPage(): JSX.Element {
             </div>
           </Card>
 
-          <details className="panel lead-detail-accordion" open>
-            <summary className="lead-detail-accordion-summary">Resumen</summary>
-            <div className="lead-detail-accordion-body">
-              {profileSectionsQuery.isFetching ? (
-                <p className="lead-detail-ai-loading muted-text">
-                  <Loader2 className="spin" size={16} aria-hidden />
-                  Generando resumen con IA…
-                </p>
-              ) : null}
-              {profileSectionsQuery.isError ? (
-                <p className="error-text lead-detail-ai-error" role="alert">
-                  {profileSummaryErrorMessage(profileSectionsQuery.error)}
-                </p>
-              ) : null}
-              <div className="lead-detail-summary-actions">
-                <button
-                  type="button"
-                  className="workspace-tool-btn"
-                  onClick={() => {
-                    setEnrichModalOpen(true);
-                    setEnrichStageIdx(0);
-                    enrichMut.reset();
-                    enrichMut.mutate();
-                  }}
-                  disabled={enrichMut.isPending}
-                >
-                  <Search size={16} aria-hidden /> Enriquecer
-                </button>
-              </div>
-              <div className="lead-detail-summary-cards">
-                <article className="lead-detail-summary-card">
-                  <h3>Acerca de</h3>
-                  <p>{aboutText}</p>
-                </article>
-                <article className="lead-detail-summary-card lead-detail-summary-card--experience">
-                  <h3>Experiencia</h3>
-                  {experiences.length > 0 ? (
-                    <ul className="opportunity-summary-experience-list">
-                      {experiences.map((experience, index) => (
-                        <li key={`${experience.role}-${index}`} className="opportunity-summary-experience-item">
-                          <strong>{experience.role}</strong>
-                          <span className="muted-text">
-                            {[experience.organization || null, experience.period || null].filter(Boolean).join(" · ") || "Sin detalle"}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="lead-detail-experience-fallback-text muted-text">{experienceFallback}</p>
-                  )}
-                </article>
-                <article className="lead-detail-summary-card">
-                  <h3>Ubicación</h3>
-                  <p>{normalizedLocation}</p>
-                </article>
-                <article className="lead-detail-summary-card">
-                  <h3>Empresa</h3>
-                  <p>{normalizedCompany}</p>
-                </article>
-              </div>
+          <div className="lead-detail-summary-section">
+            {profileSectionsQuery.isFetching ? (
+              <p className="lead-detail-ai-loading muted-text">
+                <Loader2 className="spin" size={16} aria-hidden />
+                Generando resumen con IA…
+              </p>
+            ) : null}
+            {profileSectionsQuery.isError ? (
+              <p className="error-text lead-detail-ai-error" role="alert">
+                {profileSummaryErrorMessage(profileSectionsQuery.error)}
+              </p>
+            ) : null}
+            <div className="lead-detail-summary-actions">
+              <button
+                type="button"
+                className="workspace-tool-btn"
+                onClick={() => {
+                  setEnrichModalOpen(true);
+                  setEnrichStageIdx(0);
+                  enrichMut.reset();
+                  enrichMut.mutate();
+                }}
+                disabled={enrichMut.isPending}
+              >
+                <Search size={16} aria-hidden /> Enriquecer
+              </button>
             </div>
-          </details>
+            <div className="lead-detail-summary-cards">
+              <article className="lead-detail-summary-card panel">
+                <h3>Acerca de</h3>
+                <p>{aboutText}</p>
+              </article>
+              <article className="lead-detail-summary-card lead-detail-summary-card--experience panel">
+                <h3>Experiencia</h3>
+                {experiences.length > 0 ? (
+                  <ul className="opportunity-summary-experience-list">
+                    {experiences.map((experience, index) => (
+                      <li key={`${experience.role}-${index}`} className="opportunity-summary-experience-item">
+                        <strong>{experience.role}</strong>
+                        <span className="muted-text">
+                          {[experience.organization || null, experience.period || null].filter(Boolean).join(" · ") || "Sin detalle"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="lead-detail-experience-fallback-text muted-text">{experienceFallback}</p>
+                )}
+              </article>
+              <article className="lead-detail-summary-card panel">
+                <h3>Ubicación</h3>
+                <p>{normalizedLocation}</p>
+              </article>
+              <article className="lead-detail-summary-card panel">
+                <h3>Empresa</h3>
+                <p>{normalizedCompany}</p>
+              </article>
+            </div>
+          </div>
 
           <Card className="panel lead-detail-card">
             <h2 className="lead-detail-section-title">Fuentes y enlaces</h2>
@@ -351,6 +348,73 @@ export function JobExaResultDetailPage(): JSX.Element {
         </div>
 
         <aside className="lead-detail-sidebar" aria-label="Acciones">
+          <section className="panel lead-detail-card lead-detail-contact-card">
+            <h2 className="lead-detail-section-title">Contacto</h2>
+            {row?.email || row?.phone || row?.whatsapp || row?.linkedin_url ? (
+              <p className="muted-text lead-detail-card-hint">
+                Información encontrada en la búsqueda. Podrás confirmar o agregar más en la ficha de oportunidad.
+              </p>
+            ) : (
+              <p className="muted-text lead-detail-card-hint">
+                Tras crear la oportunidad podrás registrar correos, teléfonos, WhatsApp y más en la ficha.
+              </p>
+            )}
+            <dl className="lead-contact-dl">
+              {row?.email && (
+                <div className="lead-contact-row">
+                  <dt>Correo</dt>
+                  <dd>
+                    <a href={`mailto:${row.email}`} className="link">
+                      {row.email}
+                    </a>
+                  </dd>
+                </div>
+              )}
+              {row?.phone && (
+                <div className="lead-contact-row">
+                  <dt>Teléfono</dt>
+                  <dd>
+                    <a href={`tel:${row.phone}`} className="link">
+                      {row.phone}
+                    </a>
+                  </dd>
+                </div>
+              )}
+              {row?.whatsapp && (
+                <div className="lead-contact-row">
+                  <dt>WhatsApp</dt>
+                  <dd>
+                    <a href={`https://wa.me/${row.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="link">
+                      {row.whatsapp}
+                    </a>
+                  </dd>
+                </div>
+              )}
+              {row?.linkedin_url && (
+                <div className="lead-contact-row">
+                  <dt>LinkedIn</dt>
+                  <dd>
+                    <a href={row.linkedin_url} target="_blank" rel="noreferrer" className="link">
+                      Perfil
+                      <ExternalLink size={14} aria-hidden />
+                    </a>
+                  </dd>
+                </div>
+              )}
+              {url && (
+                <div className="lead-contact-row">
+                  <dt>Fuente</dt>
+                  <dd>
+                    <a href={url} target="_blank" rel="noreferrer" className="link">
+                      {hostLabel(url)}
+                      <ExternalLink size={14} aria-hidden />
+                    </a>
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </section>
+
           <Card className="panel lead-detail-opportunity-card">
             <div className="lead-detail-opportunity-icon" aria-hidden>
               <Briefcase size={22} />
@@ -390,83 +454,6 @@ export function JobExaResultDetailPage(): JSX.Element {
               </p>
             ) : null}
           </Card>
-
-          <section className="panel lead-detail-card lead-detail-contact-card">
-            <h2 className="lead-detail-section-title">Contacto</h2>
-            {row?.email || row?.phone || row?.whatsapp || row?.linkedin_url ? (
-              <p className="muted-text lead-detail-card-hint">
-                Información encontrada en la búsqueda. Podrás confirmar o agregar más en la ficha de oportunidad.
-              </p>
-            ) : (
-              <p className="muted-text lead-detail-card-hint">
-                Tras crear la oportunidad podrás registrar correos, teléfonos, WhatsApp y más en la ficha.
-              </p>
-            )}
-            <dl className="lead-contact-dl">
-              <div className="lead-contact-row">
-                <dt>Correo</dt>
-                <dd>
-                  {row?.email ? (
-                    <a href={`mailto:${row.email}`} className="link">
-                      {row.email}
-                    </a>
-                  ) : (
-                    <span className="muted-text">—</span>
-                  )}
-                </dd>
-              </div>
-              <div className="lead-contact-row">
-                <dt>Teléfono</dt>
-                <dd>
-                  {row?.phone ? (
-                    <a href={`tel:${row.phone}`} className="link">
-                      {row.phone}
-                    </a>
-                  ) : (
-                    <span className="muted-text">—</span>
-                  )}
-                </dd>
-              </div>
-              <div className="lead-contact-row">
-                <dt>WhatsApp</dt>
-                <dd>
-                  {row?.whatsapp ? (
-                    <a href={`https://wa.me/${row.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="link">
-                      {row.whatsapp}
-                    </a>
-                  ) : (
-                    <span className="muted-text">—</span>
-                  )}
-                </dd>
-              </div>
-              <div className="lead-contact-row">
-                <dt>LinkedIn</dt>
-                <dd>
-                  {row?.linkedin_url ? (
-                    <a href={row.linkedin_url} target="_blank" rel="noreferrer" className="link">
-                      Perfil
-                      <ExternalLink size={14} aria-hidden />
-                    </a>
-                  ) : (
-                    <span className="muted-text">—</span>
-                  )}
-                </dd>
-              </div>
-              <div className="lead-contact-row">
-                <dt>Fuente principal</dt>
-                <dd>
-                  {url ? (
-                    <a href={url} target="_blank" rel="noreferrer">
-                      {hostLabel(url)}
-                      <ExternalLink size={14} aria-hidden />
-                    </a>
-                  ) : (
-                    <span className="muted-text">—</span>
-                  )}
-                </dd>
-              </div>
-            </dl>
-          </section>
         </aside>
       </div>
 

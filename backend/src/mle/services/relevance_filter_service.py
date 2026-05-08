@@ -176,6 +176,17 @@ _SOURCE_URL_PATH_FRAGMENTS = frozenset({
     "/directorio", "/medicos", "/doctors", "/profesionales", "/especialistas",
 })
 
+_NEWS_URL_FRAGMENTS = frozenset({
+    "/noticias/", "/news/", "/blog/", "/articulo/",
+    "/nota/", "/reportaje/", "/prensa/", "/opinion/",
+})
+
+_NEWS_DOMAINS = frozenset({
+    "eldiario.hn", "laprensa.hn", "latribuna.hn", "criterio.hn",
+    "proceso.hn", "tiempo.hn", "hondurastv.hn", "elheraldo.hn",
+    "diarioel.hn", "radiohrn.hn",
+})
+
 _DIRECTORY_TITLE_RE = re.compile(
     r"(?i)"
     r"(¿busca\s+(un|una|al)\s+)"
@@ -200,6 +211,32 @@ _DIRECTORY_TITLE_RE = re.compile(
     r"|(m[eé]dicos?\s+del\s+hospital)"
     r"|(nuestros?\s+especialistas?)"
     r"|(nuestros?\s+m[eé]dicos?)"
+)
+
+_NEWS_TITLE_RE = re.compile(
+    r"(?i)"
+    r"(^por\s+la\s+\w+\s+de\s+)"     # "Por la presión de EE.UU...."
+    r"|(^cómo\s+\w+\s+(puede|logr|evit|mejorar))"  # artículos tipo "Cómo X puede..."
+    r"|(^por\s+qué\s+debes?\s+)"       # "Por qué debes visitar..."
+    r"|(médicos?\s+cubanos?)"           # artículo específico
+    r"|(dejaron\s+.{0,30}a\s+la\s+deriva)"
+    r"|(pacientes?\s+quedaron)"
+    r"|(conoce\s+el\s+mejor\s+)"       # artículo tipo "Conoce el mejor Hospital..."
+    r"|(por\s+qué\s+visit)"            # "por qué debes visitarlo"
+)
+
+_NEWS_PROFILE_TITLE_RE = re.compile(
+    r"(?i)^(dr\.|dra\.|doctor\s|doctora\s)\s*\w[\w\s]+\s*:"
+)
+
+_INSTITUTIONAL_PAGE_TITLE_RE = re.compile(
+    r"(?i)"
+    r"(\s*[-–—|]\s*inicio\s*$)"   # "CERVO - Inicio", "X | Inicio"
+    r"|(^\w[\w\s]+\s*[|]\s*$)"    # "laservision |" — título vacío tras pipe
+    r"|(^hospital\s+\w)"           # "Hospital MEDICASA", "Hospital de Especialidades"
+    r"|(^centro\s+(m[eé]dico|oftalmol[oó]gic|de\s+salud|de\s+ojos|visual|cl[ií]nico))"
+    r"|(^policl[ií]nica\s)"
+    r"|(^cl[ií]nica\s+(?!del?\s+dr|del?\s+dra|dr\.|dra\.))"  # "Clínica Robles" pero NO "Clínica del Dr. X"
 )
 
 
@@ -258,7 +295,15 @@ def _source_page_is_sector_relevant(item: dict[str, Any], user_query: str) -> bo
     if not query_terms:
         return True
 
-    return any(term in blob for term in query_terms)
+    # Exact match OR stem-based match (primeros 8 chars para plurales/variantes españolas)
+    # Ej: "oftalmólogos" (stem: "oftalm") coincida con "oftalmología"
+    for term in query_terms:
+        if term in blob:
+            return True
+        stem = term[:8] if len(term) >= 8 else term
+        if stem in blob:
+            return True
+    return False
 
 
 def _is_directory_source_page(item: dict[str, Any]) -> bool:
@@ -300,6 +345,38 @@ def _heuristic_entity_page_for_people_search(item: dict[str, Any], exa_category:
         return True
 
     return False
+
+
+def _is_news_article(item: dict[str, Any]) -> bool:
+    """True si el item parece un artículo de noticias o blog, no un perfil ni directorio."""
+    url = str(item.get("url") or "").lower()
+    for frag in _NEWS_URL_FRAGMENTS:
+        if frag in url:
+            return True
+    title = str(item.get("title") or "").strip()
+    return bool(_NEWS_TITLE_RE.search(title))
+
+
+def _is_news_professional_profile(item: dict[str, Any]) -> bool:
+    """True si el item es un artículo periodístico cuyo sujeto principal es un profesional nombrado.
+    Ej: 'Dra. Carolina Palma: una trayectoria brillante en la oftalmología - eldiario.hn'
+    Estos artículos son fuentes de exploración, no leads directos."""
+    url = str(item.get("url") or "").lower()
+    title = str(item.get("title") or "").strip()
+    is_news_domain = any(domain in url for domain in _NEWS_DOMAINS)
+    is_professional_profile_title = bool(_NEWS_PROFILE_TITLE_RE.search(title))
+    return is_news_domain and is_professional_profile_title
+
+
+def _is_institutional_clinic_page(item: dict[str, Any]) -> bool:
+    """True si el item parece homepage de hospital, clínica o centro médico (no perfil individual)."""
+    title = str(item.get("title") or "").strip()
+    if not title:
+        return False
+    # No confundir con perfiles individuales: si tiene "Dr." prominente al inicio, es perfil
+    if re.match(r"(?i)^(dr\.|dra\.|doctor\s|doctora\s)", title.strip()):
+        return False
+    return bool(_INSTITUTIONAL_PAGE_TITLE_RE.search(title))
 
 
 def _heuristic_drop_reason(item: dict[str, Any], target_iso: str | None) -> str | None:
@@ -507,6 +584,31 @@ async def filter_exa_raw_results_by_relevance(
             heuristic_drop.add(i)
             reasons[i] = drop_reason
             continue
+        # Check for news articles → discard completely
+        if _is_news_article(item):
+            heuristic_drop.add(i)
+            reasons[i] = "Artículo de noticias o blog — no es un contacto ni directorio."
+            continue
+        # Check for news profile articles about professionals → save as exploration source
+        if _is_news_professional_profile(item) and _source_page_is_sector_relevant(item, user_query):
+            directory_sources.append({
+                "url": str(item.get("url", "")).strip(),
+                "title": str(item.get("title", "")).strip(),
+                "source": "heuristic_news_profile",
+            })
+            heuristic_drop.add(i)
+            reasons[i] = "Artículo de perfil sobre profesional — guardado como fuente para explorar."
+            continue
+        # Check for institutional clinic/hospital homepages → save as exploration source
+        if _is_institutional_clinic_page(item) and _source_page_is_sector_relevant(item, user_query):
+            directory_sources.append({
+                "url": str(item.get("url", "")).strip(),
+                "title": str(item.get("title", "")).strip(),
+                "source": "heuristic_institutional",
+            })
+            heuristic_drop.add(i)
+            reasons[i] = "Homepage institucional (hospital/clínica) — guardada como fuente para explorar."
+            continue
         if _is_directory_source_page(item):
             if _source_page_is_sector_relevant(item, user_query):
                 directory_sources.append({
@@ -597,8 +699,13 @@ async def filter_exa_raw_results_by_relevance(
                     "Para CADA ítem pregúntate: ¿Este resultado ES realmente del sector/rubro/profesión que busca el usuario? "
                     "Si el título menciona OTRA profesión explícitamente (educador, ingeniero, IT, etc.) → MATCH=FALSE AUTOMÁTICAMENTE. "
                     "Si la respuesta no es un SÍ claro → match=false.\n"
-                    "ADEMÁS: para items que son PÁGINAS QUE LISTAN múltiples profesionales (página de equipo, directorio, personal de institución), "
-                    "marca is_source_page=true incluso si match=false. is_source_page=true indica: 'guardar como URL fuente para explorar después'.\n"
+                    "ADEMÁS — reglas para is_source_page:\n"
+                    "  • is_source_page=true: páginas que LISTAN múltiples profesionales (equipo, directorio, personal)\n"
+                    "  • is_source_page=true: homepages de hospitales, clínicas, centros médicos, centros oftalmológicos (aunque no sean directorios)\n"
+                    "  • is_source_page=true: páginas de servicios médicos de una institución (no un perfil individual)\n"
+                    "  • is_source_page=false + match=false: artículos de noticias, blogs, reportajes — NO guardar como fuente, solo descartar\n"
+                    "  • is_source_page=false: perfiles de médicos individuales\n"
+                    "  is_source_page=true indica: 'guardar esta URL para explorarla después en busca de más contactos'.\n"
                     "Devuelve SOLO JSON con la forma exacta:\n"
                     '{"verdicts":[{"index":0,"match":true,"confidence":8,"is_source_page":false,"reason_es":"breve"}]}\n'
                     "- confidence (entero 0-10): qué tan seguro estás de que el resultado ES del sector buscado. "
@@ -641,14 +748,17 @@ async def filter_exa_raw_results_by_relevance(
         if is_source:
             item = raw_results[idx] if idx < len(raw_results) else {}
             if isinstance(item, dict):
-                directory_sources.append({
-                    "url": str(item.get("url", "")).strip(),
-                    "title": str(item.get("title", "")).strip(),
-                    "source": "llm",
-                })
-                # Marcar como descartado de leads (pero guardado como fuente)
                 match_by_index[idx] = False
-                reasons[idx] = "Página que lista múltiples profesionales — guardada como fuente para explorar."
+                # Apply sector relevance check before saving as source (evita "Muebles Para Hospitales", etc.)
+                if _source_page_is_sector_relevant(item, user_query):
+                    directory_sources.append({
+                        "url": str(item.get("url", "")).strip(),
+                        "title": str(item.get("title", "")).strip(),
+                        "source": "llm",
+                    })
+                    reasons[idx] = "Página que lista múltiples profesionales — guardada como fuente para explorar."
+                else:
+                    reasons[idx] = "Clasificada como fuente por LLM pero no relevante al sector buscado — descartada."
 
     kept: list[dict[str, Any]] = []
     discarded_meta: list[dict[str, Any]] = []

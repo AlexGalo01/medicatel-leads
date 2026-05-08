@@ -7,6 +7,7 @@ from typing import Any
 
 from langsmith import traceable
 
+from mle.clients.brave_client import BraveSearchClient
 from mle.clients.exa_client import ExaClient, exa_contents_highlights_config, finalize_exa_search_payload
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.core.config import effective_exa_search_timeout_seconds, get_settings
@@ -238,6 +239,17 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
                 continue
             valid_payloads.append((slot_idx, num_for_call, payload))
 
+        # Brave Search: corre en paralelo con EXA como fuente complementaria
+        brave_batch_coro = None
+        if settings.brave_search_enabled and settings.brave_search_api_key:
+            brave_client = BraveSearchClient(
+                api_key=settings.brave_search_api_key,
+                timeout_seconds=settings.brave_search_timeout_seconds,
+            )
+            brave_country = str((search_config or {}).get("country_iso2") or "").strip().upper() or None
+            brave_query = queries[0] if queries else state.query_text
+            brave_batch_coro = brave_client.web_search(brave_query, country=brave_country, count=20, pages=1)
+
         # Ejecutar todos los slots en paralelo (con semáforo para limitar concurrencia Exa)
         slot_coroutines = [
             _run_slot_with_prefetch(
@@ -246,7 +258,12 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             )
             for slot_idx, num_for_call, payload in valid_payloads
         ]
-        slot_outcomes = await asyncio.gather(*slot_coroutines, return_exceptions=True)
+
+        # Incluir Brave en el mismo gather para paralelismo
+        all_coros = slot_coroutines + ([brave_batch_coro] if brave_batch_coro else [])
+        all_outcomes = await asyncio.gather(*all_coros, return_exceptions=True)
+        slot_outcomes = all_outcomes[:len(slot_coroutines)]
+        brave_outcome = all_outcomes[len(slot_coroutines)] if brave_batch_coro else None
 
         # Procesar resultados
         for outcome_idx, (slot_idx, num_for_call, payload) in enumerate(valid_payloads):
@@ -271,12 +288,12 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             request_ids.append(str(search_response.get("requestId", "")))
             last_search_type = str(search_response.get("searchType", search_type))
 
-        exa_results = _merge_exa_results(batches)
+        # Agregar resultados de Brave (si los hay) — _merge_exa_results deduplica por URL
+        if brave_outcome and not isinstance(brave_outcome, Exception) and isinstance(brave_outcome, list):
+            logger.info("Brave Search: %d resultados pre-dedup", len(brave_outcome))
+            batches.append(brave_outcome)
 
-        # Búsqueda complementaria keyword: DESHABILITADA (MVP)
-        # TODO: reactivar cuando sea necesario con: additional_queries[:4] en planner_node
-        # Brave Web Search: DESHABILITADA (MVP)
-        # TODO: reactivar cuando sea necesario
+        exa_results = _merge_exa_results(batches)
 
         logger.info(
             "Exa search node completado job_id=%s resultados=%s llamadas=%s detalle_batches=%s",
