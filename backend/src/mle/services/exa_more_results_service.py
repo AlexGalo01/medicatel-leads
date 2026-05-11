@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from mle.clients.brave_client import BraveSearchClient
 from mle.clients.exa_client import ExaClient
 from mle.clients.llm_factory import get_llm_client
 from mle.core.config import effective_exa_search_timeout_seconds, get_settings
@@ -116,38 +118,62 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
         if isinstance(rel_c, dict) and rel_c:
             minimal_planner["relevance_criteria"] = rel_c
         payload = _build_search_payload_for_query(minimal_planner, query, n)
-        logger.info("Llamando a EXA: job_id=%s, query=%s", job_id, query)
+
+        # --- Ejecutar Exa + Brave en paralelo ---
         exa = ExaClient(
             api_key=settings.exa_api_key,
             timeout_seconds=effective_exa_search_timeout_seconds(settings),
         )
-        try:
-            response = await exa.search(payload)
-            logger.info("EXA exitoso: job_id=%s", job_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Exa cargar-mas fallo job_id=%s: %s", job_id, exc)
-            return {"ok": False, "error": f"Exa: {exc!s}"}
+        exa_coro = exa.search(payload)
 
-        batch = _extract_results(response)
-        logger.info("Extrayendo resultados EXA: job_id=%s, batch_size=%s", job_id, len(batch))
-
-        # Log detallado de TODAS las respuestas crudas de EXA
-        logger.info("=" * 80)
-        logger.info("EXA RAW RESULTS — query=%s", query)
-        logger.info("=" * 80)
-        for idx, item in enumerate(batch, 1):
-            url = str(item.get("url", "")).strip()
-            title = str(item.get("title", "")).strip()
-            highlights = item.get("highlights", [])
-            snippet = " ".join(highlights[:2]) if highlights else "(sin snippet)"
-            logger.info(
-                "[%d] URL: %s | TITLE: %s | SNIPPET: %s",
-                idx,
-                url,
-                title,
-                snippet[:150],
+        brave_coros: list[Any] = []
+        if settings.brave_search_enabled and settings.brave_search_api_key:
+            brave_client = BraveSearchClient(
+                api_key=settings.brave_search_api_key,
+                timeout_seconds=settings.brave_search_timeout_seconds,
             )
-        logger.info("=" * 80)
+            brave_country = iso if len(iso) == 2 else None
+            brave_coros.append(brave_client.web_search(main_q, country=brave_country, count=20, pages=3))
+            if exa_cat == "people":
+                brave_coros.append(brave_client.web_search(f"site:linkedin.com/in {main_q}", country=brave_country, count=20, pages=2))
+
+        logger.info("Llamando a EXA + %d Brave queries: job_id=%s", len(brave_coros), job_id)
+        all_outcomes = await asyncio.gather(exa_coro, *brave_coros, return_exceptions=True)
+        exa_outcome = all_outcomes[0]
+        brave_outcomes = all_outcomes[1:]
+
+        # Procesar Exa
+        exa_failed = False
+        batch: list[dict[str, Any]] = []
+        if isinstance(exa_outcome, Exception):
+            logger.warning("Exa cargar-mas fallo job_id=%s: %s", job_id, exa_outcome)
+            exa_failed = True
+        else:
+            batch = _extract_results(exa_outcome)
+            logger.info("EXA exitoso: job_id=%s, resultados=%s", job_id, len(batch))
+
+        # Procesar Brave
+        for bi, brave_outcome in enumerate(brave_outcomes):
+            if isinstance(brave_outcome, Exception):
+                logger.warning("Brave cargar-mas query %s fallo job_id=%s: %s", bi, job_id, brave_outcome)
+            elif isinstance(brave_outcome, list):
+                logger.info("Brave cargar-mas query %s: %d resultados job_id=%s", bi, len(brave_outcome), job_id)
+                batch.extend(brave_outcome)
+
+        if not batch:
+            error_detail = f"Exa: {exa_outcome!s}" if exa_failed else "Sin resultados de ninguna fuente"
+            return {"ok": False, "error": error_detail}
+
+        # Warning si Exa falló pero Brave trajo resultados
+        if exa_failed and batch:
+            existing_warnings = list(meta.get("warnings", []))
+            existing_warnings.append(
+                "La fuente principal (Exa) no está disponible. "
+                "Resultados adicionales provienen de Brave Search."
+            )
+            meta["warnings"] = existing_warnings
+
+        logger.info("Extrayendo resultados combinados: job_id=%s, batch_size=%s", job_id, len(batch))
 
         logger.info(
             "Exa cargar-mas job_id=%s pedidos=%s recibidos=%s urls_ya_vistas=%s",

@@ -33,18 +33,6 @@ class LeadsRepository:
         await self.session.refresh(lead)
         return lead
 
-    async def update_score(self, lead_id: UUID, score: float, score_reasoning: str) -> Lead | None:
-        lead = await self.session.get(Lead, lead_id)
-        if lead is None:
-            return None
-
-        lead.score = score
-        lead.score_reasoning = score_reasoning
-        lead.updated_at = datetime.now(timezone.utc)
-        await self.session.commit()
-        await self.session.refresh(lead)
-        return lead
-
     def _contact_filter_clause(self, contact_filter: str | None) -> Any | None:
         if not contact_filter or contact_filter.strip().lower() in ("", "all"):
             return None

@@ -240,7 +240,7 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             valid_payloads.append((slot_idx, num_for_call, payload))
 
         # Brave Search: corre en paralelo con EXA como fuente complementaria
-        brave_batch_coro = None
+        brave_coros: list[Any] = []
         if settings.brave_search_enabled and settings.brave_search_api_key:
             brave_client = BraveSearchClient(
                 api_key=settings.brave_search_api_key,
@@ -248,7 +248,13 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             )
             brave_country = str((search_config or {}).get("country_iso2") or "").strip().upper() or None
             brave_query = queries[0] if queries else state.query_text
-            brave_batch_coro = brave_client.web_search(brave_query, country=brave_country, count=20, pages=1)
+            # Query principal — más páginas para asegurar cobertura mínima
+            brave_coros.append(brave_client.web_search(brave_query, country=brave_country, count=20, pages=3))
+            # Query adicional para perfiles individuales cuando la búsqueda es de personas
+            exa_category = search_config.get("exa_category")
+            if exa_category == "people":
+                linkedin_query = f"site:linkedin.com/in {state.query_text}"
+                brave_coros.append(brave_client.web_search(linkedin_query, country=brave_country, count=20, pages=2))
 
         # Ejecutar todos los slots en paralelo (con semáforo para limitar concurrencia Exa)
         slot_coroutines = [
@@ -260,12 +266,13 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
         ]
 
         # Incluir Brave en el mismo gather para paralelismo
-        all_coros = slot_coroutines + ([brave_batch_coro] if brave_batch_coro else [])
+        all_coros = slot_coroutines + brave_coros
         all_outcomes = await asyncio.gather(*all_coros, return_exceptions=True)
         slot_outcomes = all_outcomes[:len(slot_coroutines)]
-        brave_outcome = all_outcomes[len(slot_coroutines)] if brave_batch_coro else None
+        brave_outcomes = all_outcomes[len(slot_coroutines):]
 
-        # Procesar resultados
+        # Procesar resultados Exa
+        exa_all_failed = True
         for outcome_idx, (slot_idx, num_for_call, payload) in enumerate(valid_payloads):
             outcome = slot_outcomes[outcome_idx]
             search_type = str(payload.get("type", "auto"))
@@ -282,6 +289,7 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
                 batch_stats.append({"pedidos": num_for_call, "recibidos": 0})
                 continue
 
+            exa_all_failed = False
             batch_results, search_response = outcome
             batches.append(batch_results)
             batch_stats.append({"pedidos": num_for_call, "recibidos": len(batch_results)})
@@ -289,11 +297,20 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             last_search_type = str(search_response.get("searchType", search_type))
 
         # Agregar resultados de Brave (si los hay) — _merge_exa_results deduplica por URL
-        if brave_outcome and not isinstance(brave_outcome, Exception) and isinstance(brave_outcome, list):
-            logger.info("Brave Search: %d resultados pre-dedup", len(brave_outcome))
-            batches.append(brave_outcome)
+        for brave_outcome in brave_outcomes:
+            if brave_outcome and not isinstance(brave_outcome, Exception) and isinstance(brave_outcome, list):
+                logger.info("Brave Search: %d resultados pre-dedup", len(brave_outcome))
+                batches.append(brave_outcome)
 
         exa_results = _merge_exa_results(batches)
+
+        # Construir warnings para el frontend
+        warnings: list[str] = list(state.langsmith_metadata.get("warnings", []))
+        if exa_all_failed and valid_payloads:
+            warnings.append(
+                "La fuente principal de búsqueda (Exa) no está disponible. "
+                "Los resultados provienen únicamente de Brave Search y pueden ser limitados."
+            )
 
         logger.info(
             "Exa search node completado job_id=%s resultados=%s llamadas=%s detalle_batches=%s",
@@ -310,6 +327,7 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             "exa_raw_results": exa_results,
             "langsmith_metadata": {
                 **state.langsmith_metadata,
+                "warnings": warnings,
                 "exa_payload": {
                     "query_count": len(batches),
                     "per_query_numResults": per_slot,

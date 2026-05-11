@@ -41,6 +41,7 @@ from mle.api.schemas import (
     OpportunityOwnerSnippet,
     OpportunityResponse,
     OpportunityUpdateRequest,
+    PreviewContactPatch,
     ProfileInterpretItemResponse,
     ProfileInterpretRequest,
     ProfileInterpretResponse,
@@ -523,6 +524,9 @@ async def get_search_job_status(
         if isinstance(raw_cq_status, str) and raw_cq_status.strip():
             clarifying_display = raw_cq_status.strip()
 
+    warnings_raw = job.metadata_json.get("warnings")
+    warnings: list[str] = warnings_raw if isinstance(warnings_raw, list) else []
+
     return SearchJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
@@ -541,6 +545,7 @@ async def get_search_job_status(
         awaiting_clarification=awaiting_clarification,
         clarifying_question=clarifying_display,
         suggested_source_urls=suggested_source_urls,
+        warnings=warnings,
     )
 
 
@@ -990,6 +995,308 @@ async def export_preview_xlsx_file(
     )
 
 
+@protected_router.get("/jobs/{job_id}/preview/{index}/export/xlsx")
+async def export_preview_result_xlsx(
+    job_id: UUID,
+    index: int,
+    _u: User = Depends(require_permission("use_search")),
+) -> FileResponse:
+    """Exportar un resultado preview individual a Excel."""
+    async with async_session_factory() as session:
+        jobs_repo = JobsRepository(session)
+        job = await jobs_repo.get_by_id(job_id)
+        if not job:
+            _raise_not_found("Job")
+
+        preview = job.metadata_json.get("exa_results_preview", []) if isinstance(job.metadata_json, dict) else []
+        row = None
+        for item in preview:
+            if isinstance(item, dict) and item.get("index") == index:
+                row = item
+                break
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Preview item no encontrado")
+
+        # Extract query text from metadata for filename
+        query_text = None
+        if isinstance(job.metadata_json, dict):
+            query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or "").strip() or None
+
+    settings = get_settings()
+    export_path_str = export_preview_to_xlsx(
+        job_id=job_id,
+        rows=[row],
+        export_dir_path=settings.export_dir,
+        query_text=query_text,
+    )
+    export_path = Path(export_path_str)
+
+    return FileResponse(
+        path=str(export_path),
+        filename=export_path.name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@protected_router.get("/opportunities/{opportunity_id}/export/xlsx")
+async def export_opportunity_xlsx(
+    opportunity_id: UUID,
+    _u: User = Depends(require_permission("manage_opportunities")),
+) -> FileResponse:
+    """Exportar una oportunidad individual a Excel (sin markdown)."""
+    async with async_session_factory() as session:
+        repo = OpportunitiesRepository(session)
+        opp = await repo.get_by_id(opportunity_id)
+        if not opp:
+            _raise_not_found("Oportunidad")
+
+        opp_data = {
+            "title": opp.title,
+            "specialty": opp.specialty,
+            "city": opp.city,
+            "stage": opp.stage,
+            "source_url": opp.source_url,
+            "snippet": opp.snippet,
+            "response_outcome": opp.response_outcome,
+            "contact_type": opp.contact_type,
+            "contacts": [
+                {
+                    "kind": c.kind,
+                    "value": c.value,
+                    "note": c.note,
+                }
+                for c in opp.contacts
+            ],
+            "profile_overrides": opp.profile_overrides if isinstance(opp.profile_overrides, dict) else {},
+            "created_at": opp.created_at.isoformat() if opp.created_at else None,
+        }
+
+    settings = get_settings()
+    # Build filename from title and creation date
+    title = str(opp.title).strip()[:50] if opp.title else "Oportunidad"
+    if opp.created_at:
+        date_str = opp.created_at.strftime("%d %m %Y")
+        filename = f"{title} {date_str}.xlsx"
+    else:
+        filename = f"{title}.xlsx"
+
+    export_path = settings.export_dir / filename
+
+    # Use modified export_opportunity_to_xlsx that accepts custom filename
+    from mle.services.export_service import _sanitize_filename
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    export_path.mkdir(parents=True, exist_ok=True)
+    filename_safe = _sanitize_filename(filename)
+    export_file = export_path.parent / filename_safe
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Oportunidad"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
+
+    row = 1
+    fields = [
+        ("Título", title),
+        ("Especialidad", opp_data.get("specialty", "")),
+        ("Ciudad", opp_data.get("city", "")),
+        ("Etapa", opp_data.get("stage", "")),
+        ("URL Fuente", opp_data.get("source_url", "")),
+        ("Descripción", opp_data.get("snippet", "")),
+        ("Resultado Respuesta", opp_data.get("response_outcome", "")),
+        ("Contacto Tipo", opp_data.get("contact_type", "")),
+    ]
+
+    for label, value in fields:
+        ws.cell(row=row, column=1, value=label).font = Font(bold=True)
+        ws.cell(row=row, column=2, value=value or "")
+        row += 1
+
+    row += 1
+    contacts_header = ws.cell(row=row, column=1, value="Contactos")
+    contacts_header.font = header_font
+    contacts_header.fill = header_fill
+    row += 1
+
+    contacts = opp_data.get("contacts", [])
+    if contacts:
+        ws.cell(row=row, column=1, value="Tipo").font = Font(bold=True)
+        ws.cell(row=row, column=2, value="Valor").font = Font(bold=True)
+        ws.cell(row=row, column=3, value="Nota").font = Font(bold=True)
+        row += 1
+
+        for contact in contacts:
+            ws.cell(row=row, column=1, value=contact.get("kind", ""))
+            ws.cell(row=row, column=2, value=contact.get("value", ""))
+            ws.cell(row=row, column=3, value=contact.get("note", ""))
+            row += 1
+
+    profile = opp_data.get("profile_overrides", {})
+    if profile:
+        row += 1
+        profile_header = ws.cell(row=row, column=1, value="Perfil")
+        profile_header.font = header_font
+        profile_header.fill = header_fill
+        row += 1
+
+        about = profile.get("about")
+        if about:
+            ws.cell(row=row, column=1, value="Acerca de").font = Font(bold=True)
+            from mle.services.export_service import _strip_markdown
+            ws.cell(row=row, column=2, value=_strip_markdown(about))
+            row += 1
+
+        location = profile.get("location")
+        if location:
+            ws.cell(row=row, column=1, value="Ubicación").font = Font(bold=True)
+            ws.cell(row=row, column=2, value=location)
+            row += 1
+
+        experiences = profile.get("experiences", [])
+        if experiences:
+            ws.cell(row=row, column=1, value="Experiencias").font = Font(bold=True)
+            row += 1
+            for exp in experiences:
+                role = exp.get("role", "")
+                org = exp.get("organization", "")
+                period = exp.get("period", "")
+                exp_text = f"{role}"
+                if org:
+                    exp_text += f" - {org}"
+                if period:
+                    exp_text += f" ({period})"
+                ws.cell(row=row, column=2, value=exp_text)
+                row += 1
+
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 60
+    ws.column_dimensions["C"].width = 40
+
+    wb.save(export_file)
+
+    return FileResponse(
+        path=str(export_file),
+        filename=filename_safe,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@protected_router.get("/directories/{directory_id}/entries/{entry_id}/export/xlsx")
+async def export_directory_entry_xlsx(
+    directory_id: UUID,
+    entry_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> FileResponse:
+    """Exportar una entrada de directorio a Excel."""
+    async with async_session_factory() as session:
+        entries_repo = DirectoryEntriesRepository(session)
+        entry = await entries_repo.get_by_id(entry_id)
+        if not entry:
+            _raise_not_found("DirectoryEntry")
+
+        entry_data = {
+            "display_title": entry.display_title,
+            "entity_type": entry.entity_type,
+            "city": entry.city,
+            "country": entry.country,
+            "primary_url": str(entry.primary_url) if entry.primary_url else "",
+            "snippet": entry.snippet,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        }
+
+    settings = get_settings()
+
+    # Build filename from title and creation date
+    title = str(entry.display_title).strip()[:50] if entry.display_title else "Entrada"
+    if entry.created_at:
+        date_str = entry.created_at.strftime("%d %m %Y")
+        filename = f"{title} {date_str}.xlsx"
+    else:
+        filename = f"{title}.xlsx"
+
+    from mle.services.export_service import _sanitize_filename, _strip_markdown
+    import openpyxl
+    from openpyxl.styles import Font
+
+    export_dir = Path(settings.export_dir)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    filename_safe = _sanitize_filename(filename)
+    export_file = export_dir / filename_safe
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Entrada"
+
+    row = 1
+    fields = [
+        ("Título", entry_data.get("display_title", "")),
+        ("Tipo Entidad", entry_data.get("entity_type", "")),
+        ("Ciudad", entry_data.get("city", "")),
+        ("País", entry_data.get("country", "")),
+        ("URL Principal", entry_data.get("primary_url", "")),
+        ("Descripción", _strip_markdown(entry_data.get("snippet", ""))),
+    ]
+
+    for label, value in fields:
+        ws.cell(row=row, column=1, value=label).font = Font(bold=True)
+        ws.cell(row=row, column=2, value=value or "")
+        row += 1
+
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 60
+
+    wb.save(export_file)
+
+    return FileResponse(
+        path=str(export_file),
+        filename=filename_safe,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@protected_router.patch("/jobs/{job_id}/preview/{index}/contact")
+async def patch_preview_contact(
+    job_id: UUID,
+    index: int,
+    payload: PreviewContactPatch,
+    _u: User = Depends(require_permission("use_search")),
+) -> dict[str, Any]:
+    """Guardar datos de contacto validados en el preview item."""
+    async with async_session_factory() as session:
+        jobs_repo = JobsRepository(session)
+        job = await jobs_repo.get_by_id(job_id)
+        if not job:
+            _raise_not_found("Job")
+
+        meta = dict(job.metadata_json or {})
+        preview = list(meta.get("exa_results_preview", []))
+
+        updated = False
+        for item in preview:
+            if isinstance(item, dict) and item.get("index") == index:
+                if payload.email is not None:
+                    item["email"] = payload.email
+                if payload.phone is not None:
+                    item["phone"] = payload.phone
+                if payload.whatsapp is not None:
+                    item["whatsapp"] = payload.whatsapp
+                if payload.source_urls is not None:
+                    item["saved_source_urls"] = [str(u).strip() for u in payload.source_urls if str(u).strip()]
+                updated = True
+                break
+
+        if not updated:
+            raise HTTPException(status_code=404, detail="Preview item no encontrado")
+
+        meta["exa_results_preview"] = preview
+        await jobs_repo.update_status(job_id, job.status, job.progress, metadata_json=meta)
+        return {"ok": True}
+
+
 @protected_router.get(
     "/opportunities/by-preview",
     response_model=OpportunityResponse,
@@ -1022,7 +1329,7 @@ async def create_opportunity_from_preview(
         repo = OpportunitiesRepository(session)
         try:
             opp, created = await repo.create_or_get_from_preview(
-                job, payload.exa_preview_index, owner_user_id=current.id
+                job, payload.exa_preview_index, owner_user_id=current.id, contact_overrides=payload.contact_overrides
             )
         except ValueError as exc:
             if str(exc) == "preview_row_not_found":

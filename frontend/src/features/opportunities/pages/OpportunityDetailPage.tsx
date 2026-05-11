@@ -6,6 +6,7 @@ import {
   Check,
   ChevronRight,
   ClipboardList,
+  Download,
   ExternalLink,
   FileText,
   ListFilter,
@@ -21,6 +22,7 @@ import {
 
 import {
   deleteOpportunity,
+  downloadOpportunityXlsx,
   enrichOpportunity,
   getSearchJobStatus,
   getOpportunity,
@@ -141,6 +143,7 @@ export function OpportunityDetailPage(): JSX.Element {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [enrichModalOpen, setEnrichModalOpen] = useState(false);
   const [enrichStageIdx, setEnrichStageIdx] = useState(0);
+  const [isExporting, setIsExporting] = useState(false);
   const bitacoraScrollRef = useRef<HTMLDivElement>(null);
   const bitacoraTextareaRef = useRef<HTMLTextAreaElement>(null);
   const aboutTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -671,6 +674,23 @@ export function OpportunityDetailPage(): JSX.Element {
               }}
             >
               <Search size={16} aria-hidden /> Enriquecer
+            </Button>
+            <Button
+              type="button"
+              className="workspace-tool-btn"
+              onClick={async () => {
+                setIsExporting(true);
+                try {
+                  await downloadOpportunityXlsx(opportunityId);
+                } catch (err) {
+                  console.error("Export failed:", err);
+                } finally {
+                  setIsExporting(false);
+                }
+              }}
+              disabled={isExporting}
+            >
+              <Download size={16} aria-hidden /> Exportar
             </Button>
             <Button type="button" className="workspace-tool-btn" onClick={() => addContactRow()}>
               <Plus size={16} aria-hidden /> Añadir

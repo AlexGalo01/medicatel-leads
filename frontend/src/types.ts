@@ -92,17 +92,6 @@ export interface SearchJobsListResponse {
   total_pages: number;
 }
 
-export interface ProfileInterpretItem {
-  source_text: string;
-  normalized_name?: string | null;
-  normalized_company?: string | null;
-  normalized_specialty?: string | null;
-}
-
-export interface ProfileInterpretResponse {
-  items: ProfileInterpretItem[];
-}
-
 export interface ProfileSummaryRequest {
   title: string;
   specialty?: string | null;
@@ -298,6 +287,7 @@ export interface OpportunityCreateFromPreviewRequest {
   job_id: string;
   exa_preview_index: number;
   step_id?: string;
+  contact_overrides?: Record<string, string>;
 }
 
 export interface SearchJobStatusResponse {
@@ -327,6 +317,7 @@ export interface SearchJobStatusResponse {
   awaiting_clarification?: boolean;
   clarifying_question?: string | null;
   suggested_source_urls?: Array<{ url: string; title: string }>;
+  warnings?: string[];
 }
 
 export interface LeadItem {
@@ -382,11 +373,6 @@ export interface LeadsExportFilters {
   min_score?: number;
   q?: string;
   contact_filter?: string;
-}
-
-export interface LeadsExportResponse {
-  download_path: string;
-  generated_at: string;
 }
 
 export interface DirectoryEntryItem {

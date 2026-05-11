@@ -14,7 +14,6 @@ import type {
   LeadCrmUpdateRequest,
   LeadDetailResponse,
   LeadsExportFilters,
-  LeadsExportResponse,
   LeadsListResponse,
   LoginResponse,
   RegisterRequest,
@@ -23,7 +22,6 @@ import type {
   OpportunityProfileOverrides,
   OpportunityResponse,
   OpportunityTerminatedOutcome,
-  ProfileInterpretResponse,
   ProfileSummaryRequest,
   ProfileSummaryResponse,
   SearchJobCreateRequest,
@@ -199,15 +197,6 @@ export async function loadMoreExaResults(jobId: string, numResults = 40): Promis
   return parseJsonResponse<ExaMoreResultsResponse>(response);
 }
 
-export async function interpretProfileTexts(texts: string[]): Promise<ProfileInterpretResponse> {
-  const response = await apiFetch(`${buildApiUrl("/profiles/interpret")}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ texts }),
-  });
-  return parseJsonResponse<ProfileInterpretResponse>(response);
-}
-
 export async function summarizeProfile(
   payload: ProfileSummaryRequest,
   options?: { signal?: AbortSignal },
@@ -291,29 +280,6 @@ export async function updateLeadCrm(
   return parseJsonResponse<LeadDetailResponse>(response);
 }
 
-export async function exportLeads(jobId: string, filters: LeadsExportFilters = {}): Promise<LeadsExportResponse> {
-  const payloadFilters: Record<string, string | number> = {};
-  if (typeof filters.min_score === "number") {
-    payloadFilters.min_score = filters.min_score;
-  }
-  if (filters.q?.trim()) {
-    payloadFilters.q = filters.q.trim();
-  }
-  if (filters.contact_filter?.trim() && filters.contact_filter.trim() !== "all") {
-    payloadFilters.contact_filter = filters.contact_filter.trim();
-  }
-  const response = await apiFetch(`${buildApiUrl("/leads/export")}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      job_id: jobId,
-      format: "csv",
-      filters: payloadFilters,
-    }),
-  });
-  return parseJsonResponse<LeadsExportResponse>(response);
-}
-
 export async function downloadLeadsCsvFile(jobId: string, filters: LeadsExportFilters = {}): Promise<void> {
   const queryParams = new URLSearchParams({ job_id: jobId });
   if (typeof filters.min_score === "number") {
@@ -388,6 +354,42 @@ export async function downloadPreviewXlsxFile(jobId: string): Promise<void> {
   URL.revokeObjectURL(objectUrl);
 }
 
+export async function downloadPreviewResultXlsx(jobId: string, resultIndex: number): Promise<void> {
+  const response = await apiFetch(`${buildApiUrl(`/jobs/${jobId}/preview/${resultIndex}/export/xlsx`)}`);
+  if (!response.ok) {
+    const bodyText = await response.text();
+    throw new Error(`Error al descargar Excel (${response.status}): ${bodyText || "Sin detalle"}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = `resultado_${resultIndex}.xlsx`;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export async function downloadOpportunityXlsx(opportunityId: string): Promise<void> {
+  const response = await apiFetch(`${buildApiUrl(`/opportunities/${opportunityId}/export/xlsx`)}`);
+  if (!response.ok) {
+    const bodyText = await response.text();
+    throw new Error(`Error al descargar Excel (${response.status}): ${bodyText || "Sin detalle"}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = `oportunidad_${opportunityId}.xlsx`;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export async function getOpportunityByPreview(
   jobId: string,
   exaPreviewIndex: number,
@@ -412,9 +414,26 @@ export async function createOpportunityFromPreview(
     body: JSON.stringify({
       job_id: payload.job_id,
       exa_preview_index: payload.exa_preview_index,
+      step_id: payload.step_id,
+      contact_overrides: payload.contact_overrides,
     }),
   });
   return parseJsonResponse<OpportunityResponse>(response);
+}
+
+export async function savePreviewContact(
+  jobId: string,
+  index: number,
+  data: { email?: string; phone?: string; whatsapp?: string; source_urls?: string[] },
+): Promise<void> {
+  const response = await apiFetch(`${buildApiUrl(`/jobs/${jobId}/preview/${index}/contact`)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    throw new Error("Error al guardar datos de contacto");
+  }
 }
 
 export async function listOpportunities(params: {

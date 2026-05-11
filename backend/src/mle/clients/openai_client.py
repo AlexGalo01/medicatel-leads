@@ -89,6 +89,74 @@ class OpenAIClient:
             raise last_error
         raise ValueError("No se pudo obtener respuesta válida de OpenAI.")
 
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        max_iterations: int = 5,
+        tool_executor: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Loop de tool calling: el LLM decide qué tools invocar hasta que deja de hacerlo o se agota el límite.
+
+        Args:
+            messages: Historial de mensajes (system + user).
+            tools: Definición de tools en formato OpenAI.
+            max_iterations: Máximo de rondas de tool calls.
+            tool_executor: Callable async (name, args) -> str que ejecuta el tool y retorna resultado.
+
+        Returns:
+            Lista de mensajes completa (incluyendo tool calls y responses).
+        """
+        from openai import AsyncOpenAI
+        import httpx
+
+        msgs = list(messages)
+
+        for _iteration in range(max_iterations):
+            async with AsyncOpenAI(
+                api_key=self.api_key,
+                timeout=httpx.Timeout(max(self.timeout_seconds, 60.0)),
+            ) as client:
+                response = await client.chat.completions.create(
+                    model=self.model_name,
+                    messages=msgs,
+                    tools=tools,
+                )
+
+            choice = response.choices[0]
+
+            # Si no hay tool calls, el LLM terminó
+            if not choice.message.tool_calls:
+                if choice.message.content:
+                    msgs.append({"role": "assistant", "content": choice.message.content})
+                break
+
+            # Agregar mensaje del asistente con tool calls
+            msgs.append(choice.message.model_dump())
+
+            # Ejecutar cada tool call
+            for tool_call in choice.message.tool_calls:
+                fn_name = tool_call.function.name
+                fn_args = json.loads(tool_call.function.arguments)
+
+                if tool_executor:
+                    result = await tool_executor(fn_name, fn_args)
+                else:
+                    result = json.dumps({"error": f"No executor for tool {fn_name}"})
+
+                msgs.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": result if isinstance(result, str) else json.dumps(result, ensure_ascii=False),
+                })
+
+                # Si el tool es finalize_search, salir del loop
+                if fn_name == "finalize_search":
+                    return msgs
+
+        return msgs
+
     @traceable(
         name="gemini_score_lead",
         run_type="llm",

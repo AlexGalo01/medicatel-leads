@@ -138,7 +138,7 @@ class OpportunitiesRepository:
         opp.updated_at = datetime.now(timezone.utc)
 
     async def create_or_get_from_preview(
-        self, job: SearchJob, exa_preview_index: int, owner_user_id: UUID | None = None
+        self, job: SearchJob, exa_preview_index: int, owner_user_id: UUID | None = None, contact_overrides: dict[str, str] | None = None
     ) -> tuple[Opportunity, bool]:
         existing = await self.get_by_job_and_preview_index(job.id, exa_preview_index)
         if existing is not None:
@@ -175,6 +175,26 @@ class OpportunitiesRepository:
                     "is_primary": len(contacts) == 0,
                 }
             )
+
+        # Apply contact overrides (enriched data from frontend)
+        if contact_overrides:
+            for kind, value in contact_overrides.items():
+                if kind in ("email", "whatsapp", "phone", "linkedin"):
+                    value_str = str(value).strip()[:500]
+                    if value_str:
+                        # Remove existing contact of this kind
+                        contacts = [c for c in contacts if c["kind"] != kind]
+                        # Add new contact with override value
+                        contacts.append(
+                            {
+                                "id": f"override-{kind}-{len(contacts)}",
+                                "kind": kind,
+                                "value": value_str,
+                                "note": "Enriquecido",
+                                "role": None,
+                                "is_primary": len(contacts) == 0,
+                            }
+                        )
 
         now = datetime.now(timezone.utc)
         initial_note = {

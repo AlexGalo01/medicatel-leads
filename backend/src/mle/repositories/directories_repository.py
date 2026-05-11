@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
@@ -197,14 +196,6 @@ class DirectoriesRepository:
         return True
 
     # ---------- Items (Opportunities) ----------
-
-    async def list_items(self, directory_id: UUID) -> list[Opportunity]:
-        result = await self.session.execute(
-            select(Opportunity)
-            .where(Opportunity.directory_id == directory_id)
-            .order_by(Opportunity.updated_at.desc())
-        )
-        return list(result.scalars().all())
 
     async def count_items_by_directory(self, directory_id: UUID) -> int:
         result = await self.session.execute(

@@ -36,8 +36,8 @@
   --workspace-row-radius: 8px;
 
   /* Typography */
-  --font-display: "General Sans", "DM Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-  --font-sans: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: "Inter", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
   --font-weight-regular: 400;
   --font-weight-medium: 500;
@@ -1924,6 +1924,26 @@ textarea {
   grid-auto-flow: row;
 }
 
+.lead-detail-summary-cards--loading .lead-detail-summary-card {
+  pointer-events: none;
+  opacity: 0.6;
+  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+  background-size: 200% 100%;
+  animation: skeleton-load 1.5s infinite;
+  color: transparent;
+}
+
+.lead-detail-summary-cards--loading .lead-detail-summary-card h3,
+.lead-detail-summary-cards--loading .lead-detail-summary-card p,
+.lead-detail-summary-cards--loading .lead-detail-summary-card strong {
+  color: transparent;
+}
+
+@keyframes skeleton-load {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 .lead-detail-summary-actions {
   display: flex;
   justify-content: flex-end;
@@ -1936,6 +1956,7 @@ textarea {
   padding: 12px 14px;
   background: #fff;
   transition: box-shadow 0.2s ease-in-out;
+  min-height: 60px;
 }
 
 .lead-detail-summary-card:hover {
@@ -1947,8 +1968,7 @@ textarea {
   font-size: 0.9rem;
   font-weight: 600;
   color: #1c2b33;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  min-height: 16px;
 }
 
 .lead-detail-summary-card p {
@@ -1956,6 +1976,7 @@ textarea {
   font-size: 14px;
   line-height: 1.5;
   color: #475467;
+  min-height: 24px;
 }
 
 /* Acerca de y Experiencia: full width */
@@ -1977,11 +1998,23 @@ textarea {
   }
 }
 
-.lead-detail-summary-card--experience .opportunity-summary-experience-list,
-.lead-detail-summary-card--experience .opportunity-summary-experience-item,
-.lead-detail-experience-fallback-text {
+.lead-detail-summary-card--experience {
+  min-height: 120px;
+}
+
+.lead-detail-summary-card--experience .opportunity-summary-experience-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lead-detail-summary-card--experience .opportunity-summary-experience-item {
   font-size: 1rem;
   line-height: 1.5;
+  min-height: 32px;
 }
 
 .lead-detail-summary-card--experience .opportunity-summary-experience-item strong {
@@ -1989,6 +2022,13 @@ textarea {
   line-height: 1.5;
   font-weight: 600;
   color: var(--color-text-primary, #1c2b33);
+  display: block;
+}
+
+.lead-detail-experience-fallback-text {
+  font-size: 1rem;
+  line-height: 1.5;
+  min-height: 48px;
 }
 
 .lead-evidence-list {
@@ -6236,12 +6276,52 @@ textarea {
    ============================================================ */
 
 .workspace-v3 {
-  max-width: 1100px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: var(--space-6) var(--space-6) var(--space-16);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.workspace-v3-split {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.workspace-v3-split:has(.workspace-v3-split-sidebar) {
+  grid-template-columns: 1fr 320px;
+}
+
+.workspace-v3-split-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.workspace-v3-split-sidebar {
+  position: sticky;
+  top: var(--space-4);
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+@media (max-width: 1024px) {
+  .workspace-v3-split {
+    grid-template-columns: 1fr;
+  }
+  .workspace-v3-split-sidebar {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .workspace-v3 {
+    max-width: 100%;
+  }
 }
 
 .workspace-v3-breadcrumb {
@@ -6395,6 +6475,22 @@ textarea {
 
 .workspace-v3-inline-error {
   margin: 0;
+}
+
+.workspace-v3-warnings {
+  background: #fef3cd;
+  border: 1px solid #ffc107;
+  border-radius: var(--radius-card);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.workspace-v3-warning-text {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #664d03;
 }
 
 .workspace-v3-list-wrap {
@@ -6777,48 +6873,92 @@ textarea {
 
 .enrich-modal-contact-row {
   display: flex;
-  gap: 0.75rem;
-  align-items: baseline;
-  padding: 0.5rem 0.75rem;
-  background: var(--surface-2, #f9fafb);
-  border-radius: 6px;
-  font-size: 0.875rem;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.enrich-modal-contact-row:last-child {
+  border-bottom: none;
+}
+
+.enrich-modal-contact-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  min-width: 100px;
+}
+
+.enrich-modal-contact-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-brand-primary, #6366f1);
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .enrich-modal-contact-label {
-  font-weight: 600;
-  min-width: 80px;
-  color: var(--text-muted, #6b7280);
-  font-size: 0.8rem;
+  font-size: 13px;
+  font-weight: 500;
+  color: #6b7280;
+  white-space: nowrap;
 }
 
 .enrich-modal-contact-value {
+  flex: 1;
+  font-size: 14px;
+  color: #111827;
   word-break: break-all;
-  color: var(--text-primary, #111827);
+  text-align: right;
 }
 
-.enrich-modal-sources {
-  font-size: 0.8rem;
-  color: var(--text-muted, #6b7280);
-  margin-bottom: 0.75rem;
+.enrich-modal-sources-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
 }
 
-.enrich-modal-sources summary {
-  cursor: pointer;
+.enrich-modal-sources-title {
+  font-size: 12px;
   font-weight: 600;
-  margin-bottom: 0.4rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 8px;
 }
 
-.enrich-modal-sources ul {
-  padding-left: 1rem;
+.enrich-modal-sources-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 6px;
+}
+
+.enrich-modal-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.enrich-modal-source-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-brand-primary, #6366f1);
+  cursor: pointer;
 }
 
 .enrich-modal-source-link {
-  word-break: break-all;
-  color: var(--color-link, #2563eb);
+  font-size: 13px;
+  color: var(--color-brand-primary, #6366f1);
+  text-decoration: none;
+}
+
+.enrich-modal-source-link:hover {
+  text-decoration: underline;
 }
 
 .enrich-modal-source-tag {

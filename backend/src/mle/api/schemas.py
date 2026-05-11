@@ -87,6 +87,7 @@ class SearchJobStatusResponse(BaseModel):
     awaiting_clarification: bool = False
     clarifying_question: str | None = None
     suggested_source_urls: list[dict[str, str]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ProfileInterpretRequest(BaseModel):
@@ -335,6 +336,14 @@ class OpportunityCreateFromPreviewRequest(BaseModel):
     job_id: UUID
     exa_preview_index: int = Field(ge=1)
     step_id: UUID | None = None
+    contact_overrides: dict[str, str] | None = None
+
+
+class PreviewContactPatch(BaseModel):
+    email: str | None = None
+    phone: str | None = None
+    whatsapp: str | None = None
+    source_urls: list[str] | None = None
 
 
 class OpportunityCreateManualRequest(BaseModel):

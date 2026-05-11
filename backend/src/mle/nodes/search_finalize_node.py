@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from langsmith import traceable
@@ -23,12 +24,72 @@ def _url_key_for_merge(url: str) -> str:
     return str(url or "").strip().lower().rstrip("/")
 
 
+def _normalize_title(title: str) -> str:
+    """Limpia títulos de ruido: navegación, separadores, afiliaciones.
+
+    Ejemplos:
+    - "Dr. Dacarett: Inicio" → "Dr. Dacarett"
+    - "Dra. Gabriela López - Doctores de Honduras" → "Dra. Gabriela López"
+    - "Karina Egans | Gerente de ventas" → "Karina Egans"
+    - "Inicio - Dr. Reichmann - Clínica..." → "Dr. Reichmann"
+    """
+    t = str(title or "").strip()
+    if not t:
+        return ""
+
+    # Palabras de navegación a eliminar al inicio/final
+    nav_words = {"inicio", "home", "principal", "index"}
+
+    # Si contiene pipe |, tomar solo la primera parte (antes de rol/descripción)
+    if "|" in t:
+        parts = [p.strip() for p in t.split("|")]
+        t = parts[0]
+
+    # Si contiene " - ", buscar patrón "Dr./Dra." en las partes
+    if " - " in t:
+        parts = [p.strip() for p in t.split(" - ")]
+        # Buscar primero la parte con Dr./Dra. o nombre completo
+        doctor_part = None
+        for part in parts:
+            if re.match(r"^(Dr\.|Dra\.)\s+", part, re.IGNORECASE):
+                doctor_part = part
+                break
+        if doctor_part:
+            # Tomar hasta el primer separador adicional (: o segunda parte)
+            t = re.split(r"[:|-]", doctor_part)[0].strip()
+        else:
+            # Sin Dr/Dra, tomar el primer non-nav word
+            for part in parts:
+                if part.lower() not in nav_words:
+                    t = part
+                    break
+
+    # Si contiene ":", tomar solo la parte antes del ":"
+    if ":" in t:
+        t = t.split(":")[0].strip()
+
+    # Remover palabras de navegación al inicio
+    words = t.split()
+    while words and words[0].lower() in nav_words:
+        words.pop(0)
+    t = " ".join(words)
+
+    # Remover palabras de navegación al final
+    words = t.split()
+    while words and words[-1].lower() in nav_words:
+        words.pop()
+    t = " ".join(words)
+
+    return t.strip()
+
+
 def _preview_item(raw: dict[str, Any], index: int) -> dict[str, Any]:
     s = get_settings()
     title_max = s.exa_preview_title_max_chars
     join_max = s.exa_preview_snippet_max_chars
     hl_slots = s.exa_preview_num_highlights
-    title = str(raw.get("title", "")).strip()[:title_max]
+    raw_title = str(raw.get("title", "")).strip()[:title_max]
+    title = _normalize_title(raw_title)
     url = str(raw.get("url", "")).strip()[:2000]
     highlights = raw.get("highlights")
     snippet = ""

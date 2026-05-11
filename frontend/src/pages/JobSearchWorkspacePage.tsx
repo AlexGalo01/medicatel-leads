@@ -482,6 +482,16 @@ export function JobSearchWorkspacePage(): JSX.Element {
 
       {exaMoreMessage ? <p className="error-text workspace-v3-inline-error">{exaMoreMessage}</p> : null}
 
+      {(jobStatusQuery.data?.warnings ?? []).length > 0 ? (
+        <div className="workspace-v3-warnings" role="status">
+          {jobStatusQuery.data!.warnings!.map((w, i) => (
+            <p key={i} className="workspace-v3-warning-text">{w}</p>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="workspace-v3-split">
+      <div className="workspace-v3-split-main">
       <div className="workspace-v3-list-wrap">
         {awaitingClarification ? (
           <div className="workspace-v3-empty workspace-v3-clarify-panel" role="region" aria-label="Aclaración">
@@ -626,9 +636,10 @@ export function JobSearchWorkspacePage(): JSX.Element {
           </Button>
         </div>
       ) : null}
+      </div>
 
       {(jobStatusQuery.data?.suggested_source_urls ?? []).length > 0 ? (
-        <section className="workspace-v3-sources">
+        <section className="workspace-v3-sources workspace-v3-split-sidebar">
           <h3>Fuentes para explorar</h3>
           <p className="muted-text">
             {directoryId
@@ -663,6 +674,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
           </ul>
         </section>
       ) : null}
+      </div>
 
       {/* Modal de selección de directorio */}
       {saveModalOpen && (

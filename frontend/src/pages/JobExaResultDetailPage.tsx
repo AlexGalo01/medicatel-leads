@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Briefcase, ChevronLeft, ChevronRight, ExternalLink, Loader2, Search } from "lucide-react";
+import { Briefcase, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Search } from "lucide-react";
 
 import {
   createOpportunityFromPreview,
+  downloadPreviewResultXlsx,
   getOpportunityByPreview,
   getSearchJobStatus,
   summarizeProfile,
   enrichOpportunity,
+  savePreviewContact,
   type OpportunityEnrichResult,
 } from "../api";
 import { Button } from "../components/ui/button";
@@ -44,6 +46,12 @@ function findPreviewRow(preview: ExaResultPreviewItem[] | undefined, index: numb
 
 function cleanAiText(value: string | null | undefined): string {
   return value?.replace(/\s+/g, " ").trim() || "";
+}
+
+function cleanAiField(value: string | null | undefined): string {
+  const v = value?.trim() ?? "";
+  if (v === "null" || v === "undefined" || v === "N/A" || v === "n/a") return "";
+  return v;
 }
 
 function inferCompanyFromText(title: string, snippet: string): string {
@@ -93,6 +101,9 @@ export function JobExaResultDetailPage(): JSX.Element {
   const resultIndex = parseResultIndex(resultIndexParam);
   const [enrichModalOpen, setEnrichModalOpen] = useState(false);
   const [enrichStageIdx, setEnrichStageIdx] = useState(0);
+  const [checkedFields, setCheckedFields] = useState<Record<string, boolean>>({});
+  const [checkedSources, setCheckedSources] = useState<Record<string, boolean>>({});
+  const [isExporting, setIsExporting] = useState(false);
 
   const jobQuery = useQuery({
     queryKey: ["job-status", jobId],
@@ -122,8 +133,19 @@ export function JobExaResultDetailPage(): JSX.Element {
   });
 
   const createOppMut = useMutation({
-    mutationFn: () =>
-      createOpportunityFromPreview({ job_id: jobId, exa_preview_index: resultIndex! }),
+    mutationFn: () => {
+      // Pasar los datos enriquecidos del preview a la oportunidad
+      const contactData: Record<string, string> = {};
+      if (row?.email) contactData.email = row.email;
+      if (row?.phone) contactData.phone = row.phone;
+      if (row?.whatsapp) contactData.whatsapp = row.whatsapp;
+
+      return createOpportunityFromPreview({
+        job_id: jobId,
+        exa_preview_index: resultIndex!,
+        contact_overrides: Object.keys(contactData).length > 0 ? contactData : undefined,
+      });
+    },
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: ["opportunities"] });
       void queryClient.invalidateQueries({ queryKey: ["opportunity-by-preview", jobId, resultIndex] });
@@ -150,6 +172,36 @@ export function JobExaResultDetailPage(): JSX.Element {
           setEnrichStageIdx(idx);
         }
       });
+    },
+  });
+
+  const saveMut = useMutation({
+    mutationFn: (data: { email?: string; phone?: string; whatsapp?: string; source_urls?: string[] }) =>
+      savePreviewContact(jobId, resultIndex!, data),
+    onSuccess: (_, savedData) => {
+      // Actualizar el row local inmediatamente sin recargar
+      if (row) {
+        const updatedRow = {
+          ...row,
+          email: savedData.email || row.email,
+          phone: savedData.phone || row.phone,
+          whatsapp: savedData.whatsapp || row.whatsapp,
+          saved_source_urls: savedData.source_urls,
+        };
+        // Actualizar el cache de React Query directamente
+        queryClient.setQueryData(["job-status", jobId], (oldData: any) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            exa_results_preview: (oldData.exa_results_preview || []).map((item: any) =>
+              item.index === resultIndex ? updatedRow : item
+            ),
+          };
+        });
+      }
+      setEnrichModalOpen(false);
+      setCheckedFields({});
+      setCheckedSources({});
     },
   });
 
@@ -231,13 +283,13 @@ export function JobExaResultDetailPage(): JSX.Element {
 
   const aiSummary = cleanAiText(profileSectionsQuery.data?.professional_summary);
   const aiAbout = cleanAiText(profileSectionsQuery.data?.about);
-  const aiCompany = cleanAiText(profileSectionsQuery.data?.company);
-  const aiLocation = cleanAiText(profileSectionsQuery.data?.location);
+  const aiCompany = cleanAiField(profileSectionsQuery.data?.company);
+  const aiLocation = cleanAiField(profileSectionsQuery.data?.location);
   const aboutText = mergeProfileAboutText(aiAbout, aiSummary, specialty || description);
   /** Cuando no hay experiencia estructurada, se muestra el resumen o el snippet. */
   const experienceFallback = aiSummary || specialty || description;
-  const normalizedLocation = aiLocation || inferLocationFromText(city, title, description) || "No especificada";
-  const normalizedCompany = aiCompany || inferCompanyFromText(title, description) || "No especificada";
+  const normalizedLocation = aiLocation || inferLocationFromText(city, title, description) || "";
+  const normalizedCompany = aiCompany || inferCompanyFromText(title, description) || "";
   const experiences = profileSectionsQuery.data?.experiences ?? [];
 
   const existingOpp = oppLookup.data;
@@ -270,12 +322,6 @@ export function JobExaResultDetailPage(): JSX.Element {
           </Card>
 
           <div className="lead-detail-summary-section">
-            {profileSectionsQuery.isFetching ? (
-              <p className="lead-detail-ai-loading muted-text">
-                <Loader2 className="spin" size={16} aria-hidden />
-                Generando resumen con IA…
-              </p>
-            ) : null}
             {profileSectionsQuery.isError ? (
               <p className="error-text lead-detail-ai-error" role="alert">
                 {profileSummaryErrorMessage(profileSectionsQuery.error)}
@@ -295,8 +341,26 @@ export function JobExaResultDetailPage(): JSX.Element {
               >
                 <Search size={16} aria-hidden /> Enriquecer
               </button>
+              <button
+                type="button"
+                className="workspace-tool-btn"
+                onClick={async () => {
+                  if (!jobId || resultIndex == null) return;
+                  setIsExporting(true);
+                  try {
+                    await downloadPreviewResultXlsx(jobId, resultIndex);
+                  } catch (err) {
+                    console.error("Export failed:", err);
+                  } finally {
+                    setIsExporting(false);
+                  }
+                }}
+                disabled={isExporting}
+              >
+                <Download size={16} aria-hidden /> Exportar
+              </button>
             </div>
-            <div className="lead-detail-summary-cards">
+            <div className={`lead-detail-summary-cards${profileSectionsQuery.isFetching ? " lead-detail-summary-cards--loading" : ""}`}>
               <article className="lead-detail-summary-card panel">
                 <h3>Acerca de</h3>
                 <p>{aboutText}</p>
@@ -308,9 +372,14 @@ export function JobExaResultDetailPage(): JSX.Element {
                     {experiences.map((experience, index) => (
                       <li key={`${experience.role}-${index}`} className="opportunity-summary-experience-item">
                         <strong>{experience.role}</strong>
-                        <span className="muted-text">
-                          {[experience.organization || null, experience.period || null].filter(Boolean).join(" · ") || "Sin detalle"}
-                        </span>
+                        {(() => {
+                          const org = cleanAiField(experience.organization);
+                          const period = cleanAiField(experience.period);
+                          const parts = [org, period].filter(Boolean);
+                          return parts.length ? (
+                            <span className="muted-text">{parts.join(" · ")}</span>
+                          ) : null;
+                        })()}
                       </li>
                     ))}
                   </ul>
@@ -318,14 +387,18 @@ export function JobExaResultDetailPage(): JSX.Element {
                   <p className="lead-detail-experience-fallback-text muted-text">{experienceFallback}</p>
                 )}
               </article>
-              <article className="lead-detail-summary-card panel">
-                <h3>Ubicación</h3>
-                <p>{normalizedLocation}</p>
-              </article>
-              <article className="lead-detail-summary-card panel">
-                <h3>Empresa</h3>
-                <p>{normalizedCompany}</p>
-              </article>
+              {normalizedLocation && (
+                <article className="lead-detail-summary-card panel">
+                  <h3>Ubicación</h3>
+                  <p>{normalizedLocation}</p>
+                </article>
+              )}
+              {normalizedCompany && (
+                <article className="lead-detail-summary-card panel">
+                  <h3>Empresa</h3>
+                  <p>{normalizedCompany}</p>
+                </article>
+              )}
             </div>
           </div>
 
@@ -460,7 +533,13 @@ export function JobExaResultDetailPage(): JSX.Element {
       {enrichModalOpen && (
         <div
           className="enrich-modal-overlay"
-          onClick={() => { if (!enrichMut.isPending) setEnrichModalOpen(false); }}
+          onClick={() => {
+            if (!enrichMut.isPending) {
+              setEnrichModalOpen(false);
+              setCheckedFields({});
+              setCheckedSources({});
+            }
+          }}
         >
           <div className="enrich-modal-panel" onClick={(e) => e.stopPropagation()}>
             <div className="enrich-modal-header">
@@ -470,7 +549,11 @@ export function JobExaResultDetailPage(): JSX.Element {
                   type="button"
                   className="enrich-modal-close"
                   aria-label="Cerrar"
-                  onClick={() => setEnrichModalOpen(false)}
+                  onClick={() => {
+                    setEnrichModalOpen(false);
+                    setCheckedFields({});
+                    setCheckedSources({});
+                  }}
                 >
                   ✕
                 </button>
@@ -492,69 +575,124 @@ export function JobExaResultDetailPage(): JSX.Element {
 
             {enrichMut.isSuccess && enrichMut.data && (() => {
               const r = enrichMut.data;
-              const found = [
-                { label: "Email",      value: r.email },
-                { label: "Teléfono",   value: r.phone },
-                { label: "WhatsApp",   value: r.whatsapp },
-                { label: "LinkedIn",   value: r.linkedin_url },
-                { label: "Dirección",  value: r.address },
-                { label: "Sitio web",  value: r.website },
-                { label: "Facebook",   value: r.facebook_url },
-                { label: "Instagram",  value: r.instagram_url },
-              ].filter((x) => x.value.trim() !== "");
+              const contactFields = [
+                { key: "email", label: "Email", value: r.email },
+                { key: "phone", label: "Teléfono", value: r.phone },
+                { key: "whatsapp", label: "WhatsApp", value: r.whatsapp },
+              ].filter((x) => x.value?.trim());
+
+              const sourceItems = r.citations
+                .filter((c) => c.url?.trim())
+                .map((c) => ({ ...c, url: c.url! }));
+
+              if (contactFields.length > 0 && Object.keys(checkedFields).length === 0) {
+                const initial: Record<string, boolean> = {};
+                for (const f of contactFields) initial[f.key] = true;
+                setCheckedFields(initial);
+              }
+
+              if (sourceItems.length > 0 && Object.keys(checkedSources).length === 0) {
+                const initSrc: Record<string, boolean> = {};
+                for (const c of sourceItems) initSrc[c.url] = false;
+                setCheckedSources(initSrc);
+              }
+
+              const selectedContactData = Object.fromEntries(
+                contactFields
+                  .filter((f) => checkedFields[f.key])
+                  .map((f) => [f.key, f.value]),
+              ) as Record<string, string>;
+
+              const selectedSourceUrls = sourceItems
+                .filter((c) => checkedSources[c.url])
+                .map((c) => c.url)
+                .filter((url): url is string => Boolean(url));
+
+              const selectedData: { email?: string; phone?: string; whatsapp?: string; source_urls?: string[] } = {
+                email: selectedContactData.email,
+                phone: selectedContactData.phone,
+                whatsapp: selectedContactData.whatsapp,
+                source_urls: selectedSourceUrls.length ? selectedSourceUrls : undefined,
+              };
 
               return (
                 <div className="enrich-modal-results">
-                  {found.length === 0 ? (
+                  {contactFields.length === 0 ? (
                     <p className="muted-text" style={{ padding: "0.5rem 0" }}>
                       No se encontró información de contacto verificada.
                     </p>
                   ) : (
                     <>
-                      <p className="enrich-modal-summary">{found.length} dato{found.length !== 1 ? "s" : ""} encontrado{found.length !== 1 ? "s" : ""}</p>
+                      <p className="enrich-modal-summary">
+                        {contactFields.length} dato{contactFields.length !== 1 ? "s" : ""} encontrado{contactFields.length !== 1 ? "s" : ""}
+                      </p>
                       <ul className="enrich-modal-contact-list">
-                        {found.map((item, i) => (
-                          <li key={i} className="enrich-modal-contact-row">
-                            <span className="enrich-modal-contact-label">{item.label}</span>
+                        {contactFields.map((item) => (
+                          <li key={item.key} className="enrich-modal-contact-row">
+                            <label className="enrich-modal-contact-check">
+                              <input
+                                type="checkbox"
+                                checked={checkedFields[item.key] ?? true}
+                                onChange={(e) =>
+                                  setCheckedFields((prev) => ({ ...prev, [item.key]: e.target.checked }))
+                                }
+                              />
+                              <span className="enrich-modal-contact-label">{item.label}</span>
+                            </label>
                             <span className="enrich-modal-contact-value">{item.value}</span>
                           </li>
                         ))}
                       </ul>
-                      {r.citations.length > 0 && (
-                        <details className="enrich-modal-sources">
-                          <summary>Fuentes ({Math.min(r.citations.length, 3)})</summary>
-                          <ul>
-                            {r.citations.slice(0, 3).map((c, i) => (
-                              <li key={i}>
+                      {sourceItems.length > 0 && (
+                        <div className="enrich-modal-sources-section">
+                          <p className="enrich-modal-sources-title">Fuentes</p>
+                          <ul className="enrich-modal-sources-list">
+                            {sourceItems.slice(0, 5).map((c) => (
+                              <li key={c.url} className="enrich-modal-source-row">
+                                <label className="enrich-modal-source-check">
+                                  <input
+                                    type="checkbox"
+                                    checked={checkedSources[c.url] ?? false}
+                                    onChange={(e) =>
+                                      setCheckedSources((prev) => ({ ...prev, [c.url]: e.target.checked }))
+                                    }
+                                  />
+                                </label>
                                 <a href={c.url} target="_blank" rel="noreferrer" className="enrich-modal-source-link">
-                                  {c.url}
+                                  {hostLabel(c.url)}
                                 </a>
-                                {c.source === "direct_regex" && <span className="enrich-modal-source-tag">extracción directa</span>}
                               </li>
                             ))}
                           </ul>
-                        </details>
+                        </div>
                       )}
                       <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
                         <Button
                           type="button"
                           className="cta-button"
                           style={{ flex: 1 }}
-                          onClick={() => {
-                            setEnrichModalOpen(false);
-                            void queryClient.invalidateQueries({ queryKey: ["opportunity-by-preview", jobId, resultIndex] });
-                          }}
+                          disabled={Object.keys(selectedData).length === 0 || saveMut.isPending}
+                          onClick={() => saveMut.mutate(selectedData)}
                         >
-                          Crear oportunidad
+                          {saveMut.isPending ? "Guardando..." : "Guardar Datos"}
                         </Button>
                         <Button
                           type="button"
                           className="link-button"
-                          onClick={() => setEnrichModalOpen(false)}
+                          onClick={() => {
+                            setEnrichModalOpen(false);
+                            setCheckedFields({});
+                            setCheckedSources({});
+                          }}
                         >
-                          Descartar
+                          Cancelar
                         </Button>
                       </div>
+                      {saveMut.isError && (
+                        <p className="error-text" style={{ marginTop: "0.5rem" }}>
+                          Error al guardar. Intenta de nuevo.
+                        </p>
+                      )}
                     </>
                   )}
                 </div>

@@ -20,6 +20,34 @@ def _sanitize_filename(text: str) -> str:
     return sanitized
 
 
+def _strip_markdown(text: str | None) -> str:
+    """Remove markdown formatting from text."""
+    if not text:
+        return ""
+    text = str(text).strip()
+    # Remove bold/italic markers
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'__(.+?)__', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'_(.+?)_', r'\1', text)
+    # Remove links [text](url) -> text
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+    # Remove code blocks and inline code
+    text = re.sub(r'```[\s\S]*?```', '', text)
+    text = re.sub(r'`(.+?)`', r'\1', text)
+    # Remove headers
+    text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
+    # Remove blockquotes
+    text = re.sub(r'^>\s+', '', text, flags=re.MULTILINE)
+    # Remove lists
+    text = re.sub(r'^[\s]*[-*+]\s+', '', text, flags=re.MULTILINE)
+    # Remove horizontal rules
+    text = re.sub(r'^[\s]*[-*_]{3,}[\s]*$', '', text, flags=re.MULTILINE)
+    # Normalize whitespace
+    text = re.sub(r'\n\n+', '\n', text)
+    return text.strip()
+
+
 def export_leads_to_csv(job_id: UUID, leads: list[dict[str, Any]], export_dir_path: str, query_text: str | None = None) -> str:
     export_dir = Path(export_dir_path)
     export_dir.mkdir(parents=True, exist_ok=True)
@@ -121,13 +149,13 @@ def export_preview_to_xlsx(job_id: UUID, rows: list[dict[str, Any]], export_dir_
     export_dir = Path(export_dir_path)
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build filename with query and date if available
+    # Build filename with query and date
     if query_text:
         sanitized_query = _sanitize_filename(query_text)
         date_str = datetime.now().strftime("%d %m %Y")
         filename = f"{sanitized_query} {date_str}.xlsx"
     else:
-        filename = f"preview_{job_id}.xlsx"
+        filename = f"resultados_{job_id}.xlsx"
 
     export_path = export_dir / filename
 
@@ -164,3 +192,5 @@ def export_preview_to_xlsx(job_id: UUID, rows: list[dict[str, Any]], export_dir_
     ws.freeze_panes = "A2"
     wb.save(export_path)
     return str(export_path)
+
+

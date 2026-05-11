@@ -9,9 +9,7 @@ from mle.observability.langsmith_setup import (
     trace_inputs_initial_state,
     trace_outputs_graph_state,
 )
-from mle.nodes.company_anchor_node import company_anchor_node
-from mle.nodes.exa_webset_node import exa_webset_node
-from mle.nodes.planner_node import planner_node
+from mle.nodes.agentic_search_node import agentic_search_node
 from mle.nodes.relevance_filter_node import relevance_filter_node
 from mle.nodes.search_finalize_node import search_finalize_node
 from mle.services.job_progress_sink import persist_pipeline_progress
@@ -39,6 +37,10 @@ def _apply_patch(state: LeadSearchGraphState, patch: dict[str, object]) -> LeadS
     )
 
 
+MIN_RESULTS_AFTER_FILTER = 35
+MAX_SEARCH_ROUNDS = 3
+
+
 @traceable(
     name="lead_pipeline_graph",
     run_type="chain",
@@ -47,46 +49,52 @@ def _apply_patch(state: LeadSearchGraphState, patch: dict[str, object]) -> LeadS
 )
 async def run_lead_pipeline(initial_state: LeadSearchGraphState) -> LeadSearchGraphState:
     """
-    Pipeline demo: planner + Exa + filtro de relevancia + cierre con vista previa.
-    Ver AGENT_TO_DO.md para reactivar limpieza, reintento y persistencia de leads.
+    Pipeline: búsqueda agéntica + filtro de relevancia (con retry) + cierre con vista previa.
+    Si los resultados post-filtro son < MIN_RESULTS_AFTER_FILTER, ejecuta rondas adicionales.
     """
     job_id = initial_state.job_id
     try:
         logger.info("Pipeline iniciado: job_id=%s", job_id)
 
-        logger.info("Ejecutando planner_node: job_id=%s", job_id)
-        planner_patch = await planner_node(initial_state)
-        state_after_planner = _apply_patch(initial_state, planner_patch)
-        await persist_pipeline_progress(job_id, state_after_planner)
-        if state_after_planner.status == "error":
-            logger.error("Planner falló: job_id=%s, errors=%s", job_id, state_after_planner.errors)
-            return state_after_planner
+        state_current = initial_state
 
-        logger.info("Ejecutando company_anchor_node: job_id=%s", job_id)
-        anchor_patch = await company_anchor_node(state_after_planner)
-        state_after_anchor = _apply_patch(state_after_planner, anchor_patch)
-        await persist_pipeline_progress(job_id, state_after_anchor)
-        if state_after_anchor.status == "error":
-            logger.error("Anchor falló: job_id=%s, errors=%s", job_id, state_after_anchor.errors)
-            return state_after_anchor
+        for round_num in range(1, MAX_SEARCH_ROUNDS + 1):
+            logger.info("Ejecutando agentic_search_node ronda %d: job_id=%s", round_num, job_id)
+            search_patch = await agentic_search_node(state_current)
+            state_after_exa = _apply_patch(state_current, search_patch)
+            logger.info(
+                "Agentic search ronda %d resultados: job_id=%s, count=%s",
+                round_num, job_id, len(state_after_exa.exa_raw_results),
+            )
+            await persist_pipeline_progress(job_id, state_after_exa)
+            if state_after_exa.status == "error":
+                logger.error("Agentic search falló: job_id=%s, errors=%s", job_id, state_after_exa.errors)
+                return state_after_exa
 
-        logger.info("Ejecutando exa_webset_node: job_id=%s", job_id)
-        exa_patch = await exa_webset_node(state_after_anchor)
-        state_after_exa = _apply_patch(state_after_anchor, exa_patch)
-        logger.info("Exa resultados: job_id=%s, count=%s", job_id, len(state_after_exa.exa_raw_results))
-        await persist_pipeline_progress(job_id, state_after_exa)
-        if state_after_exa.status == "error":
-            logger.error("Exa falló: job_id=%s, errors=%s", job_id, state_after_exa.errors)
-            return state_after_exa
+            logger.info("Ejecutando relevance_filter_node ronda %d: job_id=%s", round_num, job_id)
+            relevance_patch = await relevance_filter_node(state_after_exa)
+            state_after_relevance = _apply_patch(state_after_exa, relevance_patch)
+            kept = len(state_after_relevance.exa_raw_results)
+            logger.info(
+                "Relevance filtrados ronda %d: job_id=%s, kept=%s",
+                round_num, job_id, kept,
+            )
+            await persist_pipeline_progress(job_id, state_after_relevance)
+            if state_after_relevance.status == "error":
+                logger.error("Relevance filter falló: job_id=%s, errors=%s", job_id, state_after_relevance.errors)
+                return state_after_relevance
 
-        logger.info("Ejecutando relevance_filter_node: job_id=%s", job_id)
-        relevance_patch = await relevance_filter_node(state_after_exa)
-        state_after_relevance = _apply_patch(state_after_exa, relevance_patch)
-        logger.info("Relevance filtrados: job_id=%s, count=%s", job_id, len(state_after_relevance.leads))
-        await persist_pipeline_progress(job_id, state_after_relevance)
-        if state_after_relevance.status == "error":
-            logger.error("Relevance filter falló: job_id=%s, errors=%s", job_id, state_after_relevance.errors)
-            return state_after_relevance
+            if kept >= MIN_RESULTS_AFTER_FILTER:
+                logger.info("Suficientes resultados (%d >= %d) en ronda %d", kept, MIN_RESULTS_AFTER_FILTER, round_num)
+                break
+
+            if round_num < MAX_SEARCH_ROUNDS:
+                logger.info(
+                    "Ronda %d: %d resultados < %d mínimo — ejecutando ronda adicional",
+                    round_num, kept, MIN_RESULTS_AFTER_FILTER,
+                )
+                # Pasar resultados filtrados como base para la siguiente ronda
+                state_current = state_after_relevance
 
         logger.info("Ejecutando search_finalize_node: job_id=%s", job_id)
         finalize_patch = await search_finalize_node(state_after_relevance)
