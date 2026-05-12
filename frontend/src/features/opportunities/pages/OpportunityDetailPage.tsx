@@ -9,7 +9,6 @@ import {
   Download,
   ExternalLink,
   FileText,
-  ListFilter,
   Loader2,
   MessageSquare,
   PenLine,
@@ -32,6 +31,7 @@ import {
   postOpportunityBitacora,
   putOpportunityContacts,
   summarizeProfile,
+  terminateOpportunity,
   type OpportunityEnrichResult,
 } from "../../../api";
 import { usePermissions } from "../../../auth/usePermissions";
@@ -145,6 +145,9 @@ export function OpportunityDetailPage(): JSX.Element {
   const [enrichModalOpen, setEnrichModalOpen] = useState(false);
   const [enrichStageIdx, setEnrichStageIdx] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
+  const [confirmInvalid, setConfirmInvalid] = useState(false);
+  const [invalidNote, setInvalidNote] = useState("");
+  const [editingSection, setEditingSection] = useState<string | null>(null);
   const bitacoraScrollRef = useRef<HTMLDivElement>(null);
   const bitacoraTextareaRef = useRef<HTMLTextAreaElement>(null);
   const aboutTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -344,6 +347,15 @@ export function OpportunityDetailPage(): JSX.Element {
     },
   });
 
+  const terminateMut = useMutation({
+    mutationFn: (note?: string) => terminateOpportunity(opportunityId, "no_valida", note || null),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["opportunity", opportunityId], updated);
+      setConfirmInvalid(false);
+      setInvalidNote("");
+    },
+  });
+
   if (!opportunityId) return <section className="panel error-text">Identificador no válido.</section>;
   if (detailQuery.isLoading) {
     return (
@@ -410,7 +422,6 @@ export function OpportunityDetailPage(): JSX.Element {
   const sourceJobLabel = sourceJobQuery.data?.query_text?.trim() || "No disponible";
   const profileCompany = profileSummaryQuery.data?.company?.trim() || "No especificada";
   const storedProfileOverrides = data.profile_overrides ?? {};
-  const hasStoredProfileOverrides = Object.keys(storedProfileOverrides).length > 0;
   const profileIaPending = profileSummaryQuery.isPending && !cvDirty;
   const aboutFieldWaitingIa = profileIaPending && !objectHasOwn(storedProfileOverrides, "about");
   const locationFieldWaitingIa = profileIaPending && !objectHasOwn(storedProfileOverrides, "location");
@@ -438,12 +449,6 @@ export function OpportunityDetailPage(): JSX.Element {
     });
   };
 
-  const restoreProfileCv = () => {
-    profileCvMut.mutate({
-      profile_cv: { about: null, location: null, experiences: null },
-    });
-  };
-
   return (
     <div className="opportunity-ficha-page">
       <nav className="opportunity-detail-nav opportunity-ficha-area-nav" aria-label="Navegación">
@@ -460,8 +465,11 @@ export function OpportunityDetailPage(): JSX.Element {
       >
         <h2 className="opportunity-journey-heading">Flujo de Oportunidad</h2>
         {useDirectorySteps ? (() => {
-          const currentStepIdx = allDirSteps.findIndex((s) => s.id === data.current_step_id);
-          const fillPct = allDirSteps.length <= 1 ? 0 : (Math.max(0, currentStepIdx) / (allDirSteps.length - 1)) * 100;
+          const rawIdx = allDirSteps.findIndex((s) => s.id === data.current_step_id);
+          // If no step assigned yet, treat first step as current
+          const currentStepIdx = rawIdx >= 0 ? rawIdx : 0;
+          const effectiveStepId = rawIdx >= 0 ? data.current_step_id : allDirSteps[0]?.id;
+          const fillPct = allDirSteps.length <= 1 ? 0 : (currentStepIdx / (allDirSteps.length - 1)) * 100;
           return (
             <div
               className="opportunity-journey-track-wrap"
@@ -471,7 +479,7 @@ export function OpportunityDetailPage(): JSX.Element {
               <ol className="opportunity-journey-track">
                 {allDirSteps.map((step, idx) => {
                   const done = idx < currentStepIdx;
-                  const current = step.id === data.current_step_id;
+                  const current = step.id === effectiveStepId;
                   const upcoming = idx > currentStepIdx;
                   return (
                     <li
@@ -603,15 +611,6 @@ export function OpportunityDetailPage(): JSX.Element {
                 {profileCvMut.isPending ? <Loader2 className="spin" size={16} aria-hidden /> : null}
                 Guardar datos del perfil
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="workspace-tool-btn"
-                disabled={profileCvMut.isPending || !hasStoredProfileOverrides}
-                onClick={() => restoreProfileCv()}
-              >
-                Restaurar resumen generado
-              </Button>
             </div>
             {profileCvMut.isError ? <p className="error-text opportunity-summary-cv-error">No se pudo guardar el perfil.</p> : null}
             {profileIaPending ? (
@@ -624,50 +623,69 @@ export function OpportunityDetailPage(): JSX.Element {
             ) : null}
             <div className="opportunity-summary-cv">
               <article className="opportunity-summary-cv-block">
-                <h3 className="opportunity-card-subtitle">About</h3>
-                <label className="opportunity-field opportunity-summary-cv-field">
-                  <span className="muted-text">Texto libre; se guarda en la oportunidad.</span>
-                    <textarea
-                      ref={aboutTextareaRef}
-                      className="opportunity-summary-cv-textarea"
-                      value={aboutDraft}
-                      onChange={(e) => {
-                        setCvDirty(true);
-                        setAboutDraft(e.target.value);
-                      }}
-                      rows={1}
-                      maxLength={8000}
-                      spellCheck
-                      readOnly={aboutFieldWaitingIa}
-                      aria-busy={aboutFieldWaitingIa}
-                      placeholder={aboutFieldWaitingIa ? "Generando resumen con la IA…" : "Añade una descripción profesional..."}
-                      style={{ 
-                        border: "none", 
-                        background: "transparent", 
-                        padding: "0", 
-                        boxShadow: "none", 
-                        minHeight: "120px",
-                        fontSize: "0.95rem",
-                        lineHeight: "1.6",
-                        color: "var(--color-text)",
-                        width: "100%"
-                      }}
-                    />
-                </label>
+                <div className="opportunity-card-header">
+                  <h3 className="opportunity-card-subtitle">Resumen</h3>
+                  <button
+                    type="button"
+                    className="opportunity-card-edit-btn"
+                    onClick={() => setEditingSection(editingSection === "about" ? null : "about")}
+                    aria-label={editingSection === "about" ? "Cerrar edición" : "Editar resumen"}
+                  >
+                    <PenLine size={15} aria-hidden />
+                  </button>
+                </div>
+                <hr className="opportunity-card-divider" />
+                {editingSection === "about" ? (
+                  <textarea
+                    ref={aboutTextareaRef}
+                    className="opportunity-summary-cv-textarea"
+                    value={aboutDraft}
+                    onChange={(e) => {
+                      setCvDirty(true);
+                      setAboutDraft(e.target.value);
+                    }}
+                    rows={1}
+                    maxLength={8000}
+                    spellCheck
+                    readOnly={aboutFieldWaitingIa}
+                    aria-busy={aboutFieldWaitingIa}
+                    placeholder={aboutFieldWaitingIa ? "Generando resumen con la IA…" : "Añade una descripción profesional..."}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      padding: "0",
+                      boxShadow: "none",
+                      minHeight: "120px",
+                      fontSize: "0.95rem",
+                      lineHeight: "1.6",
+                      color: "var(--color-text)",
+                      width: "100%"
+                    }}
+                  />
+                ) : aboutFieldWaitingIa ? (
+                  <p className="muted-text">
+                    <Loader2 className="spin" size={14} strokeWidth={2} aria-hidden /> Generando resumen…
+                  </p>
+                ) : (
+                  <p style={{ fontSize: "0.95rem", lineHeight: "1.6", margin: 0 }}>
+                    {aboutDraft || <span className="muted-text">Sin descripción.</span>}
+                  </p>
+                )}
               </article>
               <article className="opportunity-summary-cv-block opportunity-summary-cv-block--experience">
                 <h3 className="opportunity-card-subtitle">Experiencia</h3>
+                <hr className="opportunity-card-divider" />
                 {profileIaPending && !experienceFromOverride ? (
                   <p className="muted-text opportunity-summary-ia-experience-waiting">
                     <Loader2 className="spin" size={16} strokeWidth={2} aria-hidden />
                     Cargando experiencia estructurada…
                   </p>
                 ) : profileExperiences.length > 0 ? (
-                  <ul className="opportunity-summary-experience-list">
+                  <ul className="opportunity-summary-experience-list" style={{ listStyle: "disc", paddingLeft: "1.1rem", margin: 0 }}>
                     {profileExperiences.map((experience, index) => (
                       <li key={`${experience.role}-${index}`} className="opportunity-summary-experience-item">
-                        <strong>{experience.role}</strong>
-                        <span className="muted-text">
+                        <strong style={{ fontSize: "14px", fontWeight: 600 }}>{experience.role}</strong>
+                        <span className="muted-text" style={{ fontSize: "13px", display: "block" }}>
                           {[experience.organization || null, experience.period || null].filter(Boolean).join(" · ") || "Sin detalle"}
                         </span>
                       </li>
@@ -678,9 +696,19 @@ export function OpportunityDetailPage(): JSX.Element {
                 )}
               </article>
               <article className="opportunity-summary-cv-block">
-                <h3 className="opportunity-card-subtitle">Ubicación</h3>
-                <label className="opportunity-field opportunity-summary-cv-field">
-                  <span className="muted-text">Ciudad, país o nota breve.</span>
+                <div className="opportunity-card-header">
+                  <h3 className="opportunity-card-subtitle">Ubicación</h3>
+                  <button
+                    type="button"
+                    className="opportunity-card-edit-btn"
+                    onClick={() => setEditingSection(editingSection === "location" ? null : "location")}
+                    aria-label={editingSection === "location" ? "Cerrar edición" : "Editar ubicación"}
+                  >
+                    <PenLine size={15} aria-hidden />
+                  </button>
+                </div>
+                <hr className="opportunity-card-divider" />
+                {editingSection === "location" ? (
                   <Input
                     value={locationDraft}
                     placeholder={locationFieldWaitingIa ? "Generando o usando ciudad de la ficha…" : LOCATION_PLACEHOLDER}
@@ -693,11 +721,16 @@ export function OpportunityDetailPage(): JSX.Element {
                     maxLength={500}
                     className="opportunity-summary-location-input"
                   />
-                </label>
+                ) : (
+                  <p className="muted-text">{locationDraft || LOCATION_PLACEHOLDER}</p>
+                )}
               </article>
               <article className="opportunity-summary-cv-block">
                 <h3 className="opportunity-card-subtitle">Empresa</h3>
-                <p className="muted-text">{profileCompany}</p>
+                <hr className="opportunity-card-divider" />
+                <p className="muted-text" style={{ overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                  {profileCompany.split(".")[0].split(",")[0].trim() || "No especificada"}
+                </p>
               </article>
             </div>
           </>
@@ -707,23 +740,13 @@ export function OpportunityDetailPage(): JSX.Element {
       <div className="opportunity-ficha-area-bitacora opportunity-ficha-side-stack">
       <Card className="panel opportunity-card opportunity-bento-card opportunity-phase-card opportunity-phase-card--prominent">
         <h2 className="opportunity-card-title">Actualizar fase</h2>
+        <hr className="opportunity-card-divider" />
         <div className="opportunity-stage-form opportunity-stage-form--bento">
-          <label className="opportunity-field">
-            <span>Tipo</span>
-            <Select
-              value={data.contact_type ?? "employee"}
-              onChange={(e) => contactTypeMut.mutate(e.target.value as "employee" | "company")}
-              disabled={contactTypeMut.isPending}
-            >
-              <option value="employee">Empleado</option>
-              <option value="company">Empresa</option>
-            </Select>
-          </label>
           <label className="opportunity-field">
             <span>Fase</span>
             {useDirectorySteps ? (
               <Select
-                value={stepDraft || data.current_step_id || ""}
+                value={stepDraft || data.current_step_id || allDirSteps[0]?.id || ""}
                 onChange={(e) => setStepDraft(e.target.value)}
               >
                 {allDirSteps.map((s) => (
@@ -780,11 +803,57 @@ export function OpportunityDetailPage(): JSX.Element {
           ? <p className="error-text">No se pudo guardar.</p>
           : null
         }
+        {canManageOpportunities && (
+          <div style={{ borderTop: "1px solid var(--color-border)", marginTop: "16px", paddingTop: "14px" }}>
+            {data.terminated_outcome === "no_valida" ? (
+              <span style={{ display: "inline-block", background: "var(--color-error-bg)", color: "var(--color-error)", fontSize: "0.8rem", fontWeight: 600, padding: "3px 10px", borderRadius: "99px" }}>
+                No Válida
+              </span>
+            ) : !data.terminated_at ? (
+              confirmInvalid ? (
+                <div>
+                  <textarea
+                    value={invalidNote}
+                    onChange={(e) => setInvalidNote(e.target.value)}
+                    placeholder="Nota opcional…"
+                    rows={2}
+                    maxLength={500}
+                    style={{ width: "100%", marginBottom: "8px", fontSize: "0.85rem", borderRadius: "6px", border: "1px solid var(--color-border)", padding: "6px 8px", resize: "vertical" }}
+                  />
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <Button
+                      type="button"
+                      className="cta-button danger-button"
+                      disabled={terminateMut.isPending}
+                      onClick={() => terminateMut.mutate(invalidNote.trim() || undefined)}
+                    >
+                      {terminateMut.isPending ? <Loader2 className="spin" size={14} aria-hidden /> : null}
+                      Confirmar
+                    </Button>
+                    <Button type="button" className="link-button" onClick={() => { setConfirmInvalid(false); setInvalidNote(""); }}>
+                      Cancelar
+                    </Button>
+                  </div>
+                  {terminateMut.isError && <p className="error-text" style={{ marginTop: "4px", fontSize: "0.8rem" }}>No se pudo marcar.</p>}
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  className="link-button danger-text"
+                  style={{ fontSize: "0.85rem" }}
+                  onClick={() => setConfirmInvalid(true)}
+                >
+                  Marcar como No Válida
+                </Button>
+              )
+            ) : null}
+          </div>
+        )}
       </Card>
 
       <Card className="panel opportunity-card opportunity-bento-card opportunity-contacts-card">
         <div className="opportunity-panel-head">
-          <h2 className="opportunity-card-title">Contactos</h2>
+          <h2 className="opportunity-card-title" style={{ marginBottom: 0 }}>Contactos</h2>
           <div style={{ display: "flex", gap: "0.5rem" }}>
             <Button
               type="button"
@@ -820,6 +889,7 @@ export function OpportunityDetailPage(): JSX.Element {
             </Button>
           </div>
         </div>
+        <hr className="opportunity-card-divider" />
         {contactsDraft.length === 0 ? (
           <p className="muted-text">Aún no hay contactos. Añade correos, teléfonos u otros canales.</p>
         ) : (
@@ -860,14 +930,26 @@ export function OpportunityDetailPage(): JSX.Element {
                     </div>
                     
                     <div className="opportunity-contact-editor-body">
-                      <Input
-                        type="text"
-                        value={c.value}
-                        onChange={(e) => updateContact(idx, { value: e.target.value })}
-                        maxLength={500}
-                        placeholder="Valor del contacto..."
-                        className="ui-input--minimal-value"
-                      />
+                      {c.kind === "linkedin" && isUrl(c.value) ? (
+                        <a
+                          href={c.value}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="link-button"
+                          style={{ fontSize: "0.9rem" }}
+                        >
+                          Ver perfil →
+                        </a>
+                      ) : (
+                        <Input
+                          type="text"
+                          value={c.value}
+                          onChange={(e) => updateContact(idx, { value: e.target.value })}
+                          maxLength={500}
+                          placeholder="Valor del contacto..."
+                          className="ui-input--minimal-value"
+                        />
+                      )}
                       
                       <div className="opportunity-contact-editor-meta">
                         <Input
@@ -919,41 +1001,26 @@ export function OpportunityDetailPage(): JSX.Element {
 
       <Card className="panel opportunity-card opportunity-bento-card opportunity-origin-card opportunity-ficha-area-origin">
         <h2 className="opportunity-card-title opportunity-card-title--flush">Origen</h2>
-        <dl className="opportunity-origin-dl opportunity-origin-dl--compact">
-          <div>
-            <dt>Trabajo de búsqueda</dt>
-            <dd>Job de Búsqueda: "{sourceJobLabel}"</dd>
-          </div>
-        </dl>
+        <hr className="opportunity-card-divider" />
+        <p className="muted-text" style={{ fontSize: "0.9rem", margin: 0 }}>
+          Búsqueda: "{sourceJobLabel}"
+        </p>
+        {data.source_url ? (
+          <p className="muted-text" style={{ fontSize: "0.9rem", marginTop: "6px" }}>
+            Fuente:{" "}
+            <a href={data.source_url} target="_blank" rel="noreferrer" className="link-button">
+              {(() => { try { return new URL(data.source_url).hostname; } catch { return data.source_url; } })()}
+            </a>
+          </p>
+        ) : null}
       </Card>
 
       <div className="opportunity-ficha-twin-row opportunity-ficha-area-twin">
         <Card className="panel opportunity-card opportunity-bento-card opportunity-bitacora-card">
           <div className="opportunity-bitacora-head">
             <h2 className="opportunity-card-title opportunity-card-title--flush">Bitácora de actividad</h2>
-            <div className="opportunity-bitacora-toolbar">
-              <Button
-                type="button"
-                className="opportunity-icon-btn"
-                aria-label="Ir al inicio del historial"
-                title="Ir al inicio del historial"
-                onClick={() => bitacoraScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
-              >
-                <ListFilter size={18} aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                className="opportunity-icon-btn"
-                aria-label="Añadir entrada"
-                onClick={() => {
-                  bitacoraTextareaRef.current?.focus();
-                  bitacoraTextareaRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                }}
-              >
-                <Plus size={18} aria-hidden />
-              </Button>
-            </div>
           </div>
+          <hr className="opportunity-card-divider" />
           <div ref={bitacoraScrollRef} className="opportunity-bitacora-scroll">
             <ul className="opportunity-bitacora-feed">
               {timelineNewestFirst.map((entry, idx) => (
@@ -1001,6 +1068,7 @@ export function OpportunityDetailPage(): JSX.Element {
         {canManageOpportunities && (
           <Card className="panel opportunity-card" style={{ marginTop: "1.5rem" }}>
             <h2 className="opportunity-card-title opportunity-card-title--flush danger-text">Zona peligrosa</h2>
+            <hr className="opportunity-card-divider" />
             {confirmDelete ? (
               <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginTop: "0.75rem" }}>
                 <Button

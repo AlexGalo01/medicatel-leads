@@ -10,7 +10,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: ButtonSize;
 }
 
-export function Button({ className, variant = "default", size = "default", type = "button", ...props }: ButtonProps): JSX.Element {
+export function Button({ className, variant = "ghost", size = "default", type = "button", ...props }: ButtonProps): JSX.Element {
   return (
     <button
       type={type}

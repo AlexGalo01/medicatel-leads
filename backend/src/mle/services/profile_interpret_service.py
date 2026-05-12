@@ -12,6 +12,23 @@ ABOUT_MAX_LEN = 320
 EXPERIENCE_ROLE_MAX_LEN = 200
 EXPERIENCE_ORG_MAX_LEN = 220
 EXPERIENCE_PERIOD_MAX_LEN = 120
+COMPANY_MAX_LEN = 65
+
+_COMPANY_SENTENCE_STARTERS = frozenset([
+    "el ", "la ", "los ", "las ", "un ", "una ", "unos ", "unas ",
+    "desde ", "con ", "para ", "en ", "de ", "que ", "se ", "es ",
+    "su ", "sus ", "al ", "del ", "por ", "entre ", "como ", "a ",
+])
+
+
+def _is_company_sentence(text: str) -> bool:
+    """Returns True if text looks like a description/sentence rather than a company name."""
+    if not text:
+        return False
+    if len(text) > COMPANY_MAX_LEN:
+        return True
+    lower = text.lower()
+    return any(lower.startswith(s) for s in _COMPANY_SENTENCE_STARTERS)
 
 
 def _fallback_interpret(source_text: str) -> dict[str, str | None]:
@@ -315,7 +332,8 @@ def _fallback_profile_summary(
         left, _, right = base_text.partition(" en ")
         if left and right:
             maybe_company = right.split("|")[0].split("/")[0].strip()
-            company = _sanitize_summary_text(maybe_company, max_len=120)
+            company_candidate = _sanitize_summary_text(maybe_company, max_len=COMPANY_MAX_LEN)
+            company = company_candidate if company_candidate and not _is_company_sentence(company_candidate) else None
     location = _sanitize_summary_text(city, max_len=120)
     return {
         "professional_summary": summary,
@@ -406,7 +424,8 @@ async def extract_profile_summary(
                 about_stripped, max_len=ABOUT_MAX_LEN, at_word_boundary=True
             )
 
-        company = _sanitize_summary_text(parsed.get("company"), max_len=120, at_word_boundary=True)
+        company_raw = _sanitize_summary_text(parsed.get("company"), max_len=COMPANY_MAX_LEN, at_word_boundary=True)
+        company = company_raw if company_raw and not _is_company_sentence(company_raw) else None
         location = _sanitize_summary_text(parsed.get("location"), max_len=120, at_word_boundary=True)
         experiences_raw = parsed.get("experiences")
         experiences: list[dict[str, str | None]] = []

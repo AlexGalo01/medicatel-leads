@@ -188,7 +188,7 @@ export interface OpportunityOwnerSnippet {
   email: string;
 }
 
-export type OpportunityTerminatedOutcome = "won" | "lost" | "no_response";
+export type OpportunityTerminatedOutcome = "won" | "lost" | "no_response" | "no_valida";
 
 export interface OpportunityResponse {
   opportunity_id: string;

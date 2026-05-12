@@ -30,9 +30,7 @@ export function DirectoryCreatePage(): JSX.Element {
       createDirectory({
         name: name.trim(),
         description: description.trim() || null,
-        steps: steps
-          .filter((s) => s.name.trim().length > 0)
-          .map((s) => ({
+        steps: steps.map((s) => ({
             name: s.name.trim(),
             is_terminal: s.is_terminal,
             is_won: s.is_won,
@@ -49,7 +47,11 @@ export function DirectoryCreatePage(): JSX.Element {
     onError: (e: Error) => setError(e.message),
   });
 
-  const canSubmit = name.trim().length > 0 && steps.some((s) => s.name.trim().length > 0);
+  const hasEmptyStepName = steps.some((s) => s.name.trim().length === 0);
+  const canSubmit =
+    name.trim().length > 0 &&
+    steps.length > 0 &&
+    !hasEmptyStepName;
 
   return (
     <section className="directory-create-page">
@@ -107,13 +109,19 @@ export function DirectoryCreatePage(): JSX.Element {
 
         <StepsEditor steps={steps} onChange={setSteps} />
 
+        {steps.length === 0 && (
+          <p className="error-text" style={{ fontSize: "0.85rem" }}>Agrega al menos un paso al flujo.</p>
+        )}
+        {hasEmptyStepName && (
+          <p className="error-text" style={{ fontSize: "0.85rem" }}>Todos los pasos deben tener un nombre.</p>
+        )}
         {error ? <p className="error-text">{error}</p> : null}
 
         <footer className="directory-create-actions">
           <Link to="/directories" className="link-button">
             Cancelar
           </Link>
-          <Button type="submit" disabled={!canSubmit || mutation.isPending}>
+          <Button type="submit" className="cta-button" disabled={!canSubmit || mutation.isPending}>
             {mutation.isPending ? "Creando…" : "Crear directorio"}
           </Button>
         </footer>

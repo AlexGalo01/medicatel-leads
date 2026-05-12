@@ -375,7 +375,7 @@ export function DirectoryBoardPage(): JSX.Element {
           className={`directory-board-tab${activeTab === "board" ? " is-active" : ""}`}
           onClick={() => setActiveTab("board")}
         >
-          Tablero
+          Tablero de Oportunidades
           <span className="directory-board-tab-count">
             {itemsQuery.data?.items.filter((i) => !i.terminated_at).length ?? 0}
           </span>

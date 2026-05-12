@@ -25,8 +25,8 @@ function SourceBadge({ src }: { src: string }) {
 
 export const ENRICH_STAGES = [
   "Buscando información del perfil en la web...",
-  "Consultando Google Maps y Knowledge Panel...",
   "Visitando páginas personales y redes sociales...",
+  "Consultando datos locales y redes sociales...",
   "Verificando datos con inteligencia artificial...",
 ];
 
@@ -82,8 +82,19 @@ export function EnrichContactModal({
 
         {isPending && (
           <div className="enrich-modal-loading">
-            <Loader2 className="spin" size={32} aria-hidden />
-            <p className="enrich-modal-stage">{ENRICH_STAGES[stageIdx]}</p>
+            <ul className="enrich-modal-steps">
+              {ENRICH_STAGES.map((stage, i) => (
+                <li
+                  key={i}
+                  className={`enrich-modal-step-item${i < stageIdx ? " is-done" : i === stageIdx ? " is-active" : " is-pending"}`}
+                >
+                  <span className="enrich-modal-step-icon" aria-hidden>
+                    {i < stageIdx ? "✓" : i === stageIdx ? <Loader2 className="spin" size={13} /> : "○"}
+                  </span>
+                  <span className="enrich-modal-step-text">{stage}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 

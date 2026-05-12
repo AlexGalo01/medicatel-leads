@@ -1357,6 +1357,18 @@ async def create_opportunity_from_preview(
             opp.current_step_id = step.id
             opp.directory_id = step.directory_id
             await session.commit()
+        elif created and opp.directory_id and not opp.current_step_id:
+            # Auto-assign the first non-terminal step of the directory
+            first_step_result = await session.execute(
+                select(DirectoryStep)
+                .where(DirectoryStep.directory_id == opp.directory_id, DirectoryStep.is_terminal == False)  # noqa: E712
+                .order_by(DirectoryStep.display_order)
+                .limit(1)
+            )
+            first_step = first_step_result.scalars().first()
+            if first_step is not None:
+                opp.current_step_id = first_step.id
+                await session.commit()
 
         await session.refresh(opp)
         owner = await _load_owner_user(session, opp)
@@ -1371,6 +1383,18 @@ async def create_opportunity_manual(
 ) -> OpportunityResponse:
     async with async_session_factory() as session:
         repo = OpportunitiesRepository(session)
+        # Resolve step_id: if not provided but directory_id is, auto-assign first step
+        resolved_step_id = payload.step_id
+        if not resolved_step_id and payload.directory_id:
+            first_step_result = await session.execute(
+                select(DirectoryStep)
+                .where(DirectoryStep.directory_id == payload.directory_id, DirectoryStep.is_terminal == False)  # noqa: E712
+                .order_by(DirectoryStep.display_order)
+                .limit(1)
+            )
+            first_step = first_step_result.scalars().first()
+            if first_step is not None:
+                resolved_step_id = first_step.id
         opp = await repo.create_manual(
             title=payload.title,
             specialty=payload.specialty,
@@ -1379,7 +1403,7 @@ async def create_opportunity_manual(
             snippet=payload.snippet,
             owner_user_id=current.id,
             directory_id=payload.directory_id,
-            current_step_id=payload.step_id,
+            current_step_id=resolved_step_id,
             contacts=[c.model_dump() for c in payload.contacts] if payload.contacts else [],
         )
         owner = await _load_owner_user(session, opp)

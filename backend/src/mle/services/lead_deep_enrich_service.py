@@ -153,13 +153,20 @@ def _extract_regex_contacts(text: str, source_url: str) -> list[dict[str, str]]:
         r"(?:^|\s)(\d{4})[\s\-](\d{4})(?:\s|$)",       # XXXX-XXXX en contexto
     ]
 
+    # Valid Honduras prefixes: 2xxx landline, 3/7/8/9xxx mobile
+    _HN_PREFIXES = frozenset("23789")
+
     found_phones: set[str] = set()
     for pattern in phone_patterns:
         for match in re.finditer(pattern, text, re.IGNORECASE):
             groups = [g for g in match.groups() if g]
             phone_str = "".join(groups) if groups else ""
             digits = _digits_only(phone_str)
-            if 7 <= len(digits) <= 8 and digits not in ["0000000", "00000000"]:
+            if (
+                7 <= len(digits) <= 8
+                and digits not in ["0000000", "00000000"]
+                and digits[0] in _HN_PREFIXES
+            ):
                 phone_formatted = f"{digits[:4]}-{digits[4:]}" if len(digits) == 8 else digits
                 found_phones.add(phone_formatted)
 

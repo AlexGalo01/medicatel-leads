@@ -210,7 +210,7 @@ a:hover {
 }
 
 .ui-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
+  opacity: 0.9;
 }
 
 .ui-btn:focus-visible {
@@ -224,8 +224,8 @@ a:hover {
 }
 
 .ui-btn--default:hover:not(:disabled) {
-  background: var(--color-primary-hover);
-  box-shadow: var(--shadow-primary-hover);
+  background: var(--color-primary);
+  opacity: 0.88;
 }
 
 .ui-btn--secondary {
@@ -1443,8 +1443,6 @@ textarea {
 
 .cta-button:hover:not(:disabled) {
   background: var(--color-primary-hover);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-primary-hover);
 }
 
 .cta-button:focus-visible,
@@ -1467,9 +1465,12 @@ textarea {
   padding: 6px 8px;
 }
 
-.link-button:hover {
+.link-button:hover,
+.ui-btn.link-button:hover:not(:disabled) {
   color: var(--color-primary-hover);
   background: var(--color-primary-tint);
+  box-shadow: none;
+  transform: none;
 }
 
 .status-grid {
@@ -2482,6 +2483,11 @@ textarea {
   }
 }
 
+/* Global spin utility — applies to any element with class="spin" anywhere */
+.spin {
+  animation: spinRing 0.85s linear infinite;
+}
+
 /* --- Búsqueda workspace (alineado con diseño Pencil) --- */
 .search-workspace {
   display: flex;
@@ -2788,6 +2794,13 @@ textarea {
   color: var(--color-text-primary);
   font-size: 12px;
   cursor: pointer;
+}
+
+.workspace-tool-btn:hover:not(:disabled),
+.ui-btn.workspace-tool-btn:hover:not(:disabled) {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+  opacity: 1;
 }
 
 /* Button (ui-btn--default) + workspace-tool-btn: evitar texto blanco sobre fondo claro */
@@ -3881,6 +3894,11 @@ textarea {
   text-decoration: none;
 }
 
+.opportunities-row-link:hover {
+  transform: none;
+  box-shadow: none;
+}
+
 /* Loading state */
 .opportunities-loading-state {
   display: flex;
@@ -4452,14 +4470,45 @@ textarea {
 }
 
 .opportunity-card-title {
-  margin: 0 0 12px;
-  font-size: 1.05rem;
+  margin: 0 0 8px;
+  font-size: 1.2rem;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
 
 .opportunity-card-title--flush {
   margin: 0;
+}
+
+.opportunity-card-divider {
+  border: none;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+  margin: 8px 0 14px;
+}
+
+.opportunity-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.opportunity-card-edit-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.opportunity-card-edit-btn:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
 }
 
 .opportunity-bitacora-head {
@@ -4733,8 +4782,9 @@ textarea {
   gap: 8px;
   width: 100%;
   padding: 0 4px 4px;
-  border: none;
-  background: transparent;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
   cursor: pointer;
   color: inherit;
   font: inherit;
@@ -4743,6 +4793,9 @@ textarea {
 
 .opportunity-journey-node:hover {
   opacity: 0.8;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
 }
 
 .opportunity-journey-node:focus-visible {
@@ -5147,6 +5200,14 @@ textarea {
 
 .danger-text {
   color: var(--color-error);
+}
+
+.ui-btn.danger-text:hover:not(:disabled),
+.ui-btn.link-button.danger-text:hover:not(:disabled) {
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  box-shadow: none;
+  transform: none;
 }
 
 .danger-button {
@@ -7307,19 +7368,41 @@ textarea {
 }
 
 .enrich-modal-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1rem;
-  padding: 2.5rem 1.5rem;
+  padding: 1.5rem 1rem;
 }
 
-.enrich-modal-stage {
-  font-size: 0.9rem;
-  color: var(--text-muted, #6b7280);
-  text-align: center;
-  min-height: 1.4em;
+.enrich-modal-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
+
+.enrich-modal-step-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.875rem;
+}
+
+.enrich-modal-step-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.enrich-modal-step-item.is-done .enrich-modal-step-icon { color: var(--color-success); }
+.enrich-modal-step-item.is-done .enrich-modal-step-text { color: var(--color-text-secondary); text-decoration: line-through; }
+.enrich-modal-step-item.is-active .enrich-modal-step-icon { color: var(--color-primary); }
+.enrich-modal-step-item.is-active .enrich-modal-step-text { color: var(--color-text); font-weight: 500; }
+.enrich-modal-step-item.is-pending .enrich-modal-step-icon { color: var(--color-neutral); }
+.enrich-modal-step-item.is-pending .enrich-modal-step-text { color: var(--color-text-secondary); }
 
 .enrich-modal-results {
   padding: 1.25rem;
