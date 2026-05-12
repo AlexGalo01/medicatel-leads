@@ -268,7 +268,8 @@ export function OpportunityDetailPage(): JSX.Element {
     setAboutDraft(mergeAbout(overrides, rawAbout));
     setLocationDraft(mergeLocation(overrides, aiLocationRaw));
     if (!objectHasOwn(overrides, "company")) {
-      setCompanyDraft(profileSummaryQuery.data?.company?.trim() || "");
+      const aiCompany = profileSummaryQuery.data?.company?.trim() || "";
+      setCompanyDraft(["null", "undefined", "N/A", "n/a"].includes(aiCompany) ? "" : aiCompany);
     }
     if (!objectHasOwn(overrides, "experiences") && profileSummaryQuery.data?.experiences?.length) {
       setExperiencesDraft((profileSummaryQuery.data.experiences).map((e) => ({
@@ -835,7 +836,7 @@ export function OpportunityDetailPage(): JSX.Element {
                     </Button>
                   </div>
                 ) : (
-                  <p className="muted-text">{companyDraft || "No especificada"}</p>
+                  <p className="muted-text">{(companyDraft && companyDraft !== "null" && companyDraft !== "undefined") ? companyDraft : "No especificada"}</p>
                 )}
               </article>
             </div>
