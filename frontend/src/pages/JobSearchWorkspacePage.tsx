@@ -363,15 +363,20 @@ export function JobSearchWorkspacePage(): JSX.Element {
     const unsaved = (jobStatusQuery.data?.suggested_source_urls ?? []).filter(
       (s) => !savedSourceUrls.has(s.url),
     );
-    for (const s of unsaved) {
-      try {
-        await createDirectorySource(dirId, {
+    const results = await Promise.allSettled(
+      unsaved.map((s) =>
+        createDirectorySource(dirId, {
           url: s.url,
           title: s.title,
           source_search_job_id: jobId,
-        });
-        setSavedSourceUrls((prev) => new Set([...prev, s.url]));
-      } catch { /* silent */ }
+        }).then(() => s.url),
+      ),
+    );
+    const saved = results
+      .filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled")
+      .map((r) => r.value);
+    if (saved.length > 0) {
+      setSavedSourceUrls((prev) => new Set([...prev, ...saved]));
     }
     setSavingAllSources(false);
     setAllSourcesDirPickerOpen(false);
@@ -744,27 +749,37 @@ export function JobSearchWorkspacePage(): JSX.Element {
                   {savingAllSources ? "Guardando…" : `Guardar todas (${unsavedSources.length})`}
                 </Button>
               ) : allSourcesDirPickerOpen ? (
-                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                  <select
-                    className="workspace-v3-sources-dir-select"
-                    value={allSourcesDirId}
-                    onChange={(e) => setAllSourcesDirId(e.target.value)}
-                  >
-                    <option value="">Directorio…</option>
-                    {(directoriesQuery.data?.items ?? []).map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
+                <div className="sources-dir-picker">
+                  <div className="sources-dir-picker-list">
+                    {directoriesQuery.isLoading ? (
+                      <span className="muted-text" style={{ fontSize: 12, padding: "6px 10px", display: "block" }}>
+                        <Loader2 className="spin" size={12} aria-hidden /> Cargando…
+                      </span>
+                    ) : (directoriesQuery.data?.items ?? []).map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        className={`sources-dir-picker-opt${allSourcesDirId === d.id ? " is-selected" : ""}`}
+                        onClick={() => setAllSourcesDirId(d.id)}
+                      >
+                        {d.name}
+                      </button>
                     ))}
-                  </select>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={!allSourcesDirId || savingAllSources}
-                    onClick={() => handleSaveAllSources(allSourcesDirId)}
-                  >
-                    {savingAllSources ? "…" : "OK"}
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setAllSourcesDirPickerOpen(false)}>✕</Button>
+                  </div>
+                  <div className="sources-dir-picker-actions">
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="sm"
+                      disabled={!allSourcesDirId || savingAllSources}
+                      onClick={() => handleSaveAllSources(allSourcesDirId)}
+                    >
+                      {savingAllSources ? <><Loader2 className="spin" size={12} aria-hidden /> Guardando…</> : "Guardar"}
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => { setAllSourcesDirPickerOpen(false); setAllSourcesDirId(""); }}>
+                      Cancelar
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <Button
@@ -832,49 +847,50 @@ export function JobSearchWorkspacePage(): JSX.Element {
                     savedSourceUrls.has(s.url) ? (
                       <span className="workspace-v3-sources-saved">✓ Guardado</span>
                     ) : sourcePickerUrl === s.url ? (
-                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                        <select
-                          className="workspace-v3-sources-dir-select"
-                          value={sourcePickerDirId}
-                          onChange={(e) => setSourcePickerDirId(e.target.value)}
-                        >
-                          <option value="">Elegir directorio…</option>
+                      <div className="sources-dir-picker sources-dir-picker--inline">
+                        <div className="sources-dir-picker-list">
                           {(directoriesQuery.data?.items ?? []).map((d) => (
-                            <option key={d.id} value={d.id}>{d.name}</option>
+                            <button
+                              key={d.id}
+                              type="button"
+                              className={`sources-dir-picker-opt${sourcePickerDirId === d.id ? " is-selected" : ""}`}
+                              onClick={() => setSourcePickerDirId(d.id)}
+                            >
+                              {d.name}
+                            </button>
                           ))}
-                        </select>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="workspace-v3-sources-btn"
-                          disabled={!sourcePickerDirId}
-                          onClick={async () => {
-                            if (!sourcePickerDirId) return;
-                            try {
-                              await createDirectorySource(sourcePickerDirId, {
-                                url: s.url,
-                                title: s.title,
-                                source_search_job_id: jobId,
-                              });
-                              setSavedSourceUrls((prev) => new Set([...prev, s.url]));
-                              setSourcePickerUrl(null);
-                              setSourcePickerDirId("");
-                            } catch {
-                              // silent
-                            }
-                          }}
-                        >
-                          Guardar
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => { setSourcePickerUrl(null); setSourcePickerDirId(""); }}
-                        >
-                          ✕
-                        </Button>
+                        </div>
+                        <div className="sources-dir-picker-actions">
+                          <Button
+                            type="button"
+                            variant="default"
+                            size="sm"
+                            disabled={!sourcePickerDirId}
+                            onClick={async () => {
+                              if (!sourcePickerDirId) return;
+                              try {
+                                await createDirectorySource(sourcePickerDirId, {
+                                  url: s.url,
+                                  title: s.title,
+                                  source_search_job_id: jobId,
+                                });
+                                setSavedSourceUrls((prev) => new Set([...prev, s.url]));
+                                setSourcePickerUrl(null);
+                                setSourcePickerDirId("");
+                              } catch { /* silent */ }
+                            }}
+                          >
+                            Guardar
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => { setSourcePickerUrl(null); setSourcePickerDirId(""); }}
+                          >
+                            Cancelar
+                          </Button>
+                        </div>
                       </div>
                     ) : (
                       <Button
