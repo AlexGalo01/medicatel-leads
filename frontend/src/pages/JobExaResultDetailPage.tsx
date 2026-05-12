@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Briefcase, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Search } from "lucide-react";
+import { Bookmark, Briefcase, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Search } from "lucide-react";
 
 import {
+  createDirectorySource,
   createOpportunityFromPreview,
   downloadPreviewResultXlsx,
   getOpportunityByPreview,
   getSearchJobStatus,
+  listDirectories,
   summarizeProfile,
   enrichOpportunity,
   savePreviewContact,
@@ -98,12 +100,42 @@ export function JobExaResultDetailPage(): JSX.Element {
   const [enrichModalOpen, setEnrichModalOpen] = useState(false);
   const [enrichStageIdx, setEnrichStageIdx] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
+  const [savedAsSource, setSavedAsSource] = useState(false);
+  const [savingAsSource, setSavingAsSource] = useState(false);
+  const [sourceDirPickerOpen, setSourceDirPickerOpen] = useState(false);
+  const [sourceDirId, setSourceDirId] = useState("");
 
   const jobQuery = useQuery({
     queryKey: ["job-status", jobId],
     queryFn: () => getSearchJobStatus(jobId),
     enabled: Boolean(jobId),
   });
+
+  const jobDirectoryId = (jobQuery.data as unknown as { directory_id?: string })?.directory_id ?? null;
+
+  const directoriesQuery = useQuery({
+    queryKey: ["directories"],
+    queryFn: listDirectories,
+    staleTime: 60_000,
+    enabled: sourceDirPickerOpen,
+  });
+
+  const saveAsSource = async (dirId: string) => {
+    if (!url) return;
+    setSavingAsSource(true);
+    try {
+      await createDirectorySource(dirId, {
+        url,
+        title,
+        source_search_job_id: jobId,
+      });
+      setSavedAsSource(true);
+      setSourceDirPickerOpen(false);
+      setSourceDirId("");
+    } catch { /* silent */ } finally {
+      setSavingAsSource(false);
+    }
+  };
 
   const row = useMemo(
     () => (resultIndex != null ? findPreviewRow(jobQuery.data?.exa_results_preview, resultIndex) : undefined),
@@ -531,6 +563,68 @@ export function JobExaResultDetailPage(): JSX.Element {
               </p>
             ) : null}
           </Card>
+
+          {url ? (
+            <Card className="panel lead-detail-opportunity-card">
+              <div className="lead-detail-opportunity-icon" aria-hidden>
+                <Bookmark size={22} />
+              </div>
+              <h2 className="lead-detail-section-title">Fuente</h2>
+              <p className="muted-text lead-detail-opportunity-copy">
+                Guarda esta URL como fuente de un directorio para explorarla más adelante.
+              </p>
+              {savedAsSource ? (
+                <p className="muted-text" style={{ fontSize: 13 }}>✓ Guardado como fuente</p>
+              ) : jobDirectoryId ? (
+                <Button
+                  type="button"
+                  className="cta-button lead-detail-opportunity-cta"
+                  disabled={savingAsSource}
+                  onClick={() => saveAsSource(jobDirectoryId)}
+                >
+                  {savingAsSource ? <Loader2 className="spin" size={16} aria-hidden /> : null}
+                  Guardar como fuente
+                </Button>
+              ) : sourceDirPickerOpen ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+                  <select
+                    className="workspace-v3-sources-dir-select"
+                    style={{ width: "100%" }}
+                    value={sourceDirId}
+                    onChange={(e) => setSourceDirId(e.target.value)}
+                  >
+                    <option value="">Elegir directorio…</option>
+                    {(directoriesQuery.data?.items ?? []).map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="sm"
+                      disabled={!sourceDirId || savingAsSource}
+                      onClick={() => saveAsSource(sourceDirId)}
+                    >
+                      {savingAsSource ? <Loader2 className="spin" size={13} aria-hidden /> : null}
+                      Guardar
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setSourceDirPickerOpen(false)}>
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  className="cta-button lead-detail-opportunity-cta"
+                  onClick={() => setSourceDirPickerOpen(true)}
+                >
+                  Guardar como fuente
+                </Button>
+              )}
+            </Card>
+          ) : null}
         </aside>
       </div>
 

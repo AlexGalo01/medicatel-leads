@@ -6493,7 +6493,7 @@ textarea {
 }
 
 .workspace-v3-split:has(.workspace-v3-split-sidebar) {
-  grid-template-columns: 1fr 320px;
+  grid-template-columns: 1fr 380px;
 }
 
 .workspace-v3-split-main {
@@ -6505,8 +6505,6 @@ textarea {
 .workspace-v3-split-sidebar {
   position: sticky;
   top: var(--space-4);
-  max-height: calc(100vh - 100px);
-  overflow-y: auto;
 }
 
 @media (max-width: 1024px) {
@@ -6751,7 +6749,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 var(--space-4);
+  padding: 0 8px 0 12px;
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -6762,10 +6760,10 @@ textarea {
 
 .workspace-v3-row-link {
   display: grid;
-  grid-template-columns: 36px 1fr auto auto 14px;
+  grid-template-columns: 28px 1fr auto auto 14px;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-5);
+  gap: var(--space-2);
+  padding: 8px 16px;
   text-decoration: none;
   color: var(--color-text);
   transition: background 0.15s ease;
@@ -6778,8 +6776,8 @@ textarea {
 }
 
 .workspace-v3-avatar {
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   border-radius: 9999px;
   background: var(--color-surface-alt);
   color: var(--color-text-secondary);
@@ -6788,7 +6786,7 @@ textarea {
   justify-content: center;
   font-family: var(--font-display);
   font-weight: var(--font-weight-semibold);
-  font-size: 14px;
+  font-size: 12px;
   flex-shrink: 0;
 }
 
@@ -6954,6 +6952,42 @@ textarea {
   background: #fff;
   color: var(--color-text-primary, #111827);
   max-width: 180px;
+}
+
+/* Selectores Resultado/Fuente por fila */
+.workspace-v3-row-selectors {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.workspace-v3-source-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--color-text-muted, #6b7280);
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.workspace-v3-source-toggle:hover {
+  background: var(--color-bg-hover, #f3f4f6);
+  color: var(--color-text-primary, #111827);
+}
+
+.workspace-v3-source-toggle.is-active {
+  color: var(--color-primary, #2563eb);
+}
+
+.workspace-v3-source-toggle.is-active svg {
+  fill: currentColor;
 }
 
 /* ===== LPA Section ===== */

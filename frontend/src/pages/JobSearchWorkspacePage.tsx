@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ChevronRight, Download, FileSpreadsheet, Loader2, Mail, Phone, Linkedin, MessageCircle } from "lucide-react";
+import { Bookmark, ChevronRight, Download, FileSpreadsheet, Loader2, Mail, Phone, Linkedin, MessageCircle } from "lucide-react";
 
 import { UrlScraperModal } from "../features/directories/components/UrlScraperModal";
 import {
@@ -132,10 +132,16 @@ export function JobSearchWorkspacePage(): JSX.Element {
 
   // Opportunity selection and modal state
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  const [selectedSourceIndices, setSelectedSourceIndices] = useState<Set<number>>(new Set());
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [selectedDirectoryId, setSelectedDirectoryId] = useState<string | null>(null);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Bulk save de fuentes del panel
+  const [savingAllSources, setSavingAllSources] = useState(false);
+  const [allSourcesDirPickerOpen, setAllSourcesDirPickerOpen] = useState(false);
+  const [allSourcesDirId, setAllSourcesDirId] = useState("");
 
   const [lpaOpen, setLpaOpen] = useState(false);
 
@@ -312,27 +318,71 @@ export function JobSearchWorkspacePage(): JSX.Element {
   }, [jobId, searchOnlyDemo, setSearchParams]);
 
   const handleSaveSelected = async () => {
-    if (!selectedStepId) return;
+    if (selectedIndices.size > 0 && !selectedStepId) return;
+    const dirId = directoryId || selectedDirectoryId;
+    if (selectedSourceIndices.size > 0 && !dirId) return;
     setSaving(true);
-    const toSave = Array.from(selectedIndices);
-    for (const previewIndex of toSave) {
+
+    // Guardar como oportunidades
+    for (const previewIndex of Array.from(selectedIndices)) {
       await createOpportunityFromPreview({
         job_id: jobId,
         exa_preview_index: previewIndex,
-        step_id: selectedStepId,
+        step_id: selectedStepId || undefined,
       });
     }
+
+    // Guardar como fuentes
+    if (dirId) {
+      for (const previewIndex of Array.from(selectedSourceIndices)) {
+        const previewRow = previewRows.find((r) => r.index === previewIndex);
+        if (previewRow) {
+          try {
+            await createDirectorySource(dirId, {
+              url: previewRow.url,
+              title: previewRow.title,
+              source_search_job_id: jobId,
+            });
+            setSavedSourceUrls((prev) => new Set([...prev, previewRow.url]));
+          } catch { /* silent */ }
+        }
+      }
+    }
+
     void queryClient.invalidateQueries({ queryKey: ["job-opportunities", jobId] });
     setSelectedIndices(new Set());
+    setSelectedSourceIndices(new Set());
     setSaveModalOpen(false);
     setSelectedDirectoryId(null);
     setSelectedStepId(null);
     setSaving(false);
   };
 
-  const unsavedCount = rows.filter(
+  const handleSaveAllSources = async (dirId: string) => {
+    setSavingAllSources(true);
+    const unsaved = (jobStatusQuery.data?.suggested_source_urls ?? []).filter(
+      (s) => !savedSourceUrls.has(s.url),
+    );
+    for (const s of unsaved) {
+      try {
+        await createDirectorySource(dirId, {
+          url: s.url,
+          title: s.title,
+          source_search_job_id: jobId,
+        });
+        setSavedSourceUrls((prev) => new Set([...prev, s.url]));
+      } catch { /* silent */ }
+    }
+    setSavingAllSources(false);
+    setAllSourcesDirPickerOpen(false);
+    setAllSourcesDirId("");
+  };
+
+  const unsavedRows = rows.filter(
     (r) => r.previewIndex != null && !oppByPreviewIndex.has(r.previewIndex),
-  ).length;
+  );
+  const unsavedCount = unsavedRows.length;
+  const totalSelected = selectedIndices.size + selectedSourceIndices.size;
 
   useEffect(() => {
     setWorkspaceClarifyReply("");
@@ -406,25 +456,24 @@ export function JobSearchWorkspacePage(): JSX.Element {
                   size="sm"
                   disabled={unsavedCount === 0 || saving}
                   onClick={() => {
-                    const notSaved = rows
-                      .filter((r) => r.previewIndex != null && !oppByPreviewIndex.has(r.previewIndex!))
-                      .map((r) => r.previewIndex!);
+                    const notSaved = unsavedRows.map((r) => r.previewIndex!);
                     setSelectedIndices(new Set(notSaved));
+                    setSelectedSourceIndices(new Set());
                     setSaveModalOpen(true);
                   }}
                   className="btn-save-all-opp"
                 >
                   {saving ? "Guardando…" : `Guardar todos (${unsavedCount})`}
                 </Button>
-                {selectedIndices.size > 0 && (
+                {totalSelected > 0 && (
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
-                    disabled={selectedIndices.size === 0 || saving}
+                    disabled={totalSelected === 0 || saving}
                     onClick={() => setSaveModalOpen(true)}
                   >
-                    Crear Oportunidades ({selectedIndices.size})
+                    Guardar seleccionados ({totalSelected})
                   </Button>
                 )}
                 <Button
@@ -572,22 +621,43 @@ export function JobSearchWorkspacePage(): JSX.Element {
           <ul className="workspace-v3-list">
             {paginated.map((row) => (
               <li key={row.id} className="workspace-v3-row">
-                {/* Checkbox wrapper for search-only mode */}
+                {/* Checkboxes: Resultado / Fuente */}
                 {searchOnlyDemo && row.previewIndex != null && !oppByPreviewIndex.has(row.previewIndex) && (
-                  <label className="workspace-v3-checkbox-label">
-                    <input
-                      type="checkbox"
-                      className="workspace-v3-checkbox-input"
-                      checked={selectedIndices.has(row.previewIndex)}
-                      onChange={() => {
-                        setSelectedIndices((prev) => {
+                  <div className="workspace-v3-row-selectors">
+                    <label className="workspace-v3-checkbox-label" title="Guardar como oportunidad">
+                      <input
+                        type="checkbox"
+                        className="workspace-v3-checkbox-input"
+                        checked={selectedIndices.has(row.previewIndex)}
+                        onChange={() => {
+                          const idx = row.previewIndex!;
+                          setSelectedIndices((prev) => {
+                            const next = new Set(prev);
+                            next.has(idx) ? next.delete(idx) : next.add(idx);
+                            return next;
+                          });
+                          setSelectedSourceIndices((prev) => { const next = new Set(prev); next.delete(idx); return next; });
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className={`workspace-v3-source-toggle${selectedSourceIndices.has(row.previewIndex) ? " is-active" : ""}`}
+                      title={selectedSourceIndices.has(row.previewIndex) ? "Marcado como fuente" : "Marcar como fuente"}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        const idx = row.previewIndex!;
+                        setSelectedSourceIndices((prev) => {
                           const next = new Set(prev);
-                          next.has(row.previewIndex!) ? next.delete(row.previewIndex!) : next.add(row.previewIndex!);
+                          next.has(idx) ? next.delete(idx) : next.add(idx);
                           return next;
                         });
+                        setSelectedIndices((prev) => { const next = new Set(prev); next.delete(idx); return next; });
                       }}
-                    />
-                  </label>
+                    >
+                      <Bookmark size={14} />
+                    </button>
+                  </div>
                 )}
                 <Link to={row.href} className="workspace-v3-row-link">
                   <span className="workspace-v3-avatar" aria-hidden>
@@ -654,7 +724,61 @@ export function JobSearchWorkspacePage(): JSX.Element {
 
       {!isProcessing && (jobStatusQuery.data?.suggested_source_urls ?? []).length > 0 ? (
         <section className="workspace-v3-sources workspace-v3-split-sidebar">
-          <h3>Fuentes para explorar</h3>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+            <h3 style={{ margin: 0 }}>Fuentes para explorar</h3>
+            {(() => {
+              const unsavedSources = (jobStatusQuery.data?.suggested_source_urls ?? []).filter(
+                (s) => !savedSourceUrls.has(s.url),
+              );
+              if (unsavedSources.length === 0) return null;
+              return directoryId ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="workspace-v3-sources-btn"
+                  disabled={savingAllSources}
+                  onClick={() => handleSaveAllSources(directoryId)}
+                >
+                  {savingAllSources ? <Loader2 className="spin" size={12} aria-hidden /> : null}
+                  {savingAllSources ? "Guardando…" : `Guardar todas (${unsavedSources.length})`}
+                </Button>
+              ) : allSourcesDirPickerOpen ? (
+                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  <select
+                    className="workspace-v3-sources-dir-select"
+                    value={allSourcesDirId}
+                    onChange={(e) => setAllSourcesDirId(e.target.value)}
+                  >
+                    <option value="">Directorio…</option>
+                    {(directoriesQuery.data?.items ?? []).map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={!allSourcesDirId || savingAllSources}
+                    onClick={() => handleSaveAllSources(allSourcesDirId)}
+                  >
+                    {savingAllSources ? "…" : "OK"}
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setAllSourcesDirPickerOpen(false)}>✕</Button>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="workspace-v3-sources-btn"
+                  onClick={() => setAllSourcesDirPickerOpen(true)}
+                >
+                  Guardar todas ({unsavedSources.length})
+                </Button>
+              );
+            })()}
+          </div>
           <p className="muted-text">
             Directorios y páginas de listado que pueden contener más contactos del sector.
           </p>
@@ -843,31 +967,39 @@ export function JobSearchWorkspacePage(): JSX.Element {
                 : "¿A qué directorio enviar?"}
             </h3>
             <p className="modal-save-opp-subtitle">
-              {selectedIndices.size} resultado(s) seleccionado(s)
+              {selectedIndices.size > 0 && `${selectedIndices.size} oportunidad${selectedIndices.size !== 1 ? "es" : ""}`}
+              {selectedIndices.size > 0 && selectedSourceIndices.size > 0 && " · "}
+              {selectedSourceIndices.size > 0 && `${selectedSourceIndices.size} fuente${selectedSourceIndices.size !== 1 ? "s" : ""}`}
             </p>
 
             {directoryId && directoryQuery.data ? (
-              <div className="modal-save-opp-steps" style={{ marginTop: "16px" }}>
-                <p style={{ marginBottom: "8px", fontSize: "13px", color: "var(--text-muted)" }}>Selecciona la fase:</p>
-                {directoryQuery.data.steps.filter((s) => !s.is_terminal).length === 0 ? (
-                  <p className="modal-save-opp-empty muted-text">Sin steps disponibles</p>
-                ) : (
-                  directoryQuery.data.steps
-                    .filter((s) => !s.is_terminal)
-                    .map((step) => (
-                      <button
-                        key={step.id}
-                        type="button"
-                        className={`modal-save-opp-step-btn${
-                          selectedStepId === step.id ? " is-selected" : ""
-                        }`}
-                        onClick={() => setSelectedStepId(step.id)}
-                      >
-                        {step.name}
-                      </button>
-                    ))
-                )}
-              </div>
+              selectedIndices.size > 0 ? (
+                <div className="modal-save-opp-steps" style={{ marginTop: "16px" }}>
+                  <p style={{ marginBottom: "8px", fontSize: "13px", color: "var(--text-muted)" }}>Selecciona la fase:</p>
+                  {directoryQuery.data.steps.filter((s) => !s.is_terminal).length === 0 ? (
+                    <p className="modal-save-opp-empty muted-text">Sin steps disponibles</p>
+                  ) : (
+                    directoryQuery.data.steps
+                      .filter((s) => !s.is_terminal)
+                      .map((step) => (
+                        <button
+                          key={step.id}
+                          type="button"
+                          className={`modal-save-opp-step-btn${
+                            selectedStepId === step.id ? " is-selected" : ""
+                          }`}
+                          onClick={() => setSelectedStepId(step.id)}
+                        >
+                          {step.name}
+                        </button>
+                      ))
+                  )}
+                </div>
+              ) : (
+                <p className="muted-text" style={{ marginTop: 12, fontSize: 13 }}>
+                  Se guardarán en <strong>{directoryQuery.data.name}</strong>.
+                </p>
+              )
             ) : (
               <>
                 {directoriesQuery.isLoading && (
@@ -935,7 +1067,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                 variant="default"
                 size="sm"
                 onClick={handleSaveSelected}
-                disabled={!selectedStepId || saving}
+                disabled={(selectedIndices.size > 0 && !selectedStepId) || saving}
               >
                 {saving ? (
                   <>
@@ -943,7 +1075,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                     Guardando…
                   </>
                 ) : (
-                  `Guardar ${selectedIndices.size} oportunidad${selectedIndices.size !== 1 ? "es" : ""}`
+                  `Guardar ${totalSelected}`
                 )}
               </Button>
             </div>

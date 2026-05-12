@@ -93,8 +93,10 @@ async def run_lead_pipeline(initial_state: LeadSearchGraphState) -> LeadSearchGr
                     "Ronda %d: %d resultados < %d mínimo — ejecutando ronda adicional",
                     round_num, kept, MIN_RESULTS_AFTER_FILTER,
                 )
-                # Pasar resultados filtrados como base para la siguiente ronda
-                state_current = state_after_relevance
+                # Pasar resultados filtrados como base para la siguiente ronda,
+                # reseteando exa_calls_used para que Exa esté disponible en la nueva ronda
+                fresh_meta = {**state_after_relevance.langsmith_metadata, "exa_calls_used": 0}
+                state_current = replace(state_after_relevance, langsmith_metadata=fresh_meta)
 
         logger.info("Ejecutando search_finalize_node: job_id=%s", job_id)
         finalize_patch = await search_finalize_node(state_after_relevance)
