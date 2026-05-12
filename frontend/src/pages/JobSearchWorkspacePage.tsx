@@ -60,8 +60,17 @@ interface RowData {
   previewIndex: number | null;
 }
 
+function stripEmojis(text: string): string {
+  return text
+    .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
+    .replace(/[\u{2600}-\u{27BF}]/gu, "")
+    .replace(/[\u{1F300}-\u{1F9FF}]/gu, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function initial(text: string): string {
-  const t = text.trim();
+  const t = stripEmojis(text).trim();
   return t ? t.charAt(0).toUpperCase() : "?";
 }
 
@@ -101,7 +110,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
   });
 
   const downloadPreviewXlsxMutation = useMutation({
-    mutationFn: () => downloadPreviewXlsxFile(jobId),
+    mutationFn: () => downloadPreviewXlsxFile(jobId, searchLabel),
   });
 
   const jobStatusQuery = useQuery({
@@ -431,9 +440,6 @@ export function JobSearchWorkspacePage(): JSX.Element {
       <header className="workspace-v3-head">
         <h1 className="workspace-v3-query">{searchLabel}</h1>
         <div className="workspace-v3-status-row">
-          <span className={`workspace-v3-dot workspace-v3-dot--${statusTone}`} aria-hidden />
-          <span className="workspace-v3-status-label">{statusLabel}</span>
-          <span className="workspace-v3-sep">·</span>
           <span className="workspace-v3-count">{totalRows} resultado{totalRows === 1 ? "" : "s"}</span>
           {createdAt ? (
             <>
@@ -483,13 +489,13 @@ export function JobSearchWorkspacePage(): JSX.Element {
                 )}
                 <Button
                   type="button"
-                  variant="secondary"
                   size="sm"
                   disabled={downloadPreviewXlsxMutation.isPending}
                   onClick={() => downloadPreviewXlsxMutation.mutate()}
+                  className="btn-excel"
                 >
-                  <FileSpreadsheet size={13} aria-hidden />
-                  {downloadPreviewXlsxMutation.isPending ? "Generando…" : "Excel"}
+                  <FileSpreadsheet size={14} aria-hidden />
+                  {downloadPreviewXlsxMutation.isPending ? "Generando…" : "Exportar Excel"}
                 </Button>
                 <Button
                   type="button"
@@ -670,7 +676,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                   </span>
                   <div className="workspace-v3-row-content">
                     <div className="workspace-v3-row-title-line">
-                      <strong className="workspace-v3-row-title">{row.title}</strong>
+                      <strong className="workspace-v3-row-title">{stripEmojis(row.title)}</strong>
                       {row.enriched ? (
                         <span className="workspace-v3-enriched" aria-label="Enriquecido" title="Enriquecido">
                           ✓
@@ -800,7 +806,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
           <ul className="workspace-v3-sources-list">
             {(jobStatusQuery.data?.suggested_source_urls ?? []).map((s) => (
               <li key={s.url} className="workspace-v3-sources-item">
-                <span className="workspace-v3-sources-title">{s.title || s.url}</span>
+                <span className="workspace-v3-sources-title">{stripEmojis(s.title || s.url)}</span>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
                   {directoryId ? (
                     <>

@@ -341,7 +341,7 @@ export async function downloadLeadsXlsxFile(jobId: string, filters: LeadsExportF
   URL.revokeObjectURL(objectUrl);
 }
 
-export async function downloadPreviewXlsxFile(jobId: string): Promise<void> {
+export async function downloadPreviewXlsxFile(jobId: string, searchLabel?: string): Promise<void> {
   const response = await apiFetch(`${buildApiUrl(`/jobs/${jobId}/export/preview/xlsx`)}`);
   if (!response.ok) {
     const bodyText = await response.text();
@@ -351,7 +351,11 @@ export async function downloadPreviewXlsxFile(jobId: string): Promise<void> {
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = objectUrl;
-  anchor.download = `preview_${jobId}.xlsx`;
+  const year = new Date().getFullYear();
+  const safeName = searchLabel
+    ? searchLabel.replace(/[^a-zA-Z0-9\u00C0-\u024F\s]/g, "").trim().slice(0, 60)
+    : jobId;
+  anchor.download = `Resultados de Busqueda - ${safeName} ${year}.xlsx`;
   anchor.rel = "noopener";
   document.body.appendChild(anchor);
   anchor.click();

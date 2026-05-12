@@ -68,6 +68,7 @@ export function OpportunitiesListPage(): JSX.Element {
             value={directoryFilter}
             onChange={(e) => setDirectoryFilter(e.target.value)}
             aria-label="Filtrar por directorio"
+            style={{ maxWidth: "180px", fontSize: "0.85rem" }}
           >
             <option value="">Todos los directorios</option>
             {(directoriesQuery.data?.items ?? []).map((d) => (
@@ -80,7 +81,7 @@ export function OpportunitiesListPage(): JSX.Element {
             <Search size={16} className="opportunities-search-icon" aria-hidden />
             <Input
               type="text"
-              placeholder="Buscar por título, ciudad o responsable…"
+              placeholder="Buscar por título"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
               className="opportunities-search-input"
@@ -160,13 +161,12 @@ export function OpportunitiesListPage(): JSX.Element {
                     <td>
                       {row.terminated_at ? (
                         <span
-                          className={`ui-badge ui-badge--${
-                            row.terminated_outcome === "won"
+                          className={`ui-badge ui-badge--${row.terminated_outcome === "won"
                               ? "success"
                               : row.terminated_outcome === "lost"
                                 ? "error"
                                 : "muted"
-                          }`}
+                            }`}
                         >
                           {row.terminated_outcome === "won"
                             ? "Ganada"

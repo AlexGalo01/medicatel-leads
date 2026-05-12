@@ -6,7 +6,6 @@ import {
   Check,
   ChevronRight,
   ClipboardList,
-  Download,
   ExternalLink,
   FileText,
   Loader2,
@@ -20,8 +19,6 @@ import {
 } from "lucide-react";
 
 import {
-  deleteOpportunity,
-  downloadOpportunityXlsx,
   enrichOpportunity,
   getDirectory,
   getSearchJobStatus,
@@ -129,7 +126,7 @@ export function OpportunityDetailPage(): JSX.Element {
   const { opportunityId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { canManageOpportunities } = usePermissions();
+  usePermissions();
   const [stageDraft, setStageDraft] = useState<OpportunityStageKey | "">("");
   const [stepDraft, setStepDraft] = useState<string>("");
   const [outcomeDraft, setOutcomeDraft] = useState<OpportunityResponseOutcome>("pending");
@@ -140,13 +137,15 @@ export function OpportunityDetailPage(): JSX.Element {
   const [aboutDraft, setAboutDraft] = useState("");
   const [locationDraft, setLocationDraft] = useState("");
   const [cvDirty, setCvDirty] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [companyDraft, setCompanyDraft] = useState("");
+  const [experiencesDraft, setExperiencesDraft] = useState<Array<{role: string; organization: string; period: string}>>([]);
   const [enrichModalOpen, setEnrichModalOpen] = useState(false);
   const [enrichStageIdx, setEnrichStageIdx] = useState(0);
-  const [isExporting, setIsExporting] = useState(false);
   const [confirmInvalid, setConfirmInvalid] = useState(false);
   const [invalidNote, setInvalidNote] = useState("");
+  const [confirmConcluded, setConfirmConcluded] = useState(false);
+  const [concludeNote, setConcludeNote] = useState("");
   const [editingSection, setEditingSection] = useState<string | null>(null);
   const bitacoraScrollRef = useRef<HTMLDivElement>(null);
   const bitacoraTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -231,6 +230,16 @@ export function OpportunityDetailPage(): JSX.Element {
     if (objectHasOwn(overrides, "location")) {
       setLocationDraft(mergeLocation(overrides, ""));
     }
+    if (objectHasOwn(overrides, "company")) {
+      setCompanyDraft(overrides.company ?? "");
+    }
+    if (objectHasOwn(overrides, "experiences") && Array.isArray(overrides.experiences)) {
+      setExperiencesDraft((overrides.experiences ?? []).map((e) => ({
+        role: e.role ?? "",
+        organization: e.organization ?? "",
+        period: e.period ?? "",
+      })));
+    }
   }, [data, cvDirty]);
 
   /** Resumen IA: una sola actualización al terminar (evita parpadeo de texto al llegar el stream de datos). */
@@ -258,6 +267,16 @@ export function OpportunityDetailPage(): JSX.Element {
     const aiLocationRaw = profileSummaryQuery.data?.location?.trim() || data.city?.trim() || "";
     setAboutDraft(mergeAbout(overrides, rawAbout));
     setLocationDraft(mergeLocation(overrides, aiLocationRaw));
+    if (!objectHasOwn(overrides, "company")) {
+      setCompanyDraft(profileSummaryQuery.data?.company?.trim() || "");
+    }
+    if (!objectHasOwn(overrides, "experiences") && profileSummaryQuery.data?.experiences?.length) {
+      setExperiencesDraft((profileSummaryQuery.data.experiences).map((e) => ({
+        role: e.role ?? "",
+        organization: e.organization ?? "",
+        period: e.period ?? "",
+      })));
+    }
   }, [cvDirty, data, profileSummaryQuery.data, profileSummaryQuery.isPending, profileSummaryQuery.isError, profileSummaryQuery.isSuccess]);
 
   useLayoutEffect(() => {
@@ -339,20 +358,21 @@ export function OpportunityDetailPage(): JSX.Element {
     return (stageIndex / (n - 1)) * 100;
   }, [stageIndex]);
 
-  const deleteMut = useMutation({
-    mutationFn: () => deleteOpportunity(opportunityId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["opportunities"] });
-      navigate("/opportunities", { replace: true });
-    },
-  });
-
   const terminateMut = useMutation({
     mutationFn: (note?: string) => terminateOpportunity(opportunityId, "no_valida", note || null),
     onSuccess: (updated) => {
       queryClient.setQueryData(["opportunity", opportunityId], updated);
       setConfirmInvalid(false);
       setInvalidNote("");
+    },
+  });
+
+  const concludeMut = useMutation({
+    mutationFn: (note?: string) => terminateOpportunity(opportunityId, "won", note || null),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["opportunity", opportunityId], updated);
+      setConfirmConcluded(false);
+      setConcludeNote("");
     },
   });
 
@@ -441,12 +461,22 @@ export function OpportunityDetailPage(): JSX.Element {
   const saveProfileCv = () => {
     const loc = locationDraft.trim();
     profileCvMut.mutate({
-      profile_cv: {
-        about: aboutDraft,
-        location: loc.length > 0 ? loc : null,
-        experiences: null,
-      },
+      profile_cv: { about: aboutDraft, location: loc.length > 0 ? loc : null },
     });
+  };
+
+  const saveExperiences = () => {
+    profileCvMut.mutate({
+      profile_cv: { experiences: experiencesDraft.filter((e) => e.role.trim()) },
+    });
+    setEditingSection(null);
+  };
+
+  const saveCompany = () => {
+    profileCvMut.mutate({
+      profile_cv: { company: companyDraft.trim() || null },
+    });
+    setEditingSection(null);
   };
 
   return (
@@ -673,16 +703,69 @@ export function OpportunityDetailPage(): JSX.Element {
                 )}
               </article>
               <article className="opportunity-summary-cv-block opportunity-summary-cv-block--experience">
-                <h3 className="opportunity-card-subtitle">Experiencia</h3>
+                <div className="opportunity-card-header">
+                  <h3 className="opportunity-card-subtitle">Experiencia</h3>
+                  <button
+                    type="button"
+                    className="opportunity-card-edit-btn"
+                    onClick={() => setEditingSection(editingSection === "experiences" ? null : "experiences")}
+                    aria-label={editingSection === "experiences" ? "Cerrar edición" : "Editar experiencia"}
+                  >
+                    <PenLine size={15} aria-hidden />
+                  </button>
+                </div>
                 <hr className="opportunity-card-divider" />
-                {profileIaPending && !experienceFromOverride ? (
+                {editingSection === "experiences" ? (
+                  <div>
+                    {experiencesDraft.map((exp, i) => (
+                      <div key={i} style={{ display: "flex", gap: "6px", marginBottom: "8px", alignItems: "flex-start" }}>
+                        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px" }}>
+                          <Input
+                            value={exp.role}
+                            onChange={(e) => setExperiencesDraft((prev) => prev.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
+                            placeholder="Cargo / Rol"
+                            className="ui-input--minimal-value"
+                          />
+                          <Input
+                            value={exp.organization}
+                            onChange={(e) => setExperiencesDraft((prev) => prev.map((x, j) => j === i ? { ...x, organization: e.target.value } : x))}
+                            placeholder="Organización"
+                            className="ui-input--minimal-meta"
+                          />
+                          <Input
+                            value={exp.period}
+                            onChange={(e) => setExperiencesDraft((prev) => prev.map((x, j) => j === i ? { ...x, period: e.target.value } : x))}
+                            placeholder="Período"
+                            className="ui-input--minimal-meta"
+                          />
+                        </div>
+                        <button type="button" className="opportunity-card-edit-btn" onClick={() => setExperiencesDraft((prev) => prev.filter((_, j) => j !== i))}>
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                      <button
+                        type="button"
+                        className="link-button"
+                        style={{ fontSize: "0.8rem" }}
+                        onClick={() => setExperiencesDraft((prev) => [...prev, { role: "", organization: "", period: "" }])}
+                      >
+                        <Plus size={13} /> Añadir
+                      </button>
+                      <Button type="button" className="cta-button" style={{ fontSize: "0.8rem", padding: "4px 12px" }} disabled={profileCvMut.isPending} onClick={saveExperiences}>
+                        {profileCvMut.isPending ? <Loader2 className="spin" size={13} /> : null} Guardar
+                      </Button>
+                    </div>
+                  </div>
+                ) : profileIaPending && !experienceFromOverride ? (
                   <p className="muted-text opportunity-summary-ia-experience-waiting">
                     <Loader2 className="spin" size={16} strokeWidth={2} aria-hidden />
                     Cargando experiencia estructurada…
                   </p>
-                ) : profileExperiences.length > 0 ? (
+                ) : experiencesDraft.length > 0 ? (
                   <ul className="opportunity-summary-experience-list" style={{ listStyle: "disc", paddingLeft: "1.1rem", margin: 0 }}>
-                    {profileExperiences.map((experience, index) => (
+                    {experiencesDraft.map((experience, index) => (
                       <li key={`${experience.role}-${index}`} className="opportunity-summary-experience-item">
                         <strong style={{ fontSize: "14px", fontWeight: 600 }}>{experience.role}</strong>
                         <span className="muted-text" style={{ fontSize: "13px", display: "block" }}>
@@ -726,11 +809,34 @@ export function OpportunityDetailPage(): JSX.Element {
                 )}
               </article>
               <article className="opportunity-summary-cv-block">
-                <h3 className="opportunity-card-subtitle">Empresa</h3>
+                <div className="opportunity-card-header">
+                  <h3 className="opportunity-card-subtitle">Empresa</h3>
+                  <button
+                    type="button"
+                    className="opportunity-card-edit-btn"
+                    onClick={() => setEditingSection(editingSection === "company" ? null : "company")}
+                    aria-label={editingSection === "company" ? "Cerrar edición" : "Editar empresa"}
+                  >
+                    <PenLine size={15} aria-hidden />
+                  </button>
+                </div>
                 <hr className="opportunity-card-divider" />
-                <p className="muted-text" style={{ overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                  {profileCompany.split(".")[0].split(",")[0].trim() || "No especificada"}
-                </p>
+                {editingSection === "company" ? (
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <Input
+                      value={companyDraft}
+                      onChange={(e) => setCompanyDraft(e.target.value)}
+                      placeholder="Nombre de empresa u organización"
+                      maxLength={120}
+                      className="opportunity-summary-location-input"
+                    />
+                    <Button type="button" className="cta-button" style={{ fontSize: "0.8rem", padding: "4px 12px", whiteSpace: "nowrap" }} disabled={profileCvMut.isPending} onClick={saveCompany}>
+                      {profileCvMut.isPending ? <Loader2 className="spin" size={13} /> : null} Guardar
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="muted-text">{companyDraft || "No especificada"}</p>
+                )}
               </article>
             </div>
           </>
@@ -738,118 +844,6 @@ export function OpportunityDetailPage(): JSX.Element {
       </Card>
 
       <div className="opportunity-ficha-area-bitacora opportunity-ficha-side-stack">
-      <Card className="panel opportunity-card opportunity-bento-card opportunity-phase-card opportunity-phase-card--prominent">
-        <h2 className="opportunity-card-title">Actualizar fase</h2>
-        <hr className="opportunity-card-divider" />
-        <div className="opportunity-stage-form opportunity-stage-form--bento">
-          <label className="opportunity-field">
-            <span>Fase</span>
-            {useDirectorySteps ? (
-              <Select
-                value={stepDraft || data.current_step_id || allDirSteps[0]?.id || ""}
-                onChange={(e) => setStepDraft(e.target.value)}
-              >
-                {allDirSteps.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </Select>
-            ) : (
-              <Select
-                value={stageDraft || data.stage}
-                onChange={(e) => setStageDraft(e.target.value as OpportunityStageKey)}
-              >
-                {OPPORTUNITY_STAGES_ORDER.filter((_, i) => i >= stageIndex).map((k) => (
-                  <option key={k} value={k}>{opportunityStageLabel[k]}</option>
-                ))}
-              </Select>
-            )}
-          </label>
-          {!useDirectorySteps && (stageDraft || data.stage) === "response" ? (
-            <label className="opportunity-field">
-              <span>Resultado</span>
-              <Select
-                value={outcomeDraft}
-                onChange={(e) => setOutcomeDraft(e.target.value as OpportunityResponseOutcome)}
-              >
-                {OUTCOMES.map((o) => (
-                  <option key={o} value={o}>{responseOutcomeLabel[o]}</option>
-                ))}
-              </Select>
-            </label>
-          ) : null}
-          <Button
-            type="button"
-            className="cta-button opportunity-phase-save"
-            disabled={
-              useDirectorySteps
-                ? moveStepMut.isPending || !stepDraft
-                : patchMut.isPending || !stageDraft
-            }
-            onClick={() => {
-              if (useDirectorySteps) {
-                if (stepDraft) moveStepMut.mutate(stepDraft);
-              } else {
-                onSaveStage();
-              }
-            }}
-          >
-            {(useDirectorySteps ? moveStepMut.isPending : patchMut.isPending)
-              ? <Loader2 className="spin" size={16} aria-hidden />
-              : null
-            } Guardar fase
-          </Button>
-        </div>
-        {(useDirectorySteps ? moveStepMut.isError : patchMut.isError)
-          ? <p className="error-text">No se pudo guardar.</p>
-          : null
-        }
-        {canManageOpportunities && (
-          <div style={{ borderTop: "1px solid var(--color-border)", marginTop: "16px", paddingTop: "14px" }}>
-            {data.terminated_outcome === "no_valida" ? (
-              <span style={{ display: "inline-block", background: "var(--color-error-bg)", color: "var(--color-error)", fontSize: "0.8rem", fontWeight: 600, padding: "3px 10px", borderRadius: "99px" }}>
-                No Válida
-              </span>
-            ) : !data.terminated_at ? (
-              confirmInvalid ? (
-                <div>
-                  <textarea
-                    value={invalidNote}
-                    onChange={(e) => setInvalidNote(e.target.value)}
-                    placeholder="Nota opcional…"
-                    rows={2}
-                    maxLength={500}
-                    style={{ width: "100%", marginBottom: "8px", fontSize: "0.85rem", borderRadius: "6px", border: "1px solid var(--color-border)", padding: "6px 8px", resize: "vertical" }}
-                  />
-                  <div style={{ display: "flex", gap: "8px" }}>
-                    <Button
-                      type="button"
-                      className="cta-button danger-button"
-                      disabled={terminateMut.isPending}
-                      onClick={() => terminateMut.mutate(invalidNote.trim() || undefined)}
-                    >
-                      {terminateMut.isPending ? <Loader2 className="spin" size={14} aria-hidden /> : null}
-                      Confirmar
-                    </Button>
-                    <Button type="button" className="link-button" onClick={() => { setConfirmInvalid(false); setInvalidNote(""); }}>
-                      Cancelar
-                    </Button>
-                  </div>
-                  {terminateMut.isError && <p className="error-text" style={{ marginTop: "4px", fontSize: "0.8rem" }}>No se pudo marcar.</p>}
-                </div>
-              ) : (
-                <Button
-                  type="button"
-                  className="link-button danger-text"
-                  style={{ fontSize: "0.85rem" }}
-                  onClick={() => setConfirmInvalid(true)}
-                >
-                  Marcar como No Válida
-                </Button>
-              )
-            ) : null}
-          </div>
-        )}
-      </Card>
 
       <Card className="panel opportunity-card opportunity-bento-card opportunity-contacts-card">
         <div className="opportunity-panel-head">
@@ -866,23 +860,6 @@ export function OpportunityDetailPage(): JSX.Element {
               }}
             >
               <Search size={16} aria-hidden /> Enriquecer
-            </Button>
-            <Button
-              type="button"
-              className="workspace-tool-btn"
-              onClick={async () => {
-                setIsExporting(true);
-                try {
-                  await downloadOpportunityXlsx(opportunityId, data.title);
-                } catch (err) {
-                  console.error("Export failed:", err);
-                } finally {
-                  setIsExporting(false);
-                }
-              }}
-              disabled={isExporting}
-            >
-              <Download size={16} aria-hidden /> Exportar
             </Button>
             <Button type="button" className="workspace-tool-btn" onClick={() => addContactRow()}>
               <Plus size={16} aria-hidden /> Añadir
@@ -952,14 +929,6 @@ export function OpportunityDetailPage(): JSX.Element {
                       )}
                       
                       <div className="opportunity-contact-editor-meta">
-                        <Input
-                          type="text"
-                          value={c.role ?? ""}
-                          onChange={(e) => updateContact(idx, { role: e.target.value || null })}
-                          maxLength={120}
-                          placeholder="Cargo / Rol"
-                          className="ui-input--minimal-meta"
-                        />
                         <div className="input-with-badge-mini">
                           {c.note && isUrl(c.note) && (
                             <a
@@ -1003,7 +972,11 @@ export function OpportunityDetailPage(): JSX.Element {
         <h2 className="opportunity-card-title opportunity-card-title--flush">Origen</h2>
         <hr className="opportunity-card-divider" />
         <p className="muted-text" style={{ fontSize: "0.9rem", margin: 0 }}>
-          Búsqueda: "{sourceJobLabel}"
+          {data.job_id
+            ? `Búsqueda: "${sourceJobLabel}"`
+            : data.source_url
+              ? "Importada desde URL"
+              : "Creada manualmente"}
         </p>
         {data.source_url ? (
           <p className="muted-text" style={{ fontSize: "0.9rem", marginTop: "6px" }}>
@@ -1065,36 +1038,130 @@ export function OpportunityDetailPage(): JSX.Element {
           </div>
         </Card>
 
-        {canManageOpportunities && (
-          <Card className="panel opportunity-card" style={{ marginTop: "1.5rem" }}>
-            <h2 className="opportunity-card-title opportunity-card-title--flush danger-text">Zona peligrosa</h2>
-            <hr className="opportunity-card-divider" />
-            {confirmDelete ? (
-              <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginTop: "0.75rem" }}>
-                <Button
-                  className="cta-button danger-button"
-                  disabled={deleteMut.isPending}
-                  onClick={() => deleteMut.mutate()}
-                >
-                  {deleteMut.isPending ? <Loader2 className="spin" size={14} aria-hidden /> : <Trash2 size={14} aria-hidden />}
-                  Confirmar eliminación
-                </Button>
-                <Button className="link-button" onClick={() => setConfirmDelete(false)}>
-                  Cancelar
-                </Button>
-                {deleteMut.isError && <span className="error-text">{(deleteMut.error as Error).message}</span>}
-              </div>
-            ) : (
-              <Button
-                className="link-button danger-text"
-                style={{ marginTop: "0.75rem" }}
-                onClick={() => setConfirmDelete(true)}
+        <Card className="panel opportunity-card opportunity-bento-card" style={{ marginTop: "1rem" }}>
+          <h2 className="opportunity-card-title opportunity-card-title--flush" style={{ fontSize: "1rem" }}>Actualizar fase</h2>
+          <hr className="opportunity-card-divider" />
+
+          {useDirectorySteps ? (
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "12px" }}>
+              <Select
+                value={stepDraft}
+                onChange={(e) => setStepDraft(e.target.value)}
+                style={{ flex: 1, fontSize: "0.85rem" }}
               >
-                <Trash2 size={14} aria-hidden /> Eliminar esta oportunidad
+                <option value="">Seleccionar fase…</option>
+                {allDirSteps.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </Select>
+              <Button
+                type="button"
+                className="cta-button"
+                style={{ fontSize: "0.8rem", padding: "4px 10px", whiteSpace: "nowrap" }}
+                disabled={!stepDraft || moveStepMut.isPending}
+                onClick={() => { if (stepDraft) moveStepMut.mutate(stepDraft); }}
+              >
+                {moveStepMut.isPending ? <Loader2 className="spin" size={13} /> : null} Guardar
               </Button>
-            )}
-          </Card>
-        )}
+            </div>
+          ) : (
+            <div style={{ marginBottom: "12px" }}>
+              <Select
+                value={stageDraft}
+                onChange={(e) => setStageDraft(e.target.value as OpportunityStageKey)}
+                style={{ fontSize: "0.85rem", width: "100%" }}
+              >
+                {OPPORTUNITY_STAGES_ORDER.map((key) => (
+                  <option key={key} value={key}>{opportunityStageLabel[key]}</option>
+                ))}
+              </Select>
+              {stageDraft === "response" && (
+                <Select
+                  value={outcomeDraft}
+                  onChange={(e) => setOutcomeDraft(e.target.value as OpportunityResponseOutcome)}
+                  style={{ marginTop: "6px", fontSize: "0.85rem", width: "100%" }}
+                >
+                  {OUTCOMES.map((o) => <option key={o} value={o}>{responseOutcomeLabel[o]}</option>)}
+                </Select>
+              )}
+              <Button
+                type="button"
+                className="cta-button"
+                style={{ marginTop: "8px", fontSize: "0.8rem" }}
+                disabled={patchMut.isPending}
+                onClick={onSaveStage}
+              >
+                {patchMut.isPending ? <Loader2 className="spin" size={13} /> : null} Guardar fase
+              </Button>
+            </div>
+          )}
+
+          {data.terminated_at ? (
+            <p className="muted-text" style={{ fontSize: "0.85rem" }}>
+              Oportunidad {data.terminated_outcome === "won" ? "concluida" : "marcada como no válida"}.
+            </p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {confirmConcluded ? (
+                <div>
+                  <textarea
+                    value={concludeNote}
+                    onChange={(e) => setConcludeNote(e.target.value)}
+                    placeholder="Nota de cierre (opcional)…"
+                    rows={2}
+                    maxLength={4000}
+                    style={{ width: "100%", marginBottom: "6px", fontSize: "0.85rem" }}
+                  />
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <Button
+                      type="button"
+                      className="cta-button"
+                      style={{ fontSize: "0.8rem" }}
+                      disabled={concludeMut.isPending}
+                      onClick={() => concludeMut.mutate(concludeNote || undefined)}
+                    >
+                      {concludeMut.isPending ? <Loader2 className="spin" size={13} /> : null} Confirmar
+                    </Button>
+                    <Button type="button" onClick={() => setConfirmConcluded(false)} style={{ fontSize: "0.8rem" }}>Cancelar</Button>
+                  </div>
+                </div>
+              ) : (
+                <Button type="button" className="cta-button" style={{ fontSize: "0.85rem" }} onClick={() => setConfirmConcluded(true)}>
+                  Marcar como Concluida
+                </Button>
+              )}
+
+              {confirmInvalid ? (
+                <div>
+                  <textarea
+                    value={invalidNote}
+                    onChange={(e) => setInvalidNote(e.target.value)}
+                    placeholder="Motivo (opcional)…"
+                    rows={2}
+                    maxLength={4000}
+                    style={{ width: "100%", marginBottom: "6px", fontSize: "0.85rem" }}
+                  />
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <Button
+                      type="button"
+                      className="cta-button danger-button"
+                      style={{ fontSize: "0.8rem" }}
+                      disabled={terminateMut.isPending}
+                      onClick={() => terminateMut.mutate(invalidNote || undefined)}
+                    >
+                      {terminateMut.isPending ? <Loader2 className="spin" size={13} /> : null} Confirmar
+                    </Button>
+                    <Button type="button" onClick={() => setConfirmInvalid(false)} style={{ fontSize: "0.8rem" }}>Cancelar</Button>
+                  </div>
+                </div>
+              ) : (
+                <Button type="button" className="link-button danger-text" style={{ fontSize: "0.85rem" }} onClick={() => setConfirmInvalid(true)}>
+                  Marcar como No Válida
+                </Button>
+              )}
+            </div>
+          )}
+        </Card>
 
       </div>
 

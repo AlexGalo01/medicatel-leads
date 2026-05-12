@@ -71,6 +71,11 @@ def apply_profile_overrides_patch(current: dict[str, Any], updates: dict[str, An
                 po.pop("location", None)
             else:
                 po["location"] = str(value).strip()[:_MAX_PROFILE_LOCATION]
+        elif key == "company":
+            if value is None:
+                po.pop("company", None)
+            else:
+                po["company"] = str(value).strip()[:120]
         elif key == "experiences":
             if value is None:
                 po.pop("experiences", None)

@@ -175,6 +175,7 @@ export interface OpportunityActivityEntry {
 export interface OpportunityProfileOverrides {
   about?: string | null;
   location?: string | null;
+  company?: string | null;
   experiences?: Array<{
     role: string;
     organization?: string | null;

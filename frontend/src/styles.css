@@ -36,8 +36,8 @@
   --workspace-row-radius: 8px;
 
   /* Typography */
-  --font-display: "Inter", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: "Geist", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
   --font-weight-regular: 400;
   --font-weight-medium: 500;
@@ -6687,6 +6687,29 @@ textarea {
   align-items: center;
 }
 
+.btn-excel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #1d6f42;
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-btn, 8px);
+  padding: 5px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: background 0.15s;
+}
+.btn-excel:hover:not(:disabled) {
+  background: #165534;
+}
+.btn-excel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .workspace-v3-progress {
   height: 2px;
   background: var(--color-border);
@@ -6768,7 +6791,6 @@ textarea {
   border-radius: var(--radius-card);
   background: var(--color-surface);
   overflow: hidden;
-  min-height: 200px;
   display: flex;
   flex-direction: column;
 }

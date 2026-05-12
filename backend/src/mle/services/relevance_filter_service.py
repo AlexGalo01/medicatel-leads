@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 # Calidad sobre latencia: lotes pequeños para mejor precisión del modelo
 DEFAULT_CHUNK_SIZE = 8
 DEFAULT_CONFIDENCE_THRESHOLD = 8
+# Para búsqueda de empresas: umbral más bajo porque la homepage/perfil de la empresa ya es el lead
+COMPANY_CONFIDENCE_THRESHOLD = 6
 
 
 def _exa_category_entity_rules(exa_category: str | None) -> str:
@@ -90,6 +92,134 @@ def _sector_intent_rules_block(user_query: str) -> str:
         "clínicas y el resultado es una ferretería, match=false).\n"
         "- confidence 1-3 solo para resultados que claramente NO son del sector.\n"
         "- confidence 8-10 para resultados que demuestran CLARAMENTE alineación sectorial.\n"
+    )
+
+
+_EMOJI_RE = re.compile(
+    "[\U00010000-\U0010FFFF"   # Supplementary planes (most emojis)
+    "\U00002600-\U000027BF"    # Misc symbols / Dingbats
+    "\U0001F300-\U0001F9FF"    # Main emoji block
+    "\U00002700-\U000027BF"    # Dingbats
+    "]+",
+    flags=re.UNICODE,
+)
+
+_EMOJI_TEXT_JUNK_RE = re.compile(
+    r"^\s*[\U00010000-\U0010FFFF\U00002600-\U000027BF\U0001F300-\U0001F9FF\U00002700-\U000027BF📍🚨✅❗🔴🟢🔵]+\s*",
+    flags=re.UNICODE,
+)
+
+_SOURCE_TITLE_NOISE_RE = re.compile(
+    r"(?i)"
+    r"\s*\(@[\w.]+\)"          # (@handle)
+    r"|\s*[·•]\s*.+$"          # · Tegucigalpa (keep only what's before the dot)
+    r"|\s*[-–—|]\s*inicio\s*$" # - Inicio
+    r"|\s*\|\s*$"               # trailing pipe
+)
+
+_URL_SOCIAL_PRIORITY = {
+    "facebook.com": 3,
+    "instagram.com": 3,
+    "twitter.com": 3,
+    "tiktok.com": 3,
+    "linkedin.com/company": 2,
+    "linkedin.com": 2,
+}
+
+
+def _strip_emojis(text: str) -> str:
+    """Quita emojis y limpia el texto resultante."""
+    cleaned = _EMOJI_RE.sub("", text)
+    # Remove leftover junk chars that often accompany emojis (📍, 🚨, etc.)
+    cleaned = re.sub(r"[\U0001F000-\U0001FFFF]", "", cleaned)
+    # Collapse multiple spaces and strip
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+def _normalize_source_title(title: str) -> str:
+    """Normaliza título de fuente para comparación de duplicados."""
+    t = _strip_emojis(title)
+    t = _SOURCE_TITLE_NOISE_RE.sub("", t)
+    return t.strip().lower()
+
+
+def _url_social_rank(url: str) -> int:
+    """Menor número = mejor (preferimos sitio propio sobre redes sociales)."""
+    u = url.lower()
+    for domain, rank in _URL_SOCIAL_PRIORITY.items():
+        if domain in u:
+            return rank
+    return 1  # main website
+
+
+def _deduplicate_sources(sources: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Agrupa fuentes por entidad (título normalizado) y conserva la URL de mejor calidad."""
+    groups: dict[str, list[dict[str, str]]] = {}
+    for s in sources:
+        raw_title = s.get("title") or s.get("url") or ""
+        key = _normalize_source_title(raw_title)
+        if not key:
+            key = s.get("url", "").lower().rstrip("/")
+        groups.setdefault(key, []).append(s)
+
+    result: list[dict[str, str]] = []
+    for entries in groups.values():
+        # Pick best URL: lowest social rank wins
+        best = min(entries, key=lambda e: _url_social_rank(e.get("url", "")))
+        # Use cleaned title from best entry
+        clean_title = _strip_emojis(best.get("title") or best.get("url") or "")
+        result.append({"url": best["url"], "title": clean_title, "source": best.get("source", "")})
+    return result
+
+
+def _source_page_rules_block(exa_category: str) -> str:
+    """Bloque de prompt: reglas is_source_page diferenciadas por categoría."""
+    if exa_category == "company":
+        return (
+            "ADEMÁS — reglas para is_source_page:\n"
+            "  • is_source_page=true: SOLO páginas que LISTAN múltiples empresas (directorios de negocios, buscadores de empresas, páginas amarillas)\n"
+            "  • is_source_page=false: homepage de hospital, clínica, empresa, negocio del sector — son el LEAD DIRECTO, NO una fuente para explorar\n"
+            "  • is_source_page=false: perfiles de empresa en LinkedIn company, Facebook page, Instagram de la empresa\n"
+            "  • is_source_page=false + match=false: artículos de noticias, blogs, reportajes\n"
+        )
+    return (
+        "ADEMÁS — reglas para is_source_page:\n"
+        "  • is_source_page=true: páginas que LISTAN múltiples profesionales (equipo, directorio, personal)\n"
+        "  • is_source_page=true: homepages de hospitales, clínicas, centros médicos, centros oftalmológicos (aunque no sean directorios)\n"
+        "  • is_source_page=true: páginas de servicios médicos de una institución (no un perfil individual)\n"
+        "  • is_source_page=false + match=false: artículos de noticias, blogs, reportajes — NO guardar como fuente, solo descartar\n"
+        "  • is_source_page=false: perfiles de médicos individuales\n"
+        "  is_source_page=true indica: 'guardar esta URL para explorarla después en busca de más contactos'.\n"
+    )
+
+
+def _match_categories_block(exa_category: str) -> str:
+    """Bloque de prompt: definición de match=true/lpa/false diferenciada por categoría."""
+    if exa_category == "company":
+        return (
+            "CATEGORÍAS para el campo match:\n"
+            "  • match=true: empresa/clínica/hospital/centro médico/negocio del sector identificado — homepage, página de contacto, perfil de empresa, página de servicios\n"
+            "  • match=\"lpa\": empresa con información incompleta, perfil de red social con poca info, entidad del sector probable pero no confirmada\n"
+            "  • match=false: listado de múltiples empresas, artículo de noticias/blog, ubicación incorrecta (otro país/ciudad), sector completamente diferente\n"
+        )
+    return (
+        "CATEGORÍAS para el campo match:\n"
+        "  • match=true: lead confirmado del sector (profesional individual claramente identificado)\n"
+        "  • match=\"lpa\": posible lead a averiguar — página de Facebook/Instagram de clínica o centro del sector, "
+        "profesional de especialidad adyacente relevante, perfil con poca info pero del sector correcto, "
+        "post con teléfono de clínica relevante\n"
+        "  • match=false: ubicación incorrecta, sector completamente diferente, obituario, nota de prensa, "
+        "lista/directorio genérico, solo coordenadas o dirección sin persona ni clínica\n"
+    )
+
+
+def _confidence_hint_block(threshold: int) -> str:
+    """Bloque de prompt: descripción del campo confidence adaptada al threshold real."""
+    return (
+        f"- confidence (entero 0-10): qué tan seguro estás de que el resultado ES del sector buscado. "
+        f"10 = 100% seguro que sí es. 1-3 = dudoso o parece ser de otro sector. "
+        f"Si confidence < {threshold} y match=true, el resultado será descartado automáticamente. "
+        f"Solo marca confidence≥{threshold} si estás SEGURO de que es del sector.\n"
     )
 
 
@@ -660,16 +790,24 @@ async def filter_exa_raw_results_by_relevance(
             heuristic_drop.add(i)
             reasons[i] = "Artículo de perfil sobre profesional — guardado como fuente para explorar."
             continue
-        # Check for institutional clinic/hospital homepages → save as exploration source
-        if _is_institutional_clinic_page(item) and _source_page_is_sector_relevant(item, user_query):
-            directory_sources.append({
-                "url": str(item.get("url", "")).strip(),
-                "title": str(item.get("title", "")).strip(),
-                "source": "heuristic_institutional",
-            })
-            heuristic_drop.add(i)
-            reasons[i] = "Homepage institucional (hospital/clínica) — guardada como fuente para explorar."
-            continue
+        # Check for institutional clinic/hospital homepages
+        # For company search: the clinic IS the lead — let it through to LLM evaluation
+        # For people search: save as exploration source to find individual contacts later
+        if _is_institutional_clinic_page(item):
+            if exa_cat_s != "company" and _source_page_is_sector_relevant(item, user_query):
+                directory_sources.append({
+                    "url": str(item.get("url", "")).strip(),
+                    "title": str(item.get("title", "")).strip(),
+                    "source": "heuristic_institutional",
+                })
+                heuristic_drop.add(i)
+                reasons[i] = "Homepage institucional (hospital/clínica) — guardada como fuente para explorar."
+                continue
+            elif exa_cat_s != "company":
+                heuristic_drop.add(i)
+                reasons[i] = "Homepage institucional no relevante al sector buscado."
+                continue
+            # exa_cat_s == "company": fall through to LLM
         if _is_directory_source_page(item):
             if _source_page_is_sector_relevant(item, user_query):
                 directory_sources.append({
@@ -682,7 +820,8 @@ async def filter_exa_raw_results_by_relevance(
                 heuristic_drop.add(i)
                 reasons[i] = "Página de directorio pero no relevante al sector buscado."
             continue
-        if _heuristic_entity_page_for_people_search(item, exa_cat_s):
+        # For company search: org entity pages (S.A., LinkedIn company, etc.) are the target leads
+        if exa_cat_s != "company" and _heuristic_entity_page_for_people_search(item, exa_cat_s):
             if _source_page_is_sector_relevant(item, user_query):
                 directory_sources.append({
                     "url": str(item.get("url", "")).strip(),
@@ -742,6 +881,7 @@ async def filter_exa_raw_results_by_relevance(
                         "- Aceptar SOLO si hay SEÑAL POSITIVA clara de Honduras: (HN) en paréntesis, ciudad hondureña (Tegucigalpa, San Pedro Sula, La Ceiba, Comayagua, etc.), texto que diga 'Honduras'.\n"
                         "- Trabajo remoto SIN mención de Honduras → RECHAZA, confidence=1.\n"
                     )
+                confidence_threshold = COMPANY_CONFIDENCE_THRESHOLD if exa_cat_s == "company" else DEFAULT_CONFIDENCE_THRESHOLD
                 entity_rules = _exa_category_entity_rules(exa_cat_s or None)
                 sector_rules = _sector_intent_rules_block(user_query)
                 academic_rules = _academic_exclusion_rules_block()
@@ -750,6 +890,9 @@ async def filter_exa_raw_results_by_relevance(
                     user_query, criteria_compact.get("role_or_stack_hint"),
                 )
                 aggregator_rules = _aggregator_exclusion_rules_block()
+                source_page_rules = _source_page_rules_block(exa_cat_s)
+                match_categories = _match_categories_block(exa_cat_s)
+                confidence_hint = _confidence_hint_block(confidence_threshold)
                 prompt = (
                     "Eres un validador estricto de relevancia para prospección B2B.\n"
                     f"Consulta original del usuario (máxima prioridad): {user_query}\n"
@@ -765,31 +908,17 @@ async def filter_exa_raw_results_by_relevance(
                     "Para CADA ítem pregúntate: ¿Este resultado ES realmente del sector/rubro/profesión que busca el usuario? "
                     "Si el título menciona OTRA profesión explícitamente (educador, ingeniero, IT, etc.) → MATCH=FALSE AUTOMÁTICAMENTE. "
                     "Si la respuesta no es un SÍ claro → match=false.\n"
-                    "ADEMÁS — reglas para is_source_page:\n"
-                    "  • is_source_page=true: páginas que LISTAN múltiples profesionales (equipo, directorio, personal)\n"
-                    "  • is_source_page=true: homepages de hospitales, clínicas, centros médicos, centros oftalmológicos (aunque no sean directorios)\n"
-                    "  • is_source_page=true: páginas de servicios médicos de una institución (no un perfil individual)\n"
-                    "  • is_source_page=false + match=false: artículos de noticias, blogs, reportajes — NO guardar como fuente, solo descartar\n"
-                    "  • is_source_page=false: perfiles de médicos individuales\n"
-                    "  is_source_page=true indica: 'guardar esta URL para explorarla después en busca de más contactos'.\n"
-                    "CATEGORÍAS para el campo match:\n"
-                    "  • match=true: lead confirmado del sector (profesional individual claramente identificado)\n"
-                    "  • match=\"lpa\": posible lead a averiguar — página de Facebook/Instagram de clínica o centro del sector, "
-                    "profesional de especialidad adyacente relevante, perfil con poca info pero del sector correcto, "
-                    "post con teléfono de clínica relevante\n"
-                    "  • match=false: ubicación incorrecta, sector completamente diferente, obituario, nota de prensa, "
-                    "lista/directorio genérico, solo coordenadas o dirección sin persona ni clínica\n"
+                    f"{source_page_rules}"
+                    f"{match_categories}"
                     "Devuelve SOLO JSON con la forma exacta:\n"
                     '{"verdicts":[{"index":0,"match":true,"confidence":8,"is_source_page":false,"reason_es":"breve"}]}\n'
                     "- match puede ser: true, \"lpa\", o false\n"
-                    "- confidence (entero 0-10): qué tan seguro estás de que el resultado ES del sector buscado. "
-                    "10 = 100% seguro que sí es. 1-3 = dudoso o parece ser de otro sector. "
-                    "Si confidence < 8 y match=true, el resultado será descartado automáticamente. Solo marca confidence≥8 si estás MUY SEGURO de que es del sector.\n"
+                    f"{confidence_hint}"
                     "Debes incluir un veredicto por cada index enviado (un objeto por index).\n"
                     f"Ítems: {json.dumps(items_payload, ensure_ascii=False)}"
                 )
                 parsed = await gemini_client.complete_json_prompt(prompt)
-                verdicts_map = _parse_verdicts(parsed)
+                verdicts_map = _parse_verdicts(parsed, confidence_threshold=confidence_threshold)
                 reason_by_index: dict[int, str] = {}
                 for v in parsed.get("verdicts") or []:
                     if not isinstance(v, dict):
@@ -823,14 +952,16 @@ async def filter_exa_raw_results_by_relevance(
             item = raw_results[idx] if idx < len(raw_results) else {}
             if isinstance(item, dict):
                 match_by_index[idx] = "drop"
-                # Apply sector relevance check before saving as source (evita "Muebles Para Hospitales", etc.)
-                if _source_page_is_sector_relevant(item, user_query):
+                # For company search: if LLM says it's a source page, save it without extra check
+                # (the LLM already validated sector relevance in its evaluation)
+                # For people search: apply sector relevance check to avoid saving unrelated directories
+                if exa_cat_s == "company" or _source_page_is_sector_relevant(item, user_query):
                     directory_sources.append({
                         "url": str(item.get("url", "")).strip(),
                         "title": str(item.get("title", "")).strip(),
                         "source": "llm",
                     })
-                    reasons[idx] = "Página que lista múltiples profesionales — guardada como fuente para explorar."
+                    reasons[idx] = "Página que lista múltiples empresas — guardada como fuente para explorar."
                 else:
                     reasons[idx] = "Clasificada como fuente por LLM pero no relevante al sector buscado — descartada."
 
@@ -891,5 +1022,6 @@ async def filter_exa_raw_results_by_relevance(
     }
     if exa_for_meta:
         meta["relevance_filter_exa_category"] = exa_for_meta
-    meta["suggested_source_urls"] = [s for s in directory_sources if s["url"]]
+    deduped_sources = _deduplicate_sources([s for s in directory_sources if s.get("url")])
+    meta["suggested_source_urls"] = deduped_sources
     return kept, meta
