@@ -427,6 +427,43 @@ async def _brave_local_evidence(brave: BraveSearchClient, lead: LeadCore) -> dic
     return {}
 
 
+async def _brave_social_profiles(brave: BraveSearchClient, lead: LeadCore) -> dict[str, str]:
+    """Busca perfiles de Facebook e Instagram del lead en Brave."""
+    name = re.split(r"[|/\-]", lead.full_name)[0].strip()
+    city = lead.city or ""
+    specialty = lead.specialty or ""
+    _COUNTRY_ISO = {
+        "Honduras": "HN", "Mexico": "MX", "Guatemala": "GT",
+        "El Salvador": "SV", "Costa Rica": "CR", "Panama": "PA",
+        "Colombia": "CO", "Venezuela": "VE", "Peru": "PE",
+        "Argentina": "AR", "Chile": "CL", "España": "ES",
+    }
+    country_iso = _COUNTRY_ISO.get(lead.country)
+    out: dict[str, str] = {}
+    try:
+        fb_q = f'site:facebook.com "{name}" {city}'.strip()
+        fb_items = await brave.web_search(fb_q, country=country_iso, count=5, pages=1)
+        for item in fb_items:
+            url = str(item.get("url", "")).strip()
+            if "facebook.com/" in url and "/profile.php" not in url and "/posts/" not in url:
+                out["facebook_url"] = url
+                break
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        ig_q = f'site:instagram.com "{name}" {specialty} {city}'.strip()
+        ig_items = await brave.web_search(ig_q, country=country_iso, count=5, pages=1)
+        for item in ig_items:
+            url = str(item.get("url", "")).strip()
+            if "instagram.com/" in url and "/p/" not in url and "/reel/" not in url:
+                out["instagram_url"] = url
+                break
+    except Exception:  # noqa: BLE001
+        pass
+    logger.debug("_brave_social_profiles lead=%s result=%s", lead.full_name, out)
+    return out
+
+
 # ---------------- Prompts ----------------
 
 
@@ -543,15 +580,21 @@ async def enrich_lead_contacts(
             _brave_web_evidence(brave, exa_client, lead, proposer)
         )
 
-    # Esperar a deep_fetch, local_task, y brave_task en paralelo
+    social_task: asyncio.Task | None = None
+    if brave is not None and st.brave_search_enabled:
+        social_task = asyncio.create_task(_brave_social_profiles(brave, lead))
+
+    # Esperar a deep_fetch, local_task, brave_task y social_task en paralelo
     if progress_callback:
-        await progress_callback("Consultando datos locales y web...")
+        await progress_callback("Consultando datos locales y redes sociales...")
 
     gather_tasks: list = [deep_fetch_task]
     if local_task:
         gather_tasks.append(local_task)
     if brave_task:
         gather_tasks.append(brave_task)
+    if social_task:
+        gather_tasks.append(social_task)
 
     results = await asyncio.gather(*gather_tasks)
     deep_contacts = results[0]
@@ -561,9 +604,13 @@ async def enrich_lead_contacts(
     else:
         brave_local = {}
     if brave_task:
-        brave_evidence, brave_regex = results[idx]
+        brave_evidence, brave_regex = results[idx]; idx += 1
     else:
         brave_evidence, brave_regex = "", []
+    if social_task:
+        social_profiles: dict[str, str] = results[idx]; idx += 1
+    else:
+        social_profiles = {}
 
     if progress_callback:
         await progress_callback("Verificando datos con inteligencia artificial...")
@@ -583,12 +630,24 @@ async def enrich_lead_contacts(
     # Contactos estructurados de Brave Local Search
     if brave_local.get("phone") and not lead.phone:
         result.phone = brave_local["phone"][:40]
+        result.contact_sources["phone"] = "brave_local"
+    if brave_local.get("email") and not lead.email:
+        result.email = brave_local["email"][:255]
+        result.contact_sources["email"] = "brave_local"
     if brave_local.get("address") and not lead.address:
         result.address = brave_local["address"][:500]
     if brave_local.get("schedule_text") and not lead.schedule_text:
         result.schedule_text = brave_local["schedule_text"][:500]
     if brave_local.get("website"):
         result.website = brave_local["website"][:500]
+
+    # Perfiles sociales encontrados por Brave (Facebook / Instagram)
+    if social_profiles.get("facebook_url") and not (lead.facebook_url or "").strip():
+        result.facebook_url = social_profiles["facebook_url"]
+        result.contact_sources["facebook_url"] = social_profiles["facebook_url"]
+    if social_profiles.get("instagram_url") and not (lead.instagram_url or "").strip():
+        result.instagram_url = social_profiles["instagram_url"]
+        result.contact_sources["instagram_url"] = social_profiles["instagram_url"]
 
     # Aplicar contactos extraídos con regex del texto completo (prioridad: OpenCLI > regex > LLM)
     for direct_contact in unique_direct_contacts:
@@ -675,13 +734,13 @@ async def enrich_lead_contacts(
         result.description = finals["description_final"]
         result.audit = list(reviewed.get("rejected") or [])[:20]
 
-    # Citations: URLs de Exa.
-    citations: list[dict[str, Any]] = []
-    seen_urls: set[str] = set()
+    # Citations: URLs de Exa (se agregan a las ya existentes de regex, sin duplicar).
+    seen_urls: set[str] = {c["url"] for c in result.citations if c.get("url")}
+    first_exa_url: str = ""
     for item in exa_results:
         u = str(item.get("url", "")).strip()
         if u and u not in seen_urls:
-            citations.append(
+            result.citations.append(
                 {
                     "url": u,
                     "title": str(item.get("title", "") or "Fuente")[:240],
@@ -690,9 +749,10 @@ async def enrich_lead_contacts(
                 }
             )
             seen_urls.add(u)
-    result.citations = citations
-    if citations and not lead.primary_source_url:
-        result.primary_source_url = str(citations[0].get("url", ""))[:500]
+            if not first_exa_url:
+                first_exa_url = u
+    if first_exa_url and not lead.primary_source_url:
+        result.primary_source_url = first_exa_url[:500]
 
     has_contact = any([result.email, result.whatsapp, result.linkedin_url, result.phone, result.address])
     has_desc = bool(result.description)

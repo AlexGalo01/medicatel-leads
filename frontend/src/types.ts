@@ -131,6 +131,7 @@ export interface ExaResultPreviewItem {
   enrichment_status?: string | null;
   enrichment_message?: string | null;
   enriched_sources?: Record<string, unknown> | null;
+  saved_source_urls?: string[] | null;
 }
 
 export interface ExaMoreResultsResponse {
@@ -218,6 +219,8 @@ export interface OpportunityResponse {
 export interface OpportunityListItem {
   opportunity_id: string;
   job_id: string | null;
+  scrape_job_id: string | null;
+  scrape_target_url: string | null;
   exa_preview_index: number | null;
   directory_id: string | null;
   current_step_id: string | null;
@@ -290,6 +293,24 @@ export interface OpportunityCreateFromPreviewRequest {
   contact_overrides?: Record<string, string>;
 }
 
+export interface OpportunityCreateManualRequest {
+  title: string;
+  specialty?: string;
+  city?: string;
+  source_url?: string;
+  snippet?: string | null;
+  directory_id?: string | null;
+  step_id?: string | null;
+  contacts?: Array<{
+    id?: string;
+    kind: string;
+    value: string;
+    note?: string | null;
+    role?: string | null;
+    is_primary?: boolean;
+  }>;
+}
+
 export interface SearchJobStatusResponse {
   job_id: string;
   status: string;
@@ -306,6 +327,7 @@ export interface SearchJobStatusResponse {
     retry_used: boolean;
     discarded_leads_count: number;
   };
+  created_at?: string | null;
   updated_at: string;
   pipeline_mode?: string | null;
   exa_results_preview?: ExaResultPreviewItem[];
@@ -317,6 +339,7 @@ export interface SearchJobStatusResponse {
   awaiting_clarification?: boolean;
   clarifying_question?: string | null;
   suggested_source_urls?: Array<{ url: string; title: string }>;
+  lpa_preview?: ExaResultPreviewItem[];
   warnings?: string[];
 }
 
@@ -434,4 +457,39 @@ export interface UrlScrapeJobListItem {
 
 export interface UrlScrapeJobsListResponse {
   items: UrlScrapeJobListItem[];
+}
+
+// ---- Directory Sources (referencias guardadas) ----
+
+export type DirectorySourceStatus = "pending" | "scraping" | "scraped" | "discarded";
+
+export interface DirectorySourceCreateRequest {
+  url: string;
+  title?: string;
+  notes?: string | null;
+  source_search_job_id?: string | null;
+}
+
+export interface DirectorySourceUpdateRequest {
+  title?: string;
+  notes?: string | null;
+  status?: DirectorySourceStatus;
+}
+
+export interface DirectorySourceItem {
+  source_id: string;
+  directory_id: string;
+  url: string;
+  title: string;
+  notes: string | null;
+  status: DirectorySourceStatus;
+  scrape_job_id: string | null;
+  source_search_job_id: string | null;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DirectorySourcesListResponse {
+  items: DirectorySourceItem[];
 }

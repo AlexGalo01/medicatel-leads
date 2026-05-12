@@ -10,8 +10,18 @@ from mle.core.config import get_settings
 
 
 def _normalize_database_url(database_url: str) -> str:
+    from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
+
     if database_url.startswith("postgresql://"):
-        return database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if database_url.startswith("postgresql+asyncpg://"):
+        parsed = urlparse(database_url)
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        sslmode = params.pop("sslmode", [None])[0]
+        if sslmode and "ssl" not in params:
+            params["ssl"] = ["require"] if sslmode == "require" else ["prefer"]
+        new_query = urlencode({k: v[0] for k, v in params.items()})
+        database_url = urlunparse(parsed._replace(query=new_query))
     return database_url
 
 
@@ -161,6 +171,27 @@ def _pg_apply_url_scrape_jobs_migration() -> list[str]:
     ]
 
 
+def _pg_apply_directory_sources_migration() -> list[str]:
+    """
+    Migración embebida para sql/006_directory_sources.sql.
+    La tabla la crea SQLModel.metadata.create_all; aquí índices y FKs.
+    """
+    return [
+        "CREATE INDEX IF NOT EXISTS idx_directory_sources_directory ON directory_sources (directory_id)",
+        "CREATE INDEX IF NOT EXISTS idx_directory_sources_status ON directory_sources (status)",
+        "CREATE INDEX IF NOT EXISTS idx_directory_sources_scrape_job ON directory_sources (scrape_job_id)",
+        "ALTER TABLE directory_sources DROP CONSTRAINT IF EXISTS directory_sources_directory_id_fkey",
+        "ALTER TABLE directory_sources ADD CONSTRAINT directory_sources_directory_id_fkey "
+        "FOREIGN KEY (directory_id) REFERENCES directories(id) ON DELETE CASCADE",
+        "ALTER TABLE directory_sources DROP CONSTRAINT IF EXISTS directory_sources_scrape_job_id_fkey",
+        "ALTER TABLE directory_sources ADD CONSTRAINT directory_sources_scrape_job_id_fkey "
+        "FOREIGN KEY (scrape_job_id) REFERENCES url_scrape_jobs(id) ON DELETE SET NULL",
+        "ALTER TABLE directory_sources DROP CONSTRAINT IF EXISTS directory_sources_source_search_job_id_fkey",
+        "ALTER TABLE directory_sources ADD CONSTRAINT directory_sources_source_search_job_id_fkey "
+        "FOREIGN KEY (source_search_job_id) REFERENCES search_jobs(id) ON DELETE SET NULL",
+    ]
+
+
 # Mapa legacy stage → posición 0-indexed en el directorio "Sin clasificar"
 LEGACY_STAGES_ORDER = [
     "first_contact",
@@ -172,87 +203,7 @@ LEGACY_STAGES_ORDER = [
 ]
 
 
-async def _seed_sin_clasificar_directory(connection) -> None:
-    """
-    Crea un directorio compartido 'Sin clasificar' con los 6 steps legacy
-    y migra todas las Opps existentes (sin directorio) a él.
-    Idempotente: si el directorio ya existe, no hace nada.
-    """
-    existing = await connection.execute(
-        text("SELECT id FROM directories WHERE name = 'Sin clasificar' LIMIT 1")
-    )
-    row = existing.fetchone()
-    if row is not None:
-        directory_id = row[0]
-    else:
-        new_dir = await connection.execute(
-            text(
-                """
-                INSERT INTO directories (id, name, description, created_at, updated_at)
-                VALUES (gen_random_uuid(), 'Sin clasificar',
-                        'Directorio creado automáticamente para opportunities previas al sistema de directorios.',
-                        NOW(), NOW())
-                RETURNING id
-                """
-            )
-        )
-        directory_id = new_dir.fetchone()[0]
 
-    # Crear steps si no existen (idempotente por nombre + directory_id).
-    # CAST explícito: asyncpg no puede deducir el tipo de :name cuando aparece
-    # solo en SELECT y en WHERE sin ancla de columna. Forzamos VARCHAR para evitar
-    # AmbiguousParameterError (text vs character varying).
-    for order, stage in enumerate(LEGACY_STAGES_ORDER):
-        is_terminal = stage == "medicatel_profile"
-        is_won = stage == "medicatel_profile"
-        await connection.execute(
-            text(
-                """
-                INSERT INTO directory_steps (id, directory_id, name, display_order, is_terminal, is_won, created_at)
-                SELECT gen_random_uuid(), :dir_id, CAST(:name AS VARCHAR(120)), :ord, :term, :won, NOW()
-                WHERE NOT EXISTS (
-                  SELECT 1 FROM directory_steps
-                  WHERE directory_id = :dir_id AND name = CAST(:name AS VARCHAR(120))
-                )
-                """
-            ),
-            {"dir_id": directory_id, "name": stage, "ord": order, "term": is_terminal, "won": is_won},
-        )
-
-    # Asignar Opps huérfanas a este directorio + mapear su stage legacy a un step.
-    steps_map_result = await connection.execute(
-        text(
-            "SELECT name, id FROM directory_steps WHERE directory_id = :dir_id"
-        ),
-        {"dir_id": directory_id},
-    )
-    step_by_name = {row[0]: row[1] for row in steps_map_result.fetchall()}
-    for stage_name, step_id in step_by_name.items():
-        await connection.execute(
-            text(
-                """
-                UPDATE opportunities
-                SET directory_id = :dir_id,
-                    current_step_id = :step_id
-                WHERE directory_id IS NULL AND stage = :stage
-                """
-            ),
-            {"dir_id": directory_id, "step_id": step_id, "stage": stage_name},
-        )
-    # Opps con stage desconocido → al primer step.
-    first_step_id = step_by_name.get(LEGACY_STAGES_ORDER[0])
-    if first_step_id is not None:
-        await connection.execute(
-            text(
-                """
-                UPDATE opportunities
-                SET directory_id = :dir_id,
-                    current_step_id = :step_id
-                WHERE directory_id IS NULL
-                """
-            ),
-            {"dir_id": directory_id, "step_id": first_step_id},
-        )
 
 
 async def init_db() -> None:
@@ -288,7 +239,20 @@ async def init_db() -> None:
         )
         for stmt in _pg_apply_url_scrape_jobs_migration():
             await connection.execute(text(stmt))
-        await _seed_sin_clasificar_directory(connection)
+        for stmt in _pg_apply_directory_sources_migration():
+            await connection.execute(text(stmt))
+        await connection.execute(
+            text(
+                "ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS "
+                "scrape_job_id UUID REFERENCES url_scrape_jobs(id) ON DELETE SET NULL"
+            )
+        )
+        await connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_opportunities_scrape_job ON opportunities(scrape_job_id)"
+            )
+        )
+
         block = _pg_migration_sql_002()
         if not block:
             return

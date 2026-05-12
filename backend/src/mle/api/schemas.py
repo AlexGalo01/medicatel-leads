@@ -76,6 +76,7 @@ class SearchJobStatusResponse(BaseModel):
     current_stage: str
     metrics: dict[str, int]
     quality_metrics: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
     updated_at: datetime
     pipeline_mode: str | None = None
     exa_results_preview: list[dict[str, Any]] = Field(default_factory=list)
@@ -87,6 +88,7 @@ class SearchJobStatusResponse(BaseModel):
     awaiting_clarification: bool = False
     clarifying_question: str | None = None
     suggested_source_urls: list[dict[str, str]] = Field(default_factory=list)
+    lpa_preview: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -310,11 +312,14 @@ class OpportunityEnrichResponse(BaseModel):
     linkedin_url: str = ""
     description: str = ""
     citations: list[dict[str, Any]] = Field(default_factory=list)
+    contact_sources: dict[str, str] = Field(default_factory=dict)
 
 
 class OpportunityListItemResponse(BaseModel):
     opportunity_id: str
     job_id: str | None = None
+    scrape_job_id: str | None = None
+    scrape_target_url: str | None = None
     exa_preview_index: int | None = None
     directory_id: str | None = None
     current_step_id: str | None = None
@@ -352,6 +357,9 @@ class OpportunityCreateManualRequest(BaseModel):
     city: str = Field(default="", max_length=120)
     source_url: str = Field(default="", max_length=2000)
     snippet: str | None = Field(default=None, max_length=4000)
+    directory_id: UUID | None = None
+    step_id: UUID | None = None
+    contacts: list[OpportunityContactPayload] = Field(default_factory=list)
 
 
 class OpportunityProfileCvPatch(BaseModel):
@@ -363,6 +371,7 @@ class OpportunityProfileCvPatch(BaseModel):
 
 
 class OpportunityUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=120)
     stage: str | None = Field(default=None, max_length=64)
     response_outcome: str | None = Field(default=None, max_length=32)
     note: str | None = Field(default=None, max_length=4000)
@@ -426,4 +435,42 @@ class UrlScrapeJobsListResponse(BaseModel):
 class UrlScrapeJobPushRequest(BaseModel):
     directory_id: UUID
     entry_indices: list[int] = Field(default_factory=list)
+    step_id: UUID | None = Field(
+        default=None,
+        description="Step destino (opcional). Si se omite, va al primer step del directorio.",
+    )
+
+
+# ---- Directory Sources (referencias guardadas) ----
+
+
+class DirectorySourceCreateRequest(BaseModel):
+    url: str = Field(min_length=5, max_length=2000)
+    title: str = Field(default="", max_length=500)
+    notes: str | None = Field(default=None, max_length=1000)
+    source_search_job_id: UUID | None = None
+
+
+class DirectorySourceUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=500)
+    notes: str | None = Field(default=None, max_length=1000)
+    status: str | None = Field(default=None, max_length=32)
+
+
+class DirectorySourceItemResponse(BaseModel):
+    source_id: str
+    directory_id: str
+    url: str
+    title: str
+    notes: str | None = None
+    status: str
+    scrape_job_id: str | None = None
+    source_search_job_id: str | None = None
+    created_by_user_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DirectorySourcesListResponse(BaseModel):
+    items: list[DirectorySourceItemResponse] = Field(default_factory=list)
 

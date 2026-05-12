@@ -7,6 +7,7 @@ from typing import Any
 
 from langsmith import traceable
 
+from mle.clients.brave_client import BraveSearchClient
 from mle.core.config import get_settings
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.services.exa_preview_enrich_service import enrich_exa_preview_rows
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 PIPELINE_MODE_SEARCH_ONLY = "presearch_and_search_only"
 MAX_EXA_PREVIEW_ITEMS = 80
 MAX_EXA_ACCUMULATED_RAW = 120
+MIN_SUGGESTED_SOURCES = 10
 
 
 def _url_key_for_merge(url: str) -> str:
@@ -116,6 +118,61 @@ def _preview_item(raw: dict[str, Any], index: int) -> dict[str, Any]:
     return out
 
 
+async def _fetch_brave_directory_sources(
+    query_text: str,
+    planner_output: dict[str, Any],
+    existing_urls: set[str],
+) -> list[dict[str, str]]:
+    """Busca fuentes/directorios con Brave para complementar suggested_source_urls."""
+    settings = get_settings()
+    if not settings.brave_search_enabled or not settings.brave_search_api_key:
+        return []
+
+    rel = planner_output.get("relevance_criteria", {}) if isinstance(planner_output.get("relevance_criteria"), dict) else {}
+    country = str(rel.get("country_text") or "").strip()
+    city = str(rel.get("city") or "").strip()
+    entity = str(rel.get("role_or_stack_hint") or "").strip()
+    location = " ".join(p for p in (city, country) if p) or ""
+    base_term = entity or query_text
+
+    # Queries orientadas a directorios y listados
+    brave_queries = [
+        f"directorio {base_term} {location}",
+        f"{base_term} {location} listado profesionales equipo staff",
+        f"{base_term} {location} asociación colegio gremio",
+    ]
+
+    iso = str(rel.get("country_iso2") or "").strip().upper()
+    brave_country = iso if len(iso) == 2 else None
+
+    brave_client = BraveSearchClient(
+        api_key=settings.brave_search_api_key,
+        timeout_seconds=settings.brave_search_timeout_seconds,
+    )
+
+    coros = [brave_client.web_search(q, country=brave_country, count=20, pages=1) for q in brave_queries]
+    outcomes = await asyncio.gather(*coros, return_exceptions=True)
+
+    sources: list[dict[str, str]] = []
+    seen = set(existing_urls)
+    for outcome in outcomes:
+        if isinstance(outcome, Exception) or not isinstance(outcome, list):
+            continue
+        for item in outcome:
+            url = str(item.get("url", "")).strip()
+            title = str(item.get("title", "")).strip()
+            key = url.lower().rstrip("/")
+            if not url or key in seen:
+                continue
+            # Excluir LinkedIn profiles individuales (solo queremos directorios/empresas)
+            if "linkedin.com/in/" in url.lower():
+                continue
+            seen.add(key)
+            sources.append({"url": url, "title": title or url, "source": "brave_directory_search"})
+
+    return sources
+
+
 def _build_exa_preview(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for i, item in enumerate(results[:MAX_EXA_PREVIEW_ITEMS]):
@@ -210,6 +267,39 @@ async def search_finalize_node(state: LeadSearchGraphState) -> dict[str, object]
     }
     if finalize_heuristic_meta:
         meta_out = {**meta_out, **finalize_heuristic_meta}
+
+    # Completar fuentes sugeridas si hay menos de MIN_SUGGESTED_SOURCES
+    existing_sources: list[dict[str, str]] = meta_out.get("suggested_source_urls", [])
+    if not isinstance(existing_sources, list):
+        existing_sources = []
+    if len(existing_sources) < MIN_SUGGESTED_SOURCES:
+        existing_source_urls = {s.get("url", "").strip().lower().rstrip("/") for s in existing_sources}
+        # También excluir URLs ya en resultados
+        result_urls = {_url_key_for_merge(str(r.get("url", ""))) for r in accumulated}
+        all_seen = existing_source_urls | result_urls
+        try:
+            brave_sources = await _fetch_brave_directory_sources(
+                query_text=state.query_text,
+                planner_output=planner_out,
+                existing_urls=all_seen,
+            )
+            needed = MIN_SUGGESTED_SOURCES - len(existing_sources)
+            existing_sources.extend(brave_sources[:needed])
+            logger.info(
+                "search_finalize: fuentes complementadas con Brave job_id=%s, total=%s",
+                state.job_id, len(existing_sources),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Brave directory sources falló job_id=%s: %s", state.job_id, exc)
+    meta_out["suggested_source_urls"] = existing_sources
+
+    # Construir preview de LPA desde los raw results
+    lpa_raw = meta_out.get("lpa_results") or []
+    if isinstance(lpa_raw, list) and lpa_raw:
+        lpa_preview = _build_exa_preview(lpa_raw)
+        meta_out["lpa_preview"] = lpa_preview
+        logger.info("search_finalize: lpa_preview job_id=%s items=%s", state.job_id, len(lpa_preview))
+
     return {
         "status": "running",
         "current_stage": "auto_enrich",

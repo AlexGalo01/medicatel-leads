@@ -15,6 +15,7 @@ import {
 } from "../api";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
+import { EnrichContactModal, ENRICH_STAGES } from "../components/EnrichContactModal";
 import { mergeAbortSignals, mergeProfileAboutText } from "../lib/utils";
 import type { ExaResultPreviewItem } from "../types";
 
@@ -73,12 +74,7 @@ function inferLocationFromText(city: string, title: string, snippet: string): st
 /** Evita espera infinita si el backend no responde (p. ej. Gemini colgado). */
 const PROFILE_SUMMARY_TIMEOUT_MS = 90_000;
 
-const ENRICH_STAGES = [
-  "Buscando información del perfil en la web...",
-  "Consultando Google Maps y Knowledge Panel...",
-  "Visitando páginas personales y redes sociales...",
-  "Verificando datos con inteligencia artificial...",
-];
+
 
 function profileSummaryErrorMessage(err: unknown): string {
   if (err instanceof DOMException && err.name === "AbortError") {
@@ -101,8 +97,6 @@ export function JobExaResultDetailPage(): JSX.Element {
   const resultIndex = parseResultIndex(resultIndexParam);
   const [enrichModalOpen, setEnrichModalOpen] = useState(false);
   const [enrichStageIdx, setEnrichStageIdx] = useState(0);
-  const [checkedFields, setCheckedFields] = useState<Record<string, boolean>>({});
-  const [checkedSources, setCheckedSources] = useState<Record<string, boolean>>({});
   const [isExporting, setIsExporting] = useState(false);
 
   const jobQuery = useQuery({
@@ -183,10 +177,10 @@ export function JobExaResultDetailPage(): JSX.Element {
       if (row) {
         const updatedRow = {
           ...row,
-          email: savedData.email || row.email,
-          phone: savedData.phone || row.phone,
-          whatsapp: savedData.whatsapp || row.whatsapp,
-          saved_source_urls: savedData.source_urls,
+          email: savedData.email !== undefined ? savedData.email : row.email,
+          phone: savedData.phone !== undefined ? savedData.phone : row.phone,
+          whatsapp: savedData.whatsapp !== undefined ? savedData.whatsapp : row.whatsapp,
+          saved_source_urls: savedData.source_urls !== undefined ? savedData.source_urls : row.saved_source_urls,
         };
         // Actualizar el cache de React Query directamente
         queryClient.setQueryData(["job-status", jobId], (oldData: any) => {
@@ -200,8 +194,6 @@ export function JobExaResultDetailPage(): JSX.Element {
         });
       }
       setEnrichModalOpen(false);
-      setCheckedFields({});
-      setCheckedSources({});
     },
   });
 
@@ -348,7 +340,8 @@ export function JobExaResultDetailPage(): JSX.Element {
                   if (!jobId || resultIndex == null) return;
                   setIsExporting(true);
                   try {
-                    await downloadPreviewResultXlsx(jobId, resultIndex);
+                    const downloadName = existingOpp?.title || title;
+                    await downloadPreviewResultXlsx(jobId, resultIndex, downloadName);
                   } catch (err) {
                     console.error("Export failed:", err);
                   } finally {
@@ -406,13 +399,24 @@ export function JobExaResultDetailPage(): JSX.Element {
             <h2 className="lead-detail-section-title">Fuentes y enlaces</h2>
             {url ? (
               <ul className="lead-source-link-list">
-                <li className="lead-source-link-row">
-                  <span className="lead-source-host">{hostLabel(url)}</span>
-                  <a href={url} target="_blank" rel="noreferrer" className="lead-source-anchor">
-                    {title}
-                    <ExternalLink size={14} aria-hidden />
-                  </a>
-                </li>
+                {url && (
+                  <li className="lead-source-link-row">
+                    <span className="lead-source-host">{hostLabel(url)}</span>
+                    <a href={url} target="_blank" rel="noreferrer" className="lead-source-anchor">
+                      {title}
+                      <ExternalLink size={14} aria-hidden />
+                    </a>
+                  </li>
+                )}
+                {row.saved_source_urls?.map((surl, idx) => (
+                  <li key={`saved-src-${idx}`} className="lead-source-link-row">
+                    <span className="lead-source-host">{hostLabel(surl)}</span>
+                    <a href={surl} target="_blank" rel="noreferrer" className="lead-source-anchor">
+                      {surl}
+                      <ExternalLink size={14} aria-hidden />
+                    </a>
+                  </li>
+                ))}
               </ul>
             ) : (
               <p className="muted-text">No hay URL registrada para este resultado.</p>
@@ -530,177 +534,19 @@ export function JobExaResultDetailPage(): JSX.Element {
         </aside>
       </div>
 
-      {enrichModalOpen && (
-        <div
-          className="enrich-modal-overlay"
-          onClick={() => {
-            if (!enrichMut.isPending) {
-              setEnrichModalOpen(false);
-              setCheckedFields({});
-              setCheckedSources({});
-            }
-          }}
-        >
-          <div className="enrich-modal-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="enrich-modal-header">
-              <h3 className="enrich-modal-title">Búsqueda de contactos</h3>
-              {!enrichMut.isPending && (
-                <button
-                  type="button"
-                  className="enrich-modal-close"
-                  aria-label="Cerrar"
-                  onClick={() => {
-                    setEnrichModalOpen(false);
-                    setCheckedFields({});
-                    setCheckedSources({});
-                  }}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-
-            {enrichMut.isPending && (
-              <div className="enrich-modal-loading">
-                <Loader2 className="spin" size={32} aria-hidden />
-                <p className="enrich-modal-stage">{ENRICH_STAGES[enrichStageIdx]}</p>
-              </div>
-            )}
-
-            {enrichMut.isError && (
-              <p className="error-text" style={{ padding: "1rem" }}>
-                Error al buscar. Intenta de nuevo.
-              </p>
-            )}
-
-            {enrichMut.isSuccess && enrichMut.data && (() => {
-              const r = enrichMut.data;
-              const contactFields = [
-                { key: "email", label: "Email", value: r.email },
-                { key: "phone", label: "Teléfono", value: r.phone },
-                { key: "whatsapp", label: "WhatsApp", value: r.whatsapp },
-              ].filter((x) => x.value?.trim());
-
-              const sourceItems = r.citations
-                .filter((c) => c.url?.trim())
-                .map((c) => ({ ...c, url: c.url! }));
-
-              if (contactFields.length > 0 && Object.keys(checkedFields).length === 0) {
-                const initial: Record<string, boolean> = {};
-                for (const f of contactFields) initial[f.key] = true;
-                setCheckedFields(initial);
-              }
-
-              if (sourceItems.length > 0 && Object.keys(checkedSources).length === 0) {
-                const initSrc: Record<string, boolean> = {};
-                for (const c of sourceItems) initSrc[c.url] = false;
-                setCheckedSources(initSrc);
-              }
-
-              const selectedContactData = Object.fromEntries(
-                contactFields
-                  .filter((f) => checkedFields[f.key])
-                  .map((f) => [f.key, f.value]),
-              ) as Record<string, string>;
-
-              const selectedSourceUrls = sourceItems
-                .filter((c) => checkedSources[c.url])
-                .map((c) => c.url)
-                .filter((url): url is string => Boolean(url));
-
-              const selectedData: { email?: string; phone?: string; whatsapp?: string; source_urls?: string[] } = {
-                email: selectedContactData.email,
-                phone: selectedContactData.phone,
-                whatsapp: selectedContactData.whatsapp,
-                source_urls: selectedSourceUrls.length ? selectedSourceUrls : undefined,
-              };
-
-              return (
-                <div className="enrich-modal-results">
-                  {contactFields.length === 0 ? (
-                    <p className="muted-text" style={{ padding: "0.5rem 0" }}>
-                      No se encontró información de contacto verificada.
-                    </p>
-                  ) : (
-                    <>
-                      <p className="enrich-modal-summary">
-                        {contactFields.length} dato{contactFields.length !== 1 ? "s" : ""} encontrado{contactFields.length !== 1 ? "s" : ""}
-                      </p>
-                      <ul className="enrich-modal-contact-list">
-                        {contactFields.map((item) => (
-                          <li key={item.key} className="enrich-modal-contact-row">
-                            <label className="enrich-modal-contact-check">
-                              <input
-                                type="checkbox"
-                                checked={checkedFields[item.key] ?? true}
-                                onChange={(e) =>
-                                  setCheckedFields((prev) => ({ ...prev, [item.key]: e.target.checked }))
-                                }
-                              />
-                              <span className="enrich-modal-contact-label">{item.label}</span>
-                            </label>
-                            <span className="enrich-modal-contact-value">{item.value}</span>
-                          </li>
-                        ))}
-                      </ul>
-                      {sourceItems.length > 0 && (
-                        <div className="enrich-modal-sources-section">
-                          <p className="enrich-modal-sources-title">Fuentes</p>
-                          <ul className="enrich-modal-sources-list">
-                            {sourceItems.slice(0, 5).map((c) => (
-                              <li key={c.url} className="enrich-modal-source-row">
-                                <label className="enrich-modal-source-check">
-                                  <input
-                                    type="checkbox"
-                                    checked={checkedSources[c.url] ?? false}
-                                    onChange={(e) =>
-                                      setCheckedSources((prev) => ({ ...prev, [c.url]: e.target.checked }))
-                                    }
-                                  />
-                                </label>
-                                <a href={c.url} target="_blank" rel="noreferrer" className="enrich-modal-source-link">
-                                  {hostLabel(c.url)}
-                                </a>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
-                        <Button
-                          type="button"
-                          className="cta-button"
-                          style={{ flex: 1 }}
-                          disabled={Object.keys(selectedData).length === 0 || saveMut.isPending}
-                          onClick={() => saveMut.mutate(selectedData)}
-                        >
-                          {saveMut.isPending ? "Guardando..." : "Guardar Datos"}
-                        </Button>
-                        <Button
-                          type="button"
-                          className="link-button"
-                          onClick={() => {
-                            setEnrichModalOpen(false);
-                            setCheckedFields({});
-                            setCheckedSources({});
-                          }}
-                        >
-                          Cancelar
-                        </Button>
-                      </div>
-                      {saveMut.isError && (
-                        <p className="error-text" style={{ marginTop: "0.5rem" }}>
-                          Error al guardar. Intenta de nuevo.
-                        </p>
-                      )}
-                    </>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-      )}
+      <EnrichContactModal
+        isOpen={enrichModalOpen}
+        onClose={() => {
+          setEnrichModalOpen(false);
+        }}
+        isPending={enrichMut.isPending}
+        isError={enrichMut.isError}
+        stageIdx={enrichStageIdx}
+        data={enrichMut.data ?? null}
+        onSave={(data) => saveMut.mutate(data)}
+        isSaving={saveMut.isPending}
+        saveError={saveMut.isError}
+      />
     </section>
   );
 }

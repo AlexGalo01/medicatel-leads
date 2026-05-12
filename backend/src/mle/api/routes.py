@@ -21,6 +21,10 @@ from mle.api.schemas import (
     OpportunityCreateManualRequest,
     DirectoryEntriesListResponse,
     DirectoryEntryItemResponse,
+    DirectorySourceCreateRequest,
+    DirectorySourceItemResponse,
+    DirectorySourcesListResponse,
+    DirectorySourceUpdateRequest,
     ExaMoreResultsRequest,
     ExaMoreResultsResponse,
     LeadCrmUpdateRequest,
@@ -31,7 +35,6 @@ from mle.api.schemas import (
     LeadsListResponse,
     LoginRequest,
     LoginResponse,
-    RegisterRequest,
     OpportunityBitacoraRequest,
     OpportunityContactsReplaceRequest,
     OpportunityCreateFromPreviewRequest,
@@ -59,6 +62,7 @@ from mle.api.schemas import (
 )
 from mle.db.base import async_session_factory
 from mle.db.models import Opportunity, User, DirectoryStep
+from mle.repositories.url_scrape_jobs_repository import UrlScrapeJobsRepository
 from mle.repositories.directories_repository import DirectoriesRepository
 from mle.repositories.directory_entries_repository import DirectoryEntriesRepository
 from mle.repositories.jobs_repository import JobsRepository
@@ -527,6 +531,9 @@ async def get_search_job_status(
     warnings_raw = job.metadata_json.get("warnings")
     warnings: list[str] = warnings_raw if isinstance(warnings_raw, list) else []
 
+    lpa_preview_raw = job.metadata_json.get("lpa_preview")
+    lpa_preview: list[dict[str, Any]] = lpa_preview_raw if isinstance(lpa_preview_raw, list) else []
+
     return SearchJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
@@ -534,6 +541,7 @@ async def get_search_job_status(
         current_stage=pipeline_stage,
         metrics=metrics,
         quality_metrics=quality_metrics,
+        created_at=job.created_at,
         updated_at=job.updated_at,
         pipeline_mode=pipeline_mode,
         exa_results_preview=exa_preview,
@@ -545,6 +553,7 @@ async def get_search_job_status(
         awaiting_clarification=awaiting_clarification,
         clarifying_question=clarifying_display,
         suggested_source_urls=suggested_source_urls,
+        lpa_preview=lpa_preview,
         warnings=warnings,
     )
 
@@ -1369,6 +1378,9 @@ async def create_opportunity_manual(
             source_url=payload.source_url,
             snippet=payload.snippet,
             owner_user_id=current.id,
+            directory_id=payload.directory_id,
+            current_step_id=payload.step_id,
+            contacts=[c.model_dump() for c in payload.contacts] if payload.contacts else [],
         )
         owner = await _load_owner_user(session, opp)
     return _opportunity_to_response(opp, owner=owner, created=True)
@@ -1393,10 +1405,21 @@ async def list_opportunities(
             offset=0,
         )
         owners = await _load_owners_map(session, rows)
+        # Fetch target_url for any scrape-sourced opportunities
+        scrape_ids = {o.scrape_job_id for o in rows if o.scrape_job_id}
+        scrape_url_map: dict = {}
+        if scrape_ids:
+            scrape_repo = UrlScrapeJobsRepository(session)
+            for sid in scrape_ids:
+                sj = await scrape_repo.get_by_id(sid)
+                if sj:
+                    scrape_url_map[sj.id] = sj.target_url
     items = [
         OpportunityListItemResponse(
             opportunity_id=str(o.id),
             job_id=str(o.job_id) if o.job_id else None,
+            scrape_job_id=str(o.scrape_job_id) if o.scrape_job_id else None,
+            scrape_target_url=scrape_url_map.get(o.scrape_job_id) if o.scrape_job_id else None,
             exa_preview_index=o.exa_preview_index,
             directory_id=str(o.directory_id) if o.directory_id else None,
             current_step_id=str(o.current_step_id) if o.current_step_id else None,
@@ -1567,6 +1590,7 @@ async def enrich_opportunity(opportunity_id: UUID):
                         linkedin_url=result.linkedin_url,
                         description=result.description,
                         citations=result.citations,
+                        contact_sources=result.contact_sources,
                     )
                     yield f"event: done\ndata: {response_data.model_dump_json()}\n\n"
                     break
@@ -1631,6 +1655,12 @@ async def patch_opportunity(
             updates = payload.profile_cv.model_dump(exclude_unset=True)
             if updates:
                 opp = await repo.merge_profile_overrides(opp, updates, owner_user_id=current.id)
+        
+        if payload.title is not None and payload.title.strip() and payload.title != opp.title:
+            opp.title = payload.title.strip()
+            session.add(opp)
+            await session.commit()
+            
         await session.refresh(opp)
         owner = await _load_owner_user(session, opp)
     return _opportunity_to_response(opp, owner=owner, created=False)
@@ -1924,6 +1954,211 @@ async def delete_directory(
     return Response(status_code=204)
 
 
+# ============================================================================
+# DIRECTORY SOURCES — Referencias/scrapeo dentro de un directorio
+# ============================================================================
+
+
+@protected_router.get(
+    "/directories/{directory_id}/sources",
+    response_model=DirectorySourcesListResponse,
+)
+async def list_directory_sources(
+    directory_id: UUID,
+    status: str | None = Query(default=None, max_length=32),
+    _u: User = Depends(require_permission("use_search")),
+) -> DirectorySourcesListResponse:
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+
+    async with async_session_factory() as session:
+        repo = DirectorySourcesRepository(session)
+        sources = await repo.list_by_directory(
+            directory_id=directory_id, status=status
+        )
+    items = [
+        DirectorySourceItemResponse(
+            source_id=str(s.id),
+            directory_id=str(s.directory_id),
+            url=s.url,
+            title=s.title,
+            notes=s.notes,
+            status=s.status,
+            scrape_job_id=str(s.scrape_job_id) if s.scrape_job_id else None,
+            source_search_job_id=str(s.source_search_job_id)
+            if s.source_search_job_id
+            else None,
+            created_by_user_id=str(s.created_by_user_id)
+            if s.created_by_user_id
+            else None,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in sources
+    ]
+    return DirectorySourcesListResponse(items=items)
+
+
+@protected_router.post(
+    "/directories/{directory_id}/sources",
+    response_model=DirectorySourceItemResponse,
+    status_code=201,
+)
+async def create_directory_source(
+    directory_id: UUID,
+    payload: DirectorySourceCreateRequest,
+    current: User = Depends(require_permission("use_search")),
+) -> DirectorySourceItemResponse:
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+
+    async with async_session_factory() as session:
+        repo = DirectorySourcesRepository(session)
+        source = await repo.create(
+            directory_id=directory_id,
+            url=payload.url,
+            title=payload.title,
+            notes=payload.notes,
+            source_search_job_id=payload.source_search_job_id,
+            created_by_user_id=current.id,
+        )
+    return DirectorySourceItemResponse(
+        source_id=str(source.id),
+        directory_id=str(source.directory_id),
+        url=source.url,
+        title=source.title,
+        notes=source.notes,
+        status=source.status,
+        scrape_job_id=str(source.scrape_job_id) if source.scrape_job_id else None,
+        source_search_job_id=str(source.source_search_job_id)
+        if source.source_search_job_id
+        else None,
+        created_by_user_id=str(source.created_by_user_id)
+        if source.created_by_user_id
+        else None,
+        created_at=source.created_at,
+        updated_at=source.updated_at,
+    )
+
+
+@protected_router.patch(
+    "/directories/{directory_id}/sources/{source_id}",
+    response_model=DirectorySourceItemResponse,
+)
+async def update_directory_source(
+    directory_id: UUID,
+    source_id: UUID,
+    payload: DirectorySourceUpdateRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> DirectorySourceItemResponse:
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+
+    async with async_session_factory() as session:
+        repo = DirectorySourcesRepository(session)
+        source = await repo.get_by_id(source_id)
+        if source is None or source.directory_id != directory_id:
+            _raise_not_found("Fuente")
+        source = await repo.update(
+            source_id,
+            title=payload.title,
+            notes=payload.notes,
+            status=payload.status,
+        )
+    return DirectorySourceItemResponse(
+        source_id=str(source.id),
+        directory_id=str(source.directory_id),
+        url=source.url,
+        title=source.title,
+        notes=source.notes,
+        status=source.status,
+        scrape_job_id=str(source.scrape_job_id) if source.scrape_job_id else None,
+        source_search_job_id=str(source.source_search_job_id)
+        if source.source_search_job_id
+        else None,
+        created_by_user_id=str(source.created_by_user_id)
+        if source.created_by_user_id
+        else None,
+        created_at=source.created_at,
+        updated_at=source.updated_at,
+    )
+
+
+@protected_router.delete(
+    "/directories/{directory_id}/sources/{source_id}",
+    status_code=204,
+)
+async def delete_directory_source(
+    directory_id: UUID,
+    source_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> Response:
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+
+    async with async_session_factory() as session:
+        repo = DirectorySourcesRepository(session)
+        source = await repo.get_by_id(source_id)
+        if source is None or source.directory_id != directory_id:
+            _raise_not_found("Fuente")
+        ok = await repo.delete(source_id)
+        if not ok:
+            _raise_not_found("Fuente")
+    return Response(status_code=204)
+
+
+@protected_router.post(
+    "/directories/{directory_id}/sources/{source_id}/scrape",
+    status_code=202,
+)
+async def scrape_directory_source(
+    directory_id: UUID,
+    source_id: UUID,
+    current: User = Depends(require_permission("use_search")),
+) -> dict[str, str]:
+    """Crea un URL scrape job a partir de una fuente guardada y la vincula."""
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+    from mle.services.url_scrape_service import run_url_scrape_pipeline
+
+    async with async_session_factory() as session:
+        sources_repo = DirectorySourcesRepository(session)
+        source = await sources_repo.get_by_id(source_id)
+        if source is None or source.directory_id != directory_id:
+            _raise_not_found("Fuente")
+
+        scrape_jobs_repo = UrlScrapeJobsRepository(session)
+        prompt = (
+            f"Extraer profesionales y entidades del directorio: {source.title or source.url}"
+        )
+        scrape_job = await scrape_jobs_repo.create(
+            target_url=source.url,
+            user_prompt=prompt,
+            directory_id=directory_id,
+        )
+
+        await sources_repo.update(
+            source_id,
+            status="scraping",
+            scrape_job_id=scrape_job.id,
+        )
+
+        job_id = scrape_job.id
+
+    asyncio.create_task(run_url_scrape_pipeline(job_id))
+
+    return {
+        "scrape_job_id": str(job_id),
+        "status": "created",
+        "source_id": str(source_id),
+    }
+
+
 @protected_router.post("/directories/{directory_id}/steps", response_model=DirectoryStepRead, status_code=201)
 async def add_step(
     directory_id: UUID,
@@ -2027,7 +2262,7 @@ async def move_opportunity_step(
 ) -> OpportunityResponse:
     async with async_session_factory() as session:
         dir_repo = DirectoriesRepository(session)
-        opp = await dir_repo.move_opportunity(opportunity_id, payload.direction)
+        opp = await dir_repo.move_opportunity(opportunity_id, payload.step_id)
         if opp is None:
             raise HTTPException(
                 status_code=409,

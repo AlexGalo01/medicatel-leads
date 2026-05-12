@@ -6,6 +6,10 @@ import type {
   DirectoryCreateRequest,
   DirectoryEntriesListResponse,
   DirectoryListResponse,
+  DirectorySourceCreateRequest,
+  DirectorySourceItem,
+  DirectorySourceUpdateRequest,
+  DirectorySourcesListResponse,
   DirectoryStep,
   DirectoryStepCreate,
   DirectoryStepUpdate,
@@ -18,6 +22,7 @@ import type {
   LoginResponse,
   RegisterRequest,
   OpportunityCreateFromPreviewRequest,
+  OpportunityCreateManualRequest,
   OpportunityListResponse,
   OpportunityProfileOverrides,
   OpportunityResponse,
@@ -354,7 +359,7 @@ export async function downloadPreviewXlsxFile(jobId: string): Promise<void> {
   URL.revokeObjectURL(objectUrl);
 }
 
-export async function downloadPreviewResultXlsx(jobId: string, resultIndex: number): Promise<void> {
+export async function downloadPreviewResultXlsx(jobId: string, resultIndex: number, defaultName?: string): Promise<void> {
   const response = await apiFetch(`${buildApiUrl(`/jobs/${jobId}/preview/${resultIndex}/export/xlsx`)}`);
   if (!response.ok) {
     const bodyText = await response.text();
@@ -364,7 +369,19 @@ export async function downloadPreviewResultXlsx(jobId: string, resultIndex: numb
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = objectUrl;
-  anchor.download = `resultado_${resultIndex}.xlsx`;
+
+  let filename = `resultado_${resultIndex}.xlsx`;
+  if (defaultName) {
+    const cleanName = defaultName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    filename = `${cleanName}.xlsx`;
+  }
+  const disposition = response.headers.get("Content-Disposition");
+  if (disposition && disposition.includes("filename=")) {
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    if (match?.[1]) filename = match[1];
+  }
+  
+  anchor.download = filename;
   anchor.rel = "noopener";
   document.body.appendChild(anchor);
   anchor.click();
@@ -372,7 +389,7 @@ export async function downloadPreviewResultXlsx(jobId: string, resultIndex: numb
   URL.revokeObjectURL(objectUrl);
 }
 
-export async function downloadOpportunityXlsx(opportunityId: string): Promise<void> {
+export async function downloadOpportunityXlsx(opportunityId: string, name?: string): Promise<void> {
   const response = await apiFetch(`${buildApiUrl(`/opportunities/${opportunityId}/export/xlsx`)}`);
   if (!response.ok) {
     const bodyText = await response.text();
@@ -382,7 +399,12 @@ export async function downloadOpportunityXlsx(opportunityId: string): Promise<vo
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = objectUrl;
-  anchor.download = `oportunidad_${opportunityId}.xlsx`;
+  let filename = `oportunidad_${opportunityId}.xlsx`;
+  if (name) {
+    const cleanName = name.replace(/[^a-z0-9]/gi, '_');
+    filename = `${cleanName}.xlsx`;
+  }
+  anchor.download = filename;
   anchor.rel = "noopener";
   document.body.appendChild(anchor);
   anchor.click();
@@ -528,6 +550,7 @@ export interface OpportunityEnrichResult {
   linkedin_url: string;
   description: string;
   citations: Array<{ url?: string; title?: string; confidence?: string; source?: string }>;
+  contact_sources: Record<string, string>;
 }
 
 export async function enrichOpportunity(
@@ -656,13 +679,9 @@ export async function deleteAdminUser(userId: string): Promise<void> {
   }
 }
 
-export async function createManualOpportunity(body: {
-  title: string;
-  specialty?: string;
-  city?: string;
-  source_url?: string;
-  snippet?: string | null;
-}): Promise<OpportunityResponse> {
+export async function createManualOpportunity(
+  body: OpportunityCreateManualRequest,
+): Promise<OpportunityResponse> {
   const response = await apiFetch(`${buildApiUrl("/opportunities/manual")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -779,11 +798,11 @@ export async function deleteDirectoryStep(
 
 export async function moveOpportunityStep(
   opportunityId: string,
-  direction: "forward" | "backward",
+  targetStepId: string,
 ): Promise<OpportunityResponse> {
   const response = await apiFetch(
     `${buildApiUrl(`/opportunities/${opportunityId}/step`)}`,
-    { method: "PATCH", body: JSON.stringify({ direction }) },
+    { method: "PATCH", body: JSON.stringify({ step_id: targetStepId }) },
   );
   return parseJsonResponse<OpportunityResponse>(response);
 }
@@ -836,15 +855,18 @@ export async function pushScrapeEntriesToDirectory(
   jobId: string,
   directoryId: string,
   entryIndices: number[] = [],
+  stepId?: string,
 ): Promise<{ created: number; directory_id: string }> {
+  const body: Record<string, unknown> = {
+    directory_id: directoryId,
+    entry_indices: entryIndices,
+  };
+  if (stepId) body.step_id = stepId;
   const response = await apiFetch(
     `${buildApiUrl(`/url-scrape-jobs/${jobId}/push-to-directory`)}`,
     {
       method: "POST",
-      body: JSON.stringify({
-        directory_id: directoryId,
-        entry_indices: entryIndices,
-      }),
+      body: JSON.stringify(body),
     },
   );
   return parseJsonResponse<{ created: number; directory_id: string }>(response);
@@ -856,4 +878,72 @@ export async function cancelUrlScrapeJob(jobId: string): Promise<{ status: strin
     { method: "POST" },
   );
   return parseJsonResponse<{ status: string; job_id: string }>(response);
+}
+
+// ---- Directory Sources (referencias guardadas) ----
+
+export async function listDirectorySources(
+  directoryId: string,
+  status?: string,
+): Promise<DirectorySourcesListResponse> {
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  const response = await apiFetch(
+    `${buildApiUrl(`/directories/${directoryId}/sources?${query}`)}`,
+  );
+  return parseJsonResponse<DirectorySourcesListResponse>(response);
+}
+
+export async function createDirectorySource(
+  directoryId: string,
+  payload: DirectorySourceCreateRequest,
+): Promise<DirectorySourceItem> {
+  const response = await apiFetch(
+    `${buildApiUrl(`/directories/${directoryId}/sources`)}`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+  return parseJsonResponse<DirectorySourceItem>(response);
+}
+
+export async function updateDirectorySource(
+  directoryId: string,
+  sourceId: string,
+  payload: DirectorySourceUpdateRequest,
+): Promise<DirectorySourceItem> {
+  const response = await apiFetch(
+    `${buildApiUrl(`/directories/${directoryId}/sources/${sourceId}`)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+  return parseJsonResponse<DirectorySourceItem>(response);
+}
+
+export async function deleteDirectorySource(
+  directoryId: string,
+  sourceId: string,
+): Promise<void> {
+  await apiFetch(
+    `${buildApiUrl(`/directories/${directoryId}/sources/${sourceId}`)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function scrapeDirectorySource(
+  directoryId: string,
+  sourceId: string,
+): Promise<{ scrape_job_id: string; status: string; source_id: string }> {
+  const response = await apiFetch(
+    `${buildApiUrl(`/directories/${directoryId}/sources/${sourceId}/scrape`)}`,
+    { method: "POST" },
+  );
+  return parseJsonResponse<{
+    scrape_job_id: string;
+    status: string;
+    source_id: string;
+  }>(response);
 }

@@ -90,7 +90,7 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
     search_config = ExaSearchConfig(
         query=base_query,
         type=get_settings().exa_search_type,
-        num_results=60,
+        num_results=100,
         use_highlights=True,
         additional_queries=additional_clean[:1],
         exa_category=exa_cat,

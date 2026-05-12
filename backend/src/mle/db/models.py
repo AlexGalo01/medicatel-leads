@@ -99,6 +99,7 @@ class Opportunity(SQLModel, table=True):
     directory_id: UUID | None = Field(default=None, index=True, foreign_key="directories.id")
     current_step_id: UUID | None = Field(default=None, index=True, foreign_key="directory_steps.id")
     job_id: UUID | None = Field(default=None, index=True, foreign_key="search_jobs.id")
+    scrape_job_id: UUID | None = Field(default=None, index=True, foreign_key="url_scrape_jobs.id")
     exa_preview_index: int | None = Field(default=None, index=True)
     title: str = Field(default="", max_length=500)
     source_url: str = Field(default="", max_length=2000)
@@ -196,6 +197,41 @@ class Lead(SQLModel, table=True):
         default_factory=dict, sa_column=Column(JSON, nullable=False)
     )
     validation_status: str = Field(default="pending", index=True, max_length=32)
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+
+
+class DirectorySource(SQLModel, table=True):
+    """Fuente/recurso guardado dentro de un directorio (URL sugerida o manual).
+
+    Una fuente puede estar:
+    - "pending": guardada como referencia, sin scrapear aún
+    - "scraped": ya se scrapeó y se crearon oportunidades
+    - "discarded": se descartó como no útil
+    """
+
+    __tablename__ = "directory_sources"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    directory_id: UUID = Field(index=True, foreign_key="directories.id")
+    url: str = Field(max_length=2000)
+    title: str = Field(default="", max_length=500)
+    notes: str | None = Field(default=None, max_length=1000)
+    status: str = Field(default="pending", index=True, max_length=32)
+    scrape_job_id: UUID | None = Field(
+        default=None, index=True, foreign_key="url_scrape_jobs.id"
+    )
+    source_search_job_id: UUID | None = Field(
+        default=None, index=True, foreign_key="search_jobs.id",
+        description="Job de búsqueda del que se sugirió esta fuente (opcional)",
+    )
+    created_by_user_id: UUID | None = Field(
+        default=None, index=True, foreign_key="users.id"
+    )
     created_at: datetime = Field(
         default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
     )

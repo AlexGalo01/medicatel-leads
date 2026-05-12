@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mle.db.models import Directory, DirectoryStep, Opportunity, SearchJob
@@ -80,6 +80,14 @@ class DirectoriesRepository:
         directory = await self.session.get(Directory, directory_id)
         if directory is None:
             return False
+        # Antes de borrar search_jobs, nullear job_id en oportunidades que los referencian
+        # (pueden ser de este u otro directorio si la oportunidad fue movida).
+        job_ids_q = select(SearchJob.id).where(SearchJob.directory_id == directory_id)
+        await self.session.execute(
+            update(Opportunity)
+            .where(Opportunity.job_id.in_(job_ids_q))
+            .values(job_id=None)
+        )
         # Eliminar todas las oportunidades del directorio (SQL directo para garantizar orden).
         await self.session.execute(
             delete(Opportunity).where(Opportunity.directory_id == directory_id)
@@ -209,26 +217,18 @@ class DirectoriesRepository:
 
     # ---------- Opp movement ----------
 
-    async def move_opportunity(self, opportunity_id: UUID, direction: str) -> Opportunity | None:
-        """Avanza o retrocede la opp al step adyacente dentro de su directorio."""
+    async def move_opportunity(self, opportunity_id: UUID, target_step_id: UUID) -> Opportunity | None:
+        """Mueve la opp a un step específico dentro de su directorio."""
         opp = await self.session.get(Opportunity, opportunity_id)
         if opp is None or opp.directory_id is None or opp.current_step_id is None:
             return None
         if opp.terminated_at is not None:
             return None  # opps terminadas no se mueven
         steps = await self.list_steps(opp.directory_id)
-        idx = next((i for i, s in enumerate(steps) if s.id == opp.current_step_id), None)
-        if idx is None:
+        
+        target_step = next((s for s in steps if s.id == target_step_id), None)
+        if target_step is None:
             return None
-        if direction == "forward":
-            target_idx = idx + 1
-        elif direction == "backward":
-            target_idx = idx - 1
-        else:
-            return None
-        if target_idx < 0 or target_idx >= len(steps):
-            return None
-        target_step = steps[target_idx]
         opp.current_step_id = target_step.id
         opp.updated_at = datetime.now(timezone.utc)
         # Si el step destino es terminal, auto-terminar la opp.

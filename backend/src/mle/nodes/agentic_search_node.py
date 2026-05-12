@@ -117,14 +117,14 @@ def _build_system_prompt(state: LeadSearchGraphState, planner_output: dict[str, 
         f"- Categoría Exa: {exa_category}\n"
         f"{anchor_block}{prior_block}\n\n"
         "INSTRUCCIONES:\n"
-        "1. Usa `web_search` con queries variadas para maximizar cobertura.\n"
+        "1. Usa `web_search` con queries variadas para maximizar cobertura. Pide hasta 100 resultados por consulta para asegurar volumen.\n"
         "2. Queries en español, específicas al sector y ubicación.\n"
         "3. NUNCA uses palabras como 'email', 'whatsapp', 'contacto' en las queries — contaminan resultados.\n"
         "4. Varía las queries: sinónimos, sitios específicos (site:linkedin.com/in), directorios del sector.\n"
-        "5. Si los primeros resultados son genéricos (portales de empleo, universidades), intenta queries más específicas.\n"
-        "6. Cuando tengas suficientes resultados relevantes (mínimo 5-10 perfiles reales), usa `finalize_search`.\n"
+        "5. EVITA AGREGADORES: Si detectas que los resultados son listas ('Top 10...', 'Directorio de...'), refina la query para buscar perfiles individuales o sitios de clínicas específicas.\n"
+        "6. Cuando tengas suficientes resultados relevantes (mínimo 30-50 perfiles reales), usa `finalize_search`.\n"
         "7. Si después de 3 intentos no encuentras resultados relevantes, finaliza igualmente.\n"
-        "8. Para países pequeños de LATAM, usa category='general' (no 'people') y prueba con directorios locales.\n"
+        "8. Para países pequeños de LATAM, usa category='general' (no 'people') si 'people' devuelve poco, pero prueba 'people' primero para profesionales.\n"
     )
 
 
@@ -157,7 +157,7 @@ async def _execute_web_search(
     """Ejecuta búsqueda web. Si use_exa=True incluye Exa + Brave, sino solo Brave."""
     query = str(args.get("query", "")).strip()
     category = str(args.get("category", "general")).strip()
-    num_results = min(60, max(10, int(args.get("num_results", 30))))
+    num_results = min(100, max(10, int(args.get("num_results", 50))))
 
     if not query:
         return [], "Error: query vacía."

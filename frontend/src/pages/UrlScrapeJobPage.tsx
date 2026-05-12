@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, ExternalLink, MapPin, Phone, Mail } from "lucide-react";
 
@@ -12,6 +12,8 @@ export function UrlScrapeJobPage(): JSX.Element {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const stepIdFromUrl = searchParams.get("stepId") ?? undefined;
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [pushed, setPushed] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -41,6 +43,7 @@ export function UrlScrapeJobPage(): JSX.Element {
         jobId!,
         directoryId!,
         selectedIndices.size > 0 ? Array.from(selectedIndices) : [],
+        stepIdFromUrl,
       ),
     onSuccess: (result) => {
       setPushed(true);

@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   DndContext,
   PointerSensor,
@@ -23,6 +23,7 @@ import {
   ExternalLink,
   Users,
   Building2,
+  GripVertical,
 } from "lucide-react";
 
 import {
@@ -42,8 +43,10 @@ import type {
   OpportunityTerminatedOutcome,
   SearchJobListItem,
 } from "../../../types";
+import { UrlScraperModal } from "../components/UrlScraperModal";
+import { SourceReferenceList } from "../components/SourceReferenceList";
 
-type ActiveTab = "board" | "searches";
+type ActiveTab = "board" | "searches" | "scrapes";
 
 function formatRecent(iso: string): string {
   const d = new Date(iso);
@@ -102,6 +105,10 @@ function SearchRow({ job }: { job: SearchJobListItem }): JSX.Element {
   );
 }
 
+function hostLabel(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url.slice(0, 30); }
+}
+
 function OpportunityCard({ opp }: { opp: OpportunityListItem }): JSX.Element {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `opp-${opp.opportunity_id}`,
@@ -113,20 +120,28 @@ function OpportunityCard({ opp }: { opp: OpportunityListItem }): JSX.Element {
     opacity: isDragging ? 0.4 : 1,
   };
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className="ui-card directory-board-card"
-      {...attributes}
-      {...listeners}
-    >
+    <div ref={setNodeRef} style={style} className="ui-card directory-board-card">
+      {!opp.terminated_at && (
+        <div
+          className="directory-board-card-handle"
+          {...attributes}
+          {...listeners}
+          aria-label="Arrastrar"
+        >
+          <GripVertical size={14} aria-hidden />
+        </div>
+      )}
       <Link
         to={`/opportunities/${opp.opportunity_id}`}
         className="directory-board-card-link"
-        onClick={(e) => e.stopPropagation()}
       >
         <strong className="directory-board-card-title">{opp.title || "Sin título"}</strong>
         {opp.city ? <span className="muted-text directory-board-card-meta">{opp.city}</span> : null}
+        {opp.scrape_target_url ? (
+          <span className="directory-board-card-source" title={opp.scrape_target_url}>
+            {hostLabel(opp.scrape_target_url)}
+          </span>
+        ) : null}
       </Link>
       {opp.terminated_at ? (
         <span className={`directory-board-card-outcome directory-board-card-outcome--${opp.terminated_outcome}`}>
@@ -183,12 +198,31 @@ function StepColumn({
 export function DirectoryBoardPage(): JSX.Element {
   const { directoryId = "" } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<ActiveTab>("board");
   const [terminateTarget, setTerminateTarget] = useState<OpportunityListItem | null>(null);
   const [terminateOutcome, setTerminateOutcome] = useState<OpportunityTerminatedOutcome>("won");
   const [terminateNote, setTerminateNote] = useState("");
   const [moveError, setMoveError] = useState<string | null>(null);
+  const [editingStep, setEditingStep] = useState<DirectoryStep | null>(null);
+  const [scraperOpen, setScraperOpen] = useState(false);
+  const [scraperUrl, setScraperUrl] = useState<string | undefined>(undefined);
+  const [scraperTitle, setScraperTitle] = useState<string | undefined>(undefined);
+
+  // Leer location state para abrir scraper automáticamente desde suggested sources
+  useEffect(() => {
+    const state = location.state as
+      | { openUrlScraper?: boolean; prefillUrl?: string; prefillTitle?: string }
+      | undefined;
+    if (state?.openUrlScraper) {
+      setScraperUrl(state.prefillUrl);
+      setScraperTitle(state.prefillTitle);
+      setScraperOpen(true);
+      // Limpiar state para que no se reabra al navegar
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const directoryQuery = useQuery({
     queryKey: ["directory", directoryId],
@@ -210,12 +244,31 @@ export function DirectoryBoardPage(): JSX.Element {
   });
 
   const moveMutation = useMutation({
-    mutationFn: (args: { opportunityId: string; direction: "forward" | "backward" }) =>
-      moveOpportunityStep(args.opportunityId, args.direction),
-    onSuccess: () => {
+    mutationFn: (args: { opportunityId: string; targetStepId: string }) =>
+      moveOpportunityStep(args.opportunityId, args.targetStepId),
+    onMutate: async ({ opportunityId, targetStepId }) => {
+      await queryClient.cancelQueries({ queryKey: ["directory-items", directoryId] });
+      const prev = queryClient.getQueryData(["directory-items", directoryId]);
+      queryClient.setQueryData(["directory-items", directoryId], (old: any) => {
+        if (!old?.items) return old;
+        return {
+          ...old,
+          items: old.items.map((item: OpportunityListItem) =>
+            item.opportunity_id === opportunityId ? { ...item, current_step_id: targetStepId } : item
+          ),
+        };
+      });
+      return { prev };
+    },
+    onError: (e: Error, _args, context: any) => {
+      if (context?.prev) {
+        queryClient.setQueryData(["directory-items", directoryId], context.prev);
+      }
+      setMoveError(e.message);
+    },
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["directory-items", directoryId] });
     },
-    onError: (e: Error) => setMoveError(e.message),
   });
 
   const terminateMutation = useMutation({
@@ -273,13 +326,8 @@ export function DirectoryBoardPage(): JSX.Element {
     const currentIdx = stepsOrdered.findIndex((s) => s.id === currentStepId);
     const targetIdx = stepsOrdered.findIndex((s) => s.id === overStepId);
     if (currentIdx < 0 || targetIdx < 0 || currentIdx === targetIdx) return;
-    if (Math.abs(targetIdx - currentIdx) !== 1) {
-      setMoveError("Solo se puede mover al step adyacente (±1).");
-      return;
-    }
-    const direction: "forward" | "backward" = targetIdx > currentIdx ? "forward" : "backward";
     setMoveError(null);
-    moveMutation.mutate({ opportunityId, direction });
+    moveMutation.mutate({ opportunityId, targetStepId: overStepId });
   };
 
   if (directoryQuery.isLoading) {
@@ -308,6 +356,13 @@ export function DirectoryBoardPage(): JSX.Element {
           <Link to={`/directories/${directory.id}/edit`} className="link-button">
             <Pencil size={14} aria-hidden /> Editar
           </Link>
+          <Link
+            to={`/opportunities/new?directory_id=${directory.id}`}
+            className="cta-button"
+            style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "8px" }}
+          >
+            <Plus size={16} aria-hidden /> Nueva oportunidad
+          </Link>
         </div>
       </header>
 
@@ -334,6 +389,15 @@ export function DirectoryBoardPage(): JSX.Element {
         >
           Búsquedas
           <span className="directory-board-tab-count">{searches.length}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "scrapes"}
+          className={`directory-board-tab${activeTab === "scrapes" ? " is-active" : ""}`}
+          onClick={() => setActiveTab("scrapes")}
+        >
+          Búsqueda por URL
         </button>
       </div>
 
@@ -382,63 +446,43 @@ export function DirectoryBoardPage(): JSX.Element {
               </ul>
             </section>
           ) : null}
-
-          <section className="directory-board-actions-panel">
-            <h3>Acción rápida: marcar como terminada</h3>
-            <p className="muted-text">
-              Elige una oportunidad activa y marca su resultado final.
-            </p>
-            <div className="directory-board-terminate-form">
-              <Select
-                value={terminateTarget?.opportunity_id ?? ""}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  const items = itemsQuery.data?.items ?? [];
-                  setTerminateTarget(items.find((i) => i.opportunity_id === id && !i.terminated_at) ?? null);
-                }}
-              >
-                <option value="">— Elige oportunidad —</option>
-                {(itemsQuery.data?.items ?? [])
-                  .filter((i) => !i.terminated_at)
-                  .map((i) => (
-                    <option key={i.opportunity_id} value={i.opportunity_id}>
-                      {i.title || "(sin título)"}
-                    </option>
-                  ))}
-              </Select>
-              <Select
-                value={terminateOutcome}
-                onChange={(e) => setTerminateOutcome(e.target.value as OpportunityTerminatedOutcome)}
-              >
-                <option value="won">Ganado</option>
-                <option value="lost">Perdido</option>
-                <option value="no_response">Sin respuesta</option>
-              </Select>
-              <input
-                className="ui-input"
-                value={terminateNote}
-                onChange={(e) => setTerminateNote(e.target.value)}
-                placeholder="Nota (opcional)"
-                maxLength={500}
-              />
-              <Button
-                type="button"
-                disabled={!terminateTarget || terminateMutation.isPending}
-                onClick={() =>
-                  terminateTarget
-                    ? terminateMutation.mutate({
-                        opportunityId: terminateTarget.opportunity_id,
-                        outcome: terminateOutcome,
-                        note: terminateNote.trim() || null,
-                      })
-                    : undefined
-                }
-              >
-                <Flag size={14} aria-hidden /> Terminar
-              </Button>
-            </div>
-          </section>
         </>
+      )}
+
+      {/* Scrapes */}
+      {activeTab === "scrapes" && (
+        <div className="directory-searches-panel">
+          <div className="directory-searches-header">
+            <div>
+              <h2 className="directory-searches-title">Búsqueda por URL</h2>
+              <p className="muted-text directory-searches-subtitle">
+                Fuentes guardadas y scrapeos realizados en este directorio
+              </p>
+            </div>
+            <Button
+              type="button"
+              className="cta-button"
+              onClick={() => {
+                setScraperUrl(undefined);
+                setScraperTitle(undefined);
+                setScraperOpen(true);
+              }}
+            >
+              <Plus size={15} aria-hidden /> Scrapear URL
+            </Button>
+          </div>
+          <SourceReferenceList
+            directoryId={directoryId}
+            onScrapeJobCreated={(scrapeJobId) => {
+              setActiveTab("scrapes");
+            }}
+            onOpenUrlScraper={(url, title) => {
+              setScraperUrl(url);
+              setScraperTitle(title);
+              setScraperOpen(true);
+            }}
+          />
+        </div>
       )}
 
       {/* Búsquedas */}
@@ -483,6 +527,23 @@ export function DirectoryBoardPage(): JSX.Element {
           )}
         </div>
       )}
+      {/* URL Scraper Modal */}
+      <UrlScraperModal
+        isOpen={scraperOpen}
+        onClose={() => {
+          setScraperOpen(false);
+          setScraperUrl(undefined);
+          setScraperTitle(undefined);
+        }}
+        directoryId={directoryId}
+        steps={stepsOrdered}
+        prefillUrl={scraperUrl}
+        prefillTitle={scraperTitle}
+        onComplete={(created) => {
+          void queryClient.invalidateQueries({ queryKey: ["directory-items", directoryId] });
+          void queryClient.invalidateQueries({ queryKey: ["directory-sources", directoryId] });
+        }}
+      />
     </section>
   );
 }

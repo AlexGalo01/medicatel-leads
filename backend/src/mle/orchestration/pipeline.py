@@ -37,7 +37,7 @@ def _apply_patch(state: LeadSearchGraphState, patch: dict[str, object]) -> LeadS
     )
 
 
-MIN_RESULTS_AFTER_FILTER = 35
+MIN_RESULTS_AFTER_FILTER = 40
 MAX_SEARCH_ROUNDS = 3
 
 

@@ -117,6 +117,7 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
         rel_c = meta.get("relevance_criteria")
         if isinstance(rel_c, dict) and rel_c:
             minimal_planner["relevance_criteria"] = rel_c
+        iso = str((rel_c or {}).get("country_iso2") or "").strip().upper()
         payload = _build_search_payload_for_query(minimal_planner, query, n)
 
         # --- Ejecutar Exa + Brave en paralelo ---
@@ -212,6 +213,7 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
             )
 
         # Apply LLM-based sector relevance filter to new items
+        llm_metadata: dict = {}
         if new_items and isinstance(rel_c, dict):
             llm = get_llm_client(settings)
             try:
@@ -275,6 +277,17 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
         meta["exa_accumulated_raw"] = merged
         meta["exa_results_preview"] = preview
         meta["exa_more_rounds"] = rounds + 1
+        # Acumular LPA de esta ronda
+        new_lpa: list = llm_metadata.get("lpa_results") or []
+        if new_lpa:
+            existing_lpa: list = meta.get("lpa_results") or []
+            existing_lpa_urls = {str(x.get("url", "")).strip().lower() for x in existing_lpa}
+            for item in new_lpa:
+                if str(item.get("url", "")).strip().lower() not in existing_lpa_urls:
+                    existing_lpa.append(item)
+            meta["lpa_results"] = existing_lpa
+            meta["lpa_count"] = len(existing_lpa)
+            meta["lpa_preview"] = _build_exa_preview(existing_lpa)
         meta["sources_visited"] = len(merged)
         meta["leads_extracted"] = len(merged)
         meta["exa_last_more_at"] = datetime.now(timezone.utc).isoformat()

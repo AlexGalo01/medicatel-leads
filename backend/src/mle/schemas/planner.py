@@ -16,7 +16,7 @@ class RelevanceCriteria(BaseModel):
 class ExaSearchConfig(BaseModel):
     query: str = Field(min_length=3, max_length=1200)
     type: str = Field(default="auto")
-    num_results: int = Field(default=50, ge=1, le=100)
+    num_results: int = Field(default=80, ge=1, le=100)
     use_highlights: bool = Field(default=True)
     include_domains: list[str] = Field(default_factory=list)
     exclude_domains: list[str] = Field(default_factory=list)

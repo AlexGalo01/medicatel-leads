@@ -3,9 +3,11 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ChevronRight, Download, FileSpreadsheet, Loader2, Mail, Phone, Linkedin, MessageCircle } from "lucide-react";
 
+import { UrlScraperModal } from "../features/directories/components/UrlScraperModal";
 import {
   cancelSearchJob,
   clarifySearchJob,
+  createDirectorySource,
   createOpportunityFromPreview,
   downloadLeadsCsvFile,
   downloadLeadsXlsxFile,
@@ -37,11 +39,11 @@ function formatRelative(iso: string | undefined): string {
   const diffSec = Math.max(1, Math.floor((Date.now() - ts) / 1000));
   if (diffSec < 60) return `hace ${diffSec} s`;
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `hace ${diffMin} min`;
+  if (diffMin < 60) return `hace ${diffMin} minuto${diffMin !== 1 ? "s" : ""}`;
   const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24) return `hace ${diffH} h`;
+  if (diffH < 24) return `hace ${diffH} hora${diffH !== 1 ? "s" : ""}`;
   const diffD = Math.floor(diffH / 24);
-  return `hace ${diffD} día${diffD > 1 ? "s" : ""}`;
+  return `hace ${diffD} día${diffD !== 1 ? "s" : ""}`;
 }
 
 interface RowData {
@@ -135,12 +137,17 @@ export function JobSearchWorkspacePage(): JSX.Element {
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const directoriesQuery = useQuery({
-    queryKey: ["directories"],
-    queryFn: listDirectories,
-    staleTime: 60_000,
-    enabled: saveModalOpen,
-  });
+  const [lpaOpen, setLpaOpen] = useState(false);
+
+  // Estado para scraper modal inline
+  const [scraperOpen, setScraperOpen] = useState(false);
+  const [scraperUrl, setScraperUrl] = useState<string | undefined>(undefined);
+  const [scraperTitle, setScraperTitle] = useState<string | undefined>(undefined);
+
+  // Estado para guardar fuentes en directorio (cuando no hay directoryId)
+  const [sourcePickerUrl, setSourcePickerUrl] = useState<string | null>(null);
+  const [sourcePickerDirId, setSourcePickerDirId] = useState<string>("");
+  const [savedSourceUrls, setSavedSourceUrls] = useState<Set<string>>(new Set());
 
   const saveAsOppMutation = useMutation({
     mutationFn: (previewIndex: number) =>
@@ -212,6 +219,13 @@ export function JobSearchWorkspacePage(): JSX.Element {
     queryFn: () => getDirectory(directoryId!),
     enabled: Boolean(directoryId),
     staleTime: 60_000,
+  });
+
+  const directoriesQuery = useQuery({
+    queryKey: ["directories"],
+    queryFn: listDirectories,
+    staleTime: 60_000,
+    enabled: saveModalOpen || !directoryId,
   });
 
   const stepNameById = useMemo(() => {
@@ -326,7 +340,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
 
   const searchLabel =
     jobStatusQuery.data?.query_text?.trim() || passedState?.searchLabel?.trim() || "Búsqueda";
-  const createdAt = jobStatusQuery.data?.updated_at;
+  const createdAt = jobStatusQuery.data?.created_at ?? jobStatusQuery.data?.updated_at;
 
   const statusLabel =
     awaitingClarification ? "Aclaración pendiente" :
@@ -638,37 +652,125 @@ export function JobSearchWorkspacePage(): JSX.Element {
       ) : null}
       </div>
 
-      {(jobStatusQuery.data?.suggested_source_urls ?? []).length > 0 ? (
+      {!isProcessing && (jobStatusQuery.data?.suggested_source_urls ?? []).length > 0 ? (
         <section className="workspace-v3-sources workspace-v3-split-sidebar">
           <h3>Fuentes para explorar</h3>
           <p className="muted-text">
-            {directoryId
-              ? "Estas páginas de directorio pueden contener más contactos. Impórtalas con el URL scraper."
-              : "Estos son directorios y páginas de listado que pueden contener más contactos del sector."}
+            Directorios y páginas de listado que pueden contener más contactos del sector.
           </p>
           <ul className="workspace-v3-sources-list">
             {(jobStatusQuery.data?.suggested_source_urls ?? []).map((s) => (
               <li key={s.url} className="workspace-v3-sources-item">
                 <span className="workspace-v3-sources-title">{s.title || s.url}</span>
-                {directoryId ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="workspace-v3-sources-btn"
-                    onClick={() => {
-                      navigate(`/directories/${directoryId}`, {
-                        state: { openUrlScraper: true, prefillUrl: s.url }
-                      });
-                    }}
-                  >
-                    Importar →
-                  </Button>
-                ) : (
-                  <a href={s.url} target="_blank" rel="noopener noreferrer" className="link-button">
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                  {directoryId ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="workspace-v3-sources-btn"
+                        onClick={() => {
+                          setScraperUrl(s.url);
+                          setScraperTitle(s.title);
+                          setScraperOpen(true);
+                        }}
+                      >
+                        Buscar por URL
+                      </Button>
+                      {savedSourceUrls.has(s.url) ? (
+                        <span className="workspace-v3-sources-saved">✓ Guardado</span>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="workspace-v3-sources-btn"
+                          onClick={async () => {
+                            try {
+                              await createDirectorySource(directoryId!, {
+                                url: s.url,
+                                title: s.title,
+                                source_search_job_id: jobId,
+                              });
+                              setSavedSourceUrls((prev) => new Set([...prev, s.url]));
+                            } catch {
+                              // silent
+                            }
+                          }}
+                        >
+                          Guardar en directorio
+                        </Button>
+                      )}
+                    </>
+                  ) : (
+                    // Sin directoryId: mostrar selector inline
+                    savedSourceUrls.has(s.url) ? (
+                      <span className="workspace-v3-sources-saved">✓ Guardado</span>
+                    ) : sourcePickerUrl === s.url ? (
+                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                        <select
+                          className="workspace-v3-sources-dir-select"
+                          value={sourcePickerDirId}
+                          onChange={(e) => setSourcePickerDirId(e.target.value)}
+                        >
+                          <option value="">Elegir directorio…</option>
+                          {(directoriesQuery.data?.items ?? []).map((d) => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                        </select>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="workspace-v3-sources-btn"
+                          disabled={!sourcePickerDirId}
+                          onClick={async () => {
+                            if (!sourcePickerDirId) return;
+                            try {
+                              await createDirectorySource(sourcePickerDirId, {
+                                url: s.url,
+                                title: s.title,
+                                source_search_job_id: jobId,
+                              });
+                              setSavedSourceUrls((prev) => new Set([...prev, s.url]));
+                              setSourcePickerUrl(null);
+                              setSourcePickerDirId("");
+                            } catch {
+                              // silent
+                            }
+                          }}
+                        >
+                          Guardar
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => { setSourcePickerUrl(null); setSourcePickerDirId(""); }}
+                        >
+                          ✕
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="workspace-v3-sources-btn"
+                        onClick={() => {
+                          setSourcePickerUrl(s.url);
+                          setSourcePickerDirId("");
+                        }}
+                      >
+                        Guardar en directorio
+                      </Button>
+                    )
+                  )}
+                  <a href={s.url} target="_blank" rel="noopener noreferrer" className="link-button" style={{ fontSize: 13 }}>
                     Abrir →
                   </a>
-                )}
+                </div>
               </li>
             ))}
           </ul>
@@ -676,63 +778,148 @@ export function JobSearchWorkspacePage(): JSX.Element {
       ) : null}
       </div>
 
+      {/* Sección LPA */}
+      {!isProcessing && (jobStatusQuery.data?.lpa_preview ?? []).length > 0 ? (
+        <section className="workspace-v3-lpa">
+          <button
+            type="button"
+            className="workspace-v3-lpa-toggle"
+            onClick={() => setLpaOpen((o) => !o)}
+            aria-expanded={lpaOpen}
+          >
+            <span className="workspace-v3-lpa-badge">LPA</span>
+            Por averiguar ({jobStatusQuery.data!.lpa_preview!.length})
+            <span className="workspace-v3-lpa-chevron" aria-hidden>{lpaOpen ? "▲" : "▼"}</span>
+          </button>
+          {lpaOpen ? (
+            <>
+              <p className="muted-text workspace-v3-lpa-desc">
+                Clínicas, centros o profesionales adyacentes que pueden contener contactos útiles. No son leads directos pero vale la pena explorarlos.
+              </p>
+              <ul className="workspace-v3-list">
+                {jobStatusQuery.data!.lpa_preview!.map((row) => (
+                  <li key={row.url} className="workspace-v3-row workspace-v3-row--lpa">
+                    <Link to={`/jobs/${jobId}/result/${row.index}`} className="workspace-v3-row-link">
+                      <span className="workspace-v3-avatar workspace-v3-avatar--lpa" aria-hidden>
+                        {row.title.charAt(0).toUpperCase() || "?"}
+                      </span>
+                      <div className="workspace-v3-row-content">
+                        <div className="workspace-v3-row-title-line">
+                          <strong className="workspace-v3-row-title">{row.title || row.url}</strong>
+                          <span className="workspace-v3-lpa-badge workspace-v3-lpa-badge--inline">LPA</span>
+                        </div>
+                        {row.snippet ? (
+                          <span className="workspace-v3-row-sub muted-text">{row.snippet}</span>
+                        ) : null}
+                      </div>
+                      <ChevronRight size={14} aria-hidden className="workspace-v3-row-chevron" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
+      {scraperOpen && directoryId && directoryQuery.data ? (
+        <UrlScraperModal
+          isOpen={scraperOpen}
+          onClose={() => setScraperOpen(false)}
+          directoryId={directoryId}
+          steps={directoryQuery.data.steps}
+          prefillUrl={scraperUrl}
+          prefillTitle={scraperTitle}
+        />
+      ) : null}
+
       {/* Modal de selección de directorio */}
       {saveModalOpen && (
         <div className="modal-overlay-save-opp" onClick={() => setSaveModalOpen(false)}>
           <div className="modal-save-opp" onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-save-opp-title">¿A qué directorio enviar?</h3>
+            <h3 className="modal-save-opp-title">
+              {directoryId && directoryQuery.data
+                ? `Enviar a: ${directoryQuery.data.name}`
+                : "¿A qué directorio enviar?"}
+            </h3>
             <p className="modal-save-opp-subtitle">
               {selectedIndices.size} resultado(s) seleccionado(s)
             </p>
 
-            {directoriesQuery.isLoading && (
-              <div className="modal-save-opp-loading">
-                <Loader2 className="spin" size={16} aria-hidden />
-                Cargando directorios…
-              </div>
-            )}
-
-            {directoriesQuery.data?.items && directoriesQuery.data.items.length === 0 && (
-              <p className="modal-save-opp-empty muted-text">Sin directorios disponibles</p>
-            )}
-
-            {directoriesQuery.data?.items.map((dir) => (
-              <div key={dir.id} className="modal-save-opp-directory">
-                <button
-                  type="button"
-                  className={`modal-save-opp-dir-btn${
-                    selectedDirectoryId === dir.id ? " is-selected" : ""
-                  }`}
-                  onClick={() =>
-                    setSelectedDirectoryId((d) => (d === dir.id ? null : dir.id))
-                  }
-                >
-                  {dir.name}
-                </button>
-                {selectedDirectoryId === dir.id && (
-                  <div className="modal-save-opp-steps">
-                    {dir.steps.filter((s) => !s.is_terminal).length === 0 ? (
-                      <p className="modal-save-opp-empty muted-text">Sin steps disponibles</p>
-                    ) : (
-                      dir.steps
-                        .filter((s) => !s.is_terminal)
-                        .map((step) => (
-                          <button
-                            key={step.id}
-                            type="button"
-                            className={`modal-save-opp-step-btn${
-                              selectedStepId === step.id ? " is-selected" : ""
-                            }`}
-                            onClick={() => setSelectedStepId(step.id)}
-                          >
-                            {step.name}
-                          </button>
-                        ))
-                    )}
-                  </div>
+            {directoryId && directoryQuery.data ? (
+              <div className="modal-save-opp-steps" style={{ marginTop: "16px" }}>
+                <p style={{ marginBottom: "8px", fontSize: "13px", color: "var(--text-muted)" }}>Selecciona la fase:</p>
+                {directoryQuery.data.steps.filter((s) => !s.is_terminal).length === 0 ? (
+                  <p className="modal-save-opp-empty muted-text">Sin steps disponibles</p>
+                ) : (
+                  directoryQuery.data.steps
+                    .filter((s) => !s.is_terminal)
+                    .map((step) => (
+                      <button
+                        key={step.id}
+                        type="button"
+                        className={`modal-save-opp-step-btn${
+                          selectedStepId === step.id ? " is-selected" : ""
+                        }`}
+                        onClick={() => setSelectedStepId(step.id)}
+                      >
+                        {step.name}
+                      </button>
+                    ))
                 )}
               </div>
-            ))}
+            ) : (
+              <>
+                {directoriesQuery.isLoading && (
+                  <div className="modal-save-opp-loading">
+                    <Loader2 className="spin" size={16} aria-hidden />
+                    Cargando directorios…
+                  </div>
+                )}
+
+                {directoriesQuery.data?.items && directoriesQuery.data.items.length === 0 && (
+                  <p className="modal-save-opp-empty muted-text">Sin directorios disponibles</p>
+                )}
+
+                {directoriesQuery.data?.items.map((dir) => (
+                  <div key={dir.id} className="modal-save-opp-directory">
+                    <button
+                      type="button"
+                      className={`modal-save-opp-dir-btn${
+                        selectedDirectoryId === dir.id ? " is-selected" : ""
+                      }`}
+                      onClick={() =>
+                        setSelectedDirectoryId((d) => (d === dir.id ? null : dir.id))
+                      }
+                    >
+                      {dir.name}
+                    </button>
+                    {selectedDirectoryId === dir.id && (
+                      <div className="modal-save-opp-steps">
+                        {dir.steps.filter((s) => !s.is_terminal).length === 0 ? (
+                          <p className="modal-save-opp-empty muted-text">Sin steps disponibles</p>
+                        ) : (
+                          dir.steps
+                            .filter((s) => !s.is_terminal)
+                            .map((step) => (
+                              <button
+                                key={step.id}
+                                type="button"
+                                className={`modal-save-opp-step-btn${
+                                  selectedStepId === step.id ? " is-selected" : ""
+                                }`}
+                                onClick={() => setSelectedStepId(step.id)}
+                              >
+                                {step.name}
+                              </button>
+                            ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </>
+            )}
 
             <div className="modal-save-opp-actions">
               <Button

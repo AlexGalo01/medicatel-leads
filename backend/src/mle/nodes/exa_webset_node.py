@@ -204,7 +204,7 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             raise ValueError("No existe planner_output para ejecutar Exa Search.")
 
         search_config = planner_output.get("search_config", {})
-        per_query_budget = min(MAX_EXA_RESULTS_PER_CALL, max(MIN_RESULTS_PER_QUERY, int(search_config.get("num_results", 50))))
+        per_query_budget = min(MAX_EXA_RESULTS_PER_CALL, max(MIN_RESULTS_PER_QUERY, int(search_config.get("num_results", 100))))
 
         queries = _queries_from_planner(planner_output)
         if not queries:

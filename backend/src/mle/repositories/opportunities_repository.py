@@ -233,6 +233,9 @@ class OpportunitiesRepository:
         source_url: str = "",
         snippet: str | None = None,
         owner_user_id: UUID | None = None,
+        directory_id: UUID | None = None,
+        current_step_id: UUID | None = None,
+        contacts: list[dict[str, Any]] | None = None,
     ) -> Opportunity:
         now = datetime.now(timezone.utc)
         initial_note = {
@@ -241,6 +244,20 @@ class OpportunitiesRepository:
             "author": "sistema",
             "text": "Oportunidad creada manualmente.",
         }
+        normalized_contacts: list[dict[str, Any]] = []
+        if contacts:
+            primary_seen = False
+            for c in contacts:
+                if not isinstance(c, dict):
+                    continue
+                n = _normalize_contact(c)
+                if n["is_primary"]:
+                    if primary_seen:
+                        n["is_primary"] = False
+                    else:
+                        primary_seen = True
+                normalized_contacts.append(n)
+
         opp = Opportunity(
             job_id=None,
             exa_preview_index=None,
@@ -250,7 +267,9 @@ class OpportunitiesRepository:
             specialty=specialty.strip()[:160],
             city=city.strip()[:120],
             stage=DEFAULT_OPPORTUNITY_STAGE,
-            contacts=[],
+            contacts=normalized_contacts,
+            directory_id=directory_id,
+            current_step_id=current_step_id,
             activity_timeline=[initial_note],
             owner_user_id=owner_user_id,
             created_at=now,

@@ -61,9 +61,9 @@ class DirectoryStepReorder(BaseModel):
 
 
 class OpportunityMoveStepRequest(BaseModel):
-    """Avanza/retrocede un item al step adyacente (±1)."""
+    """Mueve un item a un step específico."""
 
-    direction: str = Field(pattern="^(forward|backward)$")
+    step_id: UUID
 
 
 class OpportunityTerminateRequest(BaseModel):
