@@ -1961,10 +1961,10 @@ textarea {
 }
 
 .lead-detail-summary-card h3 {
-  margin: 0 0 8px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #1c2b33;
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--color-text-primary, #1c2b33);
   min-height: 16px;
 }
 
@@ -2005,17 +2005,27 @@ textarea {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 
 .lead-detail-summary-card--experience .opportunity-summary-experience-item {
   font-size: 0.875rem;
   line-height: 1.5;
-  min-height: 32px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border-muted, #f0f0f0);
+}
+
+.lead-detail-summary-card--experience .opportunity-summary-experience-item:first-child {
+  padding-top: 0;
+}
+
+.lead-detail-summary-card--experience .opportunity-summary-experience-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .lead-detail-summary-card--experience .opportunity-summary-experience-item strong {
-  font-size: 0.875rem;
+  font-size: 0.9rem;
   line-height: 1.5;
   font-weight: 600;
   color: var(--color-text-primary, #1c2b33);
