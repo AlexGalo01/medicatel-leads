@@ -25,10 +25,12 @@ async def relevance_filter_node(state: LeadSearchGraphState) -> dict[str, object
     """
     Filtra resultados Exa que no cumplen criterios de ubicación / intención antes del enriquecimiento.
     """
+    logger.info("relevance_filter iniciado: job_id=%s, raw_results=%s", state.job_id, len(state.exa_raw_results))
     raw = [x for x in state.exa_raw_results if isinstance(x, dict)]
     try:
         await asyncio.sleep(0)
         if not raw:
+            logger.warning("relevance_filter: sin resultados para filtrar job_id=%s", state.job_id)
             return {
                 "status": "running",
                 "current_stage": "search_finalize",

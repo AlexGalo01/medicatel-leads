@@ -11,7 +11,7 @@ from mle.clients.llm_factory import get_llm_client
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 12
+BATCH_SIZE = 15
 ENRICH_TIMEOUT_SECONDS = 90.0
 MAX_SPECIALTY_LEN = 160
 MAX_CITY_LEN = 120
@@ -71,11 +71,13 @@ async def _enrich_batch(llm_client, batch: list[dict[str, Any]]) -> dict[int, tu
     out: dict[int, tuple[str, str, str]] = {}
     if not batch:
         return out
+    logger.info("Enriqueciendo batch de %d items", len(batch))
     prompt = _preview_prompt_batch(batch)
     try:
         parsed = await llm_client.complete_json_prompt(prompt)
+        logger.info("Enriquecimiento LLM exitoso: items=%d", len(batch))
     except Exception as exc:  # noqa: BLE001
-        logger.warning("LLM enriquecimiento preview lote fallo: %s", exc)
+        logger.error("LLM enriquecimiento preview lote fallo: %s", exc, exc_info=True)
         return out
     items = parsed.get("items")
     if not isinstance(items, list):

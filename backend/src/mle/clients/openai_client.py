@@ -89,6 +89,74 @@ class OpenAIClient:
             raise last_error
         raise ValueError("No se pudo obtener respuesta válida de OpenAI.")
 
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        max_iterations: int = 5,
+        tool_executor: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Loop de tool calling: el LLM decide qué tools invocar hasta que deja de hacerlo o se agota el límite.
+
+        Args:
+            messages: Historial de mensajes (system + user).
+            tools: Definición de tools en formato OpenAI.
+            max_iterations: Máximo de rondas de tool calls.
+            tool_executor: Callable async (name, args) -> str que ejecuta el tool y retorna resultado.
+
+        Returns:
+            Lista de mensajes completa (incluyendo tool calls y responses).
+        """
+        from openai import AsyncOpenAI
+        import httpx
+
+        msgs = list(messages)
+
+        for _iteration in range(max_iterations):
+            async with AsyncOpenAI(
+                api_key=self.api_key,
+                timeout=httpx.Timeout(max(self.timeout_seconds, 60.0)),
+            ) as client:
+                response = await client.chat.completions.create(
+                    model=self.model_name,
+                    messages=msgs,
+                    tools=tools,
+                )
+
+            choice = response.choices[0]
+
+            # Si no hay tool calls, el LLM terminó
+            if not choice.message.tool_calls:
+                if choice.message.content:
+                    msgs.append({"role": "assistant", "content": choice.message.content})
+                break
+
+            # Agregar mensaje del asistente con tool calls
+            msgs.append(choice.message.model_dump())
+
+            # Ejecutar cada tool call
+            for tool_call in choice.message.tool_calls:
+                fn_name = tool_call.function.name
+                fn_args = json.loads(tool_call.function.arguments)
+
+                if tool_executor:
+                    result = await tool_executor(fn_name, fn_args)
+                else:
+                    result = json.dumps({"error": f"No executor for tool {fn_name}"})
+
+                msgs.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": result if isinstance(result, str) else json.dumps(result, ensure_ascii=False),
+                })
+
+                # Si el tool es finalize_search, salir del loop
+                if fn_name == "finalize_search":
+                    return msgs
+
+        return msgs
+
     @traceable(
         name="gemini_score_lead",
         run_type="llm",
@@ -195,11 +263,15 @@ class OpenAIClient:
             f"{notes_block}"
             "Reglas: main_query y additional_queries deben estar en español; si el usuario mezcla idiomas, prioriza términos y sinónimos en español para favorecer fuentes y páginas en español (sin añadir 'español' o 'Spanish' a propósito al final de cada frase de forma rígida).\n"
             "Reglas: main_query debe ser rico y ejecutable (sin inventar nombres propios inexistentes en la consulta). "
-            "additional_queries debe tener 0 a 6 variaciones (sinonimos, ubicacion, rubro alternativo, "
-            "intención de contacto). Si falta un dato crítico (ej. ciudad cuando el usuario busca locales), "
+            "additional_queries debe tener 0 a 6 variaciones (sinonimos, ubicacion, rubro alternativo). "
+            "CRÍTICO — Queries limpias: NUNCA incluyas como términos literales 'email', 'whatsapp', 'linkedin' o 'contacto' en main_query o additional_queries. "
+            "Esas palabras no son términos de búsqueda: son metadata de contacto para filtrado posterior. Incluirlas CONTAMINA los resultados atrayendo perfiles de IT, marketing, import-export, etc. no deseados.\n"
+            "Si falta un dato crítico (ej. ciudad cuando el usuario busca locales), "
             "rellena clarifying_question; si aun asi puedes buscar en amplio, deja main_query util.\n"
             "exa_category solo puede ser null, \"people\" (profesionales / perfiles) o \"company\" (empresas / "
-            "organizaciones). Si no aplica, null.\n"
+            "organizaciones). Usa \"people\" para profesionales individuales (médicos especialistas, abogados, consultores) EN países con buena cobertura LinkedIn: México, Colombia, Argentina, Chile. "
+            "Usa null para: especialidades de nicho, técnicos, o países pequeños de LATAM (Honduras, Guatemala, El Salvador, Nicaragua, Bolivia, Paraguay). "
+            "Usa \"company\" cuando se buscan negocios/organizaciones. null permite encontrar directorios, páginas web y perfiles sin restricción (recomendado para LATAM salvo MX/CO/AR/CL en especialidades altas).\n"
             "PATRÓN ESPECIAL - Búsqueda de empleados de empresa: "
             "Si la consulta busca empleados, personal, equipo, trabajadores o staff de una empresa concreta "
             "(ej. 'empleados de Empresa1', 'trabajadores de Clínica X'), devuelve company_anchor con: "

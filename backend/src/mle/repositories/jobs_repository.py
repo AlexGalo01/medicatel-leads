@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from mle.db.models import SearchJob
 
@@ -64,6 +65,7 @@ class JobsRepository:
         job.updated_at = datetime.now(timezone.utc)
         if metadata_json is not None:
             job.metadata_json = metadata_json
+            flag_modified(job, "metadata_json")
 
         await self.session.commit()
         await self.session.refresh(job)

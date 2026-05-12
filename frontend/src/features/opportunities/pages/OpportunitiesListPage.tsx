@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ChevronRight, Loader2, Search } from "lucide-react";
+import { ChevronRight, Loader2, Plus, Search } from "lucide-react";
 
 import { listDirectories, listOpportunities } from "../../../api";
 import { Card } from "../../../components/ui/card";
@@ -57,13 +57,13 @@ export function OpportunitiesListPage(): JSX.Element {
   return (
     <div className="opportunities-page">
       <Card className="panel opportunities-page-header">
-        <div>
+        <div className="opportunities-header-left">
           <h1 className="opportunities-page-title">Oportunidades</h1>
-          <p className="muted-text" style={{ margin: 0 }}>
+          <p className="muted-text opportunities-page-count">
             {listQuery.data ? `${listQuery.data.items.length} en total` : ""}
           </p>
         </div>
-        <div className="opportunities-filters-row">
+        <div className="opportunities-header-right">
           <Select
             value={directoryFilter}
             onChange={(e) => setDirectoryFilter(e.target.value)}
@@ -86,6 +86,13 @@ export function OpportunitiesListPage(): JSX.Element {
               className="opportunities-search-input"
             />
           </div>
+          <Link
+            to="/opportunities/new"
+            className="cta-button"
+            style={{ whiteSpace: "nowrap", display: "inline-flex", textDecoration: "none" }}
+          >
+            <Plus size={16} aria-hidden /> Nueva oportunidad
+          </Link>
         </div>
       </Card>
 

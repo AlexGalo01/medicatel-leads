@@ -1,4 +1,4 @@
-"""Nodo de auto-enriquecimiento: corre Exa /contents + OpenCLI + Gemini por cada preview en paralelo.
+"""Nodo de auto-enriquecimiento: corre Exa /contents + Brave local/web + Gemini por cada preview en paralelo.
 
 Reemplaza el botón manual "Enriquecer" — el pipeline entrega los resultados ya con
 teléfono, dirección, horario, email, WhatsApp y LinkedIn extraídos desde la primera búsqueda.
@@ -19,7 +19,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from mle.clients.brave_client import BraveSearchClient
 from mle.clients.exa_client import ExaClient
-from mle.clients.opencli_client import OpenCliClient
 from mle.clients.llm_factory import get_llm_client, get_reviewer_llm_client
 from mle.core.config import effective_exa_search_timeout_seconds, get_settings
 from mle.db.base import async_session_factory
@@ -203,7 +202,6 @@ async def auto_enrich_node(state: LeadSearchGraphState) -> dict[str, object]:
             api_key=settings.exa_api_key,
             timeout_seconds=effective_exa_search_timeout_seconds(settings),
         )
-        opencli = OpenCliClient(settings)
         proposer = get_llm_client(settings)
         reviewer = get_reviewer_llm_client(settings)
 
@@ -221,19 +219,16 @@ async def auto_enrich_node(state: LeadSearchGraphState) -> dict[str, object]:
                 return item
             async with semaphore:
                 try:
-                    prefetched_maps = item.pop("_prefetched_maps", None)
                     core = _preview_to_core(item, country, entity_type)
                     if not core.full_name and not core.primary_source_url:
                         return item
                     enr = await enrich_lead_contacts(
                         core,
                         exa_client=exa_client,
-                        opencli=opencli,
                         proposer=proposer,
                         reviewer=reviewer,
                         settings=settings,
                         brave=brave,
-                        prefetched_maps=prefetched_maps,
                     )
                     return _apply_enrichment_to_preview(item, enr)
                 except Exception as exc:  # noqa: BLE001

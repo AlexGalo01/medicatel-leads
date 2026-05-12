@@ -1,18 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Briefcase, ChevronLeft, ChevronRight, ExternalLink, Loader2, Search } from "lucide-react";
+import { Briefcase, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Search } from "lucide-react";
 
 import {
   createOpportunityFromPreview,
+  downloadPreviewResultXlsx,
   getOpportunityByPreview,
   getSearchJobStatus,
   summarizeProfile,
   enrichOpportunity,
+  savePreviewContact,
   type OpportunityEnrichResult,
 } from "../api";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
+import { EnrichContactModal, ENRICH_STAGES } from "../components/EnrichContactModal";
 import { mergeAbortSignals, mergeProfileAboutText } from "../lib/utils";
 import type { ExaResultPreviewItem } from "../types";
 
@@ -46,6 +49,12 @@ function cleanAiText(value: string | null | undefined): string {
   return value?.replace(/\s+/g, " ").trim() || "";
 }
 
+function cleanAiField(value: string | null | undefined): string {
+  const v = value?.trim() ?? "";
+  if (v === "null" || v === "undefined" || v === "N/A" || v === "n/a") return "";
+  return v;
+}
+
 function inferCompanyFromText(title: string, snippet: string): string {
   const text = `${title} ${snippet}`.trim();
   const byIn = text.match(/\ben\s+([^|,/.-]{2,80})/i);
@@ -65,12 +74,7 @@ function inferLocationFromText(city: string, title: string, snippet: string): st
 /** Evita espera infinita si el backend no responde (p. ej. Gemini colgado). */
 const PROFILE_SUMMARY_TIMEOUT_MS = 90_000;
 
-const ENRICH_STAGES = [
-  "Buscando información del perfil en la web...",
-  "Consultando Google Maps y Knowledge Panel...",
-  "Visitando páginas personales y redes sociales...",
-  "Verificando datos con inteligencia artificial...",
-];
+
 
 function profileSummaryErrorMessage(err: unknown): string {
   if (err instanceof DOMException && err.name === "AbortError") {
@@ -93,6 +97,7 @@ export function JobExaResultDetailPage(): JSX.Element {
   const resultIndex = parseResultIndex(resultIndexParam);
   const [enrichModalOpen, setEnrichModalOpen] = useState(false);
   const [enrichStageIdx, setEnrichStageIdx] = useState(0);
+  const [isExporting, setIsExporting] = useState(false);
 
   const jobQuery = useQuery({
     queryKey: ["job-status", jobId],
@@ -122,8 +127,19 @@ export function JobExaResultDetailPage(): JSX.Element {
   });
 
   const createOppMut = useMutation({
-    mutationFn: () =>
-      createOpportunityFromPreview({ job_id: jobId, exa_preview_index: resultIndex! }),
+    mutationFn: () => {
+      // Pasar los datos enriquecidos del preview a la oportunidad
+      const contactData: Record<string, string> = {};
+      if (row?.email) contactData.email = row.email;
+      if (row?.phone) contactData.phone = row.phone;
+      if (row?.whatsapp) contactData.whatsapp = row.whatsapp;
+
+      return createOpportunityFromPreview({
+        job_id: jobId,
+        exa_preview_index: resultIndex!,
+        contact_overrides: Object.keys(contactData).length > 0 ? contactData : undefined,
+      });
+    },
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: ["opportunities"] });
       void queryClient.invalidateQueries({ queryKey: ["opportunity-by-preview", jobId, resultIndex] });
@@ -150,6 +166,34 @@ export function JobExaResultDetailPage(): JSX.Element {
           setEnrichStageIdx(idx);
         }
       });
+    },
+  });
+
+  const saveMut = useMutation({
+    mutationFn: (data: { email?: string; phone?: string; whatsapp?: string; source_urls?: string[] }) =>
+      savePreviewContact(jobId, resultIndex!, data),
+    onSuccess: (_, savedData) => {
+      // Actualizar el row local inmediatamente sin recargar
+      if (row) {
+        const updatedRow = {
+          ...row,
+          email: savedData.email !== undefined ? savedData.email : row.email,
+          phone: savedData.phone !== undefined ? savedData.phone : row.phone,
+          whatsapp: savedData.whatsapp !== undefined ? savedData.whatsapp : row.whatsapp,
+          saved_source_urls: savedData.source_urls !== undefined ? savedData.source_urls : row.saved_source_urls,
+        };
+        // Actualizar el cache de React Query directamente
+        queryClient.setQueryData(["job-status", jobId], (oldData: any) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            exa_results_preview: (oldData.exa_results_preview || []).map((item: any) =>
+              item.index === resultIndex ? updatedRow : item
+            ),
+          };
+        });
+      }
+      setEnrichModalOpen(false);
     },
   });
 
@@ -231,13 +275,13 @@ export function JobExaResultDetailPage(): JSX.Element {
 
   const aiSummary = cleanAiText(profileSectionsQuery.data?.professional_summary);
   const aiAbout = cleanAiText(profileSectionsQuery.data?.about);
-  const aiCompany = cleanAiText(profileSectionsQuery.data?.company);
-  const aiLocation = cleanAiText(profileSectionsQuery.data?.location);
+  const aiCompany = cleanAiField(profileSectionsQuery.data?.company);
+  const aiLocation = cleanAiField(profileSectionsQuery.data?.location);
   const aboutText = mergeProfileAboutText(aiAbout, aiSummary, specialty || description);
   /** Cuando no hay experiencia estructurada, se muestra el resumen o el snippet. */
   const experienceFallback = aiSummary || specialty || description;
-  const normalizedLocation = aiLocation || inferLocationFromText(city, title, description) || "No especificada";
-  const normalizedCompany = aiCompany || inferCompanyFromText(title, description) || "No especificada";
+  const normalizedLocation = aiLocation || inferLocationFromText(city, title, description) || "";
+  const normalizedCompany = aiCompany || inferCompanyFromText(title, description) || "";
   const experiences = profileSectionsQuery.data?.experiences ?? [];
 
   const existingOpp = oppLookup.data;
@@ -269,80 +313,110 @@ export function JobExaResultDetailPage(): JSX.Element {
             </div>
           </Card>
 
-          <details className="panel lead-detail-accordion" open>
-            <summary className="lead-detail-accordion-summary">Resumen</summary>
-            <div className="lead-detail-accordion-body">
-              {profileSectionsQuery.isFetching ? (
-                <p className="lead-detail-ai-loading muted-text">
-                  <Loader2 className="spin" size={16} aria-hidden />
-                  Generando resumen con IA…
-                </p>
-              ) : null}
-              {profileSectionsQuery.isError ? (
-                <p className="error-text lead-detail-ai-error" role="alert">
-                  {profileSummaryErrorMessage(profileSectionsQuery.error)}
-                </p>
-              ) : null}
-              <div className="lead-detail-summary-actions">
-                <button
-                  type="button"
-                  className="workspace-tool-btn"
-                  onClick={() => {
-                    setEnrichModalOpen(true);
-                    setEnrichStageIdx(0);
-                    enrichMut.reset();
-                    enrichMut.mutate();
-                  }}
-                  disabled={enrichMut.isPending}
-                >
-                  <Search size={16} aria-hidden /> Enriquecer
-                </button>
-              </div>
-              <div className="lead-detail-summary-cards">
-                <article className="lead-detail-summary-card">
-                  <h3>Acerca de</h3>
-                  <p>{aboutText}</p>
-                </article>
-                <article className="lead-detail-summary-card lead-detail-summary-card--experience">
-                  <h3>Experiencia</h3>
-                  {experiences.length > 0 ? (
-                    <ul className="opportunity-summary-experience-list">
-                      {experiences.map((experience, index) => (
-                        <li key={`${experience.role}-${index}`} className="opportunity-summary-experience-item">
-                          <strong>{experience.role}</strong>
-                          <span className="muted-text">
-                            {[experience.organization || null, experience.period || null].filter(Boolean).join(" · ") || "Sin detalle"}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="lead-detail-experience-fallback-text muted-text">{experienceFallback}</p>
-                  )}
-                </article>
-                <article className="lead-detail-summary-card">
+          <div className="lead-detail-summary-section">
+            {profileSectionsQuery.isError ? (
+              <p className="error-text lead-detail-ai-error" role="alert">
+                {profileSummaryErrorMessage(profileSectionsQuery.error)}
+              </p>
+            ) : null}
+            <div className="lead-detail-summary-actions">
+              <button
+                type="button"
+                className="workspace-tool-btn"
+                onClick={() => {
+                  setEnrichModalOpen(true);
+                  setEnrichStageIdx(0);
+                  enrichMut.reset();
+                  enrichMut.mutate();
+                }}
+                disabled={enrichMut.isPending}
+              >
+                <Search size={16} aria-hidden /> Enriquecer
+              </button>
+              <button
+                type="button"
+                className="workspace-tool-btn"
+                onClick={async () => {
+                  if (!jobId || resultIndex == null) return;
+                  setIsExporting(true);
+                  try {
+                    const downloadName = existingOpp?.title || title;
+                    await downloadPreviewResultXlsx(jobId, resultIndex, downloadName);
+                  } catch (err) {
+                    console.error("Export failed:", err);
+                  } finally {
+                    setIsExporting(false);
+                  }
+                }}
+                disabled={isExporting}
+              >
+                <Download size={16} aria-hidden /> Exportar
+              </button>
+            </div>
+            <div className={`lead-detail-summary-cards${profileSectionsQuery.isFetching ? " lead-detail-summary-cards--loading" : ""}`}>
+              <article className="lead-detail-summary-card panel">
+                <h3>Acerca de</h3>
+                <p>{aboutText}</p>
+              </article>
+              <article className="lead-detail-summary-card lead-detail-summary-card--experience panel">
+                <h3>Experiencia</h3>
+                {experiences.length > 0 ? (
+                  <ul className="opportunity-summary-experience-list">
+                    {experiences.map((experience, index) => (
+                      <li key={`${experience.role}-${index}`} className="opportunity-summary-experience-item">
+                        <strong>{experience.role}</strong>
+                        {(() => {
+                          const org = cleanAiField(experience.organization);
+                          const period = cleanAiField(experience.period);
+                          const parts = [org, period].filter(Boolean);
+                          return parts.length ? (
+                            <span className="muted-text">{parts.join(" · ")}</span>
+                          ) : null;
+                        })()}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="lead-detail-experience-fallback-text muted-text">{experienceFallback}</p>
+                )}
+              </article>
+              {normalizedLocation && (
+                <article className="lead-detail-summary-card panel">
                   <h3>Ubicación</h3>
                   <p>{normalizedLocation}</p>
                 </article>
-                <article className="lead-detail-summary-card">
+              )}
+              {normalizedCompany && (
+                <article className="lead-detail-summary-card panel">
                   <h3>Empresa</h3>
                   <p>{normalizedCompany}</p>
                 </article>
-              </div>
+              )}
             </div>
-          </details>
+          </div>
 
           <Card className="panel lead-detail-card">
             <h2 className="lead-detail-section-title">Fuentes y enlaces</h2>
             {url ? (
               <ul className="lead-source-link-list">
-                <li className="lead-source-link-row">
-                  <span className="lead-source-host">{hostLabel(url)}</span>
-                  <a href={url} target="_blank" rel="noreferrer" className="lead-source-anchor">
-                    {title}
-                    <ExternalLink size={14} aria-hidden />
-                  </a>
-                </li>
+                {url && (
+                  <li className="lead-source-link-row">
+                    <span className="lead-source-host">{hostLabel(url)}</span>
+                    <a href={url} target="_blank" rel="noreferrer" className="lead-source-anchor">
+                      {title}
+                      <ExternalLink size={14} aria-hidden />
+                    </a>
+                  </li>
+                )}
+                {row.saved_source_urls?.map((surl, idx) => (
+                  <li key={`saved-src-${idx}`} className="lead-source-link-row">
+                    <span className="lead-source-host">{hostLabel(surl)}</span>
+                    <a href={surl} target="_blank" rel="noreferrer" className="lead-source-anchor">
+                      {surl}
+                      <ExternalLink size={14} aria-hidden />
+                    </a>
+                  </li>
+                ))}
               </ul>
             ) : (
               <p className="muted-text">No hay URL registrada para este resultado.</p>
@@ -351,6 +425,73 @@ export function JobExaResultDetailPage(): JSX.Element {
         </div>
 
         <aside className="lead-detail-sidebar" aria-label="Acciones">
+          <section className="panel lead-detail-card lead-detail-contact-card">
+            <h2 className="lead-detail-section-title">Contacto</h2>
+            {row?.email || row?.phone || row?.whatsapp || row?.linkedin_url ? (
+              <p className="muted-text lead-detail-card-hint">
+                Información encontrada en la búsqueda. Podrás confirmar o agregar más en la ficha de oportunidad.
+              </p>
+            ) : (
+              <p className="muted-text lead-detail-card-hint">
+                Tras crear la oportunidad podrás registrar correos, teléfonos, WhatsApp y más en la ficha.
+              </p>
+            )}
+            <dl className="lead-contact-dl">
+              {row?.email && (
+                <div className="lead-contact-row">
+                  <dt>Correo</dt>
+                  <dd>
+                    <a href={`mailto:${row.email}`} className="link">
+                      {row.email}
+                    </a>
+                  </dd>
+                </div>
+              )}
+              {row?.phone && (
+                <div className="lead-contact-row">
+                  <dt>Teléfono</dt>
+                  <dd>
+                    <a href={`tel:${row.phone}`} className="link">
+                      {row.phone}
+                    </a>
+                  </dd>
+                </div>
+              )}
+              {row?.whatsapp && (
+                <div className="lead-contact-row">
+                  <dt>WhatsApp</dt>
+                  <dd>
+                    <a href={`https://wa.me/${row.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="link">
+                      {row.whatsapp}
+                    </a>
+                  </dd>
+                </div>
+              )}
+              {row?.linkedin_url && (
+                <div className="lead-contact-row">
+                  <dt>LinkedIn</dt>
+                  <dd>
+                    <a href={row.linkedin_url} target="_blank" rel="noreferrer" className="link">
+                      Perfil
+                      <ExternalLink size={14} aria-hidden />
+                    </a>
+                  </dd>
+                </div>
+              )}
+              {url && (
+                <div className="lead-contact-row">
+                  <dt>Fuente</dt>
+                  <dd>
+                    <a href={url} target="_blank" rel="noreferrer" className="link">
+                      {hostLabel(url)}
+                      <ExternalLink size={14} aria-hidden />
+                    </a>
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </section>
+
           <Card className="panel lead-detail-opportunity-card">
             <div className="lead-detail-opportunity-icon" aria-hidden>
               <Briefcase size={22} />
@@ -390,192 +531,22 @@ export function JobExaResultDetailPage(): JSX.Element {
               </p>
             ) : null}
           </Card>
-
-          <section className="panel lead-detail-card lead-detail-contact-card">
-            <h2 className="lead-detail-section-title">Contacto</h2>
-            {row?.email || row?.phone || row?.whatsapp || row?.linkedin_url ? (
-              <p className="muted-text lead-detail-card-hint">
-                Información encontrada en la búsqueda. Podrás confirmar o agregar más en la ficha de oportunidad.
-              </p>
-            ) : (
-              <p className="muted-text lead-detail-card-hint">
-                Tras crear la oportunidad podrás registrar correos, teléfonos, WhatsApp y más en la ficha.
-              </p>
-            )}
-            <dl className="lead-contact-dl">
-              <div className="lead-contact-row">
-                <dt>Correo</dt>
-                <dd>
-                  {row?.email ? (
-                    <a href={`mailto:${row.email}`} className="link">
-                      {row.email}
-                    </a>
-                  ) : (
-                    <span className="muted-text">—</span>
-                  )}
-                </dd>
-              </div>
-              <div className="lead-contact-row">
-                <dt>Teléfono</dt>
-                <dd>
-                  {row?.phone ? (
-                    <a href={`tel:${row.phone}`} className="link">
-                      {row.phone}
-                    </a>
-                  ) : (
-                    <span className="muted-text">—</span>
-                  )}
-                </dd>
-              </div>
-              <div className="lead-contact-row">
-                <dt>WhatsApp</dt>
-                <dd>
-                  {row?.whatsapp ? (
-                    <a href={`https://wa.me/${row.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="link">
-                      {row.whatsapp}
-                    </a>
-                  ) : (
-                    <span className="muted-text">—</span>
-                  )}
-                </dd>
-              </div>
-              <div className="lead-contact-row">
-                <dt>LinkedIn</dt>
-                <dd>
-                  {row?.linkedin_url ? (
-                    <a href={row.linkedin_url} target="_blank" rel="noreferrer" className="link">
-                      Perfil
-                      <ExternalLink size={14} aria-hidden />
-                    </a>
-                  ) : (
-                    <span className="muted-text">—</span>
-                  )}
-                </dd>
-              </div>
-              <div className="lead-contact-row">
-                <dt>Fuente principal</dt>
-                <dd>
-                  {url ? (
-                    <a href={url} target="_blank" rel="noreferrer">
-                      {hostLabel(url)}
-                      <ExternalLink size={14} aria-hidden />
-                    </a>
-                  ) : (
-                    <span className="muted-text">—</span>
-                  )}
-                </dd>
-              </div>
-            </dl>
-          </section>
         </aside>
       </div>
 
-      {enrichModalOpen && (
-        <div
-          className="enrich-modal-overlay"
-          onClick={() => { if (!enrichMut.isPending) setEnrichModalOpen(false); }}
-        >
-          <div className="enrich-modal-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="enrich-modal-header">
-              <h3 className="enrich-modal-title">Búsqueda de contactos</h3>
-              {!enrichMut.isPending && (
-                <button
-                  type="button"
-                  className="enrich-modal-close"
-                  aria-label="Cerrar"
-                  onClick={() => setEnrichModalOpen(false)}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-
-            {enrichMut.isPending && (
-              <div className="enrich-modal-loading">
-                <Loader2 className="spin" size={32} aria-hidden />
-                <p className="enrich-modal-stage">{ENRICH_STAGES[enrichStageIdx]}</p>
-              </div>
-            )}
-
-            {enrichMut.isError && (
-              <p className="error-text" style={{ padding: "1rem" }}>
-                Error al buscar. Intenta de nuevo.
-              </p>
-            )}
-
-            {enrichMut.isSuccess && enrichMut.data && (() => {
-              const r = enrichMut.data;
-              const found = [
-                { label: "Email",      value: r.email },
-                { label: "Teléfono",   value: r.phone },
-                { label: "WhatsApp",   value: r.whatsapp },
-                { label: "LinkedIn",   value: r.linkedin_url },
-                { label: "Dirección",  value: r.address },
-                { label: "Sitio web",  value: r.website },
-                { label: "Facebook",   value: r.facebook_url },
-                { label: "Instagram",  value: r.instagram_url },
-              ].filter((x) => x.value.trim() !== "");
-
-              return (
-                <div className="enrich-modal-results">
-                  {found.length === 0 ? (
-                    <p className="muted-text" style={{ padding: "0.5rem 0" }}>
-                      No se encontró información de contacto verificada.
-                    </p>
-                  ) : (
-                    <>
-                      <p className="enrich-modal-summary">{found.length} dato{found.length !== 1 ? "s" : ""} encontrado{found.length !== 1 ? "s" : ""}</p>
-                      <ul className="enrich-modal-contact-list">
-                        {found.map((item, i) => (
-                          <li key={i} className="enrich-modal-contact-row">
-                            <span className="enrich-modal-contact-label">{item.label}</span>
-                            <span className="enrich-modal-contact-value">{item.value}</span>
-                          </li>
-                        ))}
-                      </ul>
-                      {r.citations.length > 0 && (
-                        <details className="enrich-modal-sources">
-                          <summary>Fuentes ({Math.min(r.citations.length, 3)})</summary>
-                          <ul>
-                            {r.citations.slice(0, 3).map((c, i) => (
-                              <li key={i}>
-                                <a href={c.url} target="_blank" rel="noreferrer" className="enrich-modal-source-link">
-                                  {c.url}
-                                </a>
-                                {c.source === "direct_regex" && <span className="enrich-modal-source-tag">extracción directa</span>}
-                              </li>
-                            ))}
-                          </ul>
-                        </details>
-                      )}
-                      <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
-                        <Button
-                          type="button"
-                          className="cta-button"
-                          style={{ flex: 1 }}
-                          onClick={() => {
-                            setEnrichModalOpen(false);
-                            void queryClient.invalidateQueries({ queryKey: ["opportunity-by-preview", jobId, resultIndex] });
-                          }}
-                        >
-                          Crear oportunidad
-                        </Button>
-                        <Button
-                          type="button"
-                          className="link-button"
-                          onClick={() => setEnrichModalOpen(false)}
-                        >
-                          Descartar
-                        </Button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-      )}
+      <EnrichContactModal
+        isOpen={enrichModalOpen}
+        onClose={() => {
+          setEnrichModalOpen(false);
+        }}
+        isPending={enrichMut.isPending}
+        isError={enrichMut.isError}
+        stageIdx={enrichStageIdx}
+        data={enrichMut.data ?? null}
+        onSave={(data) => saveMut.mutate(data)}
+        isSaving={saveMut.isPending}
+        saveError={saveMut.isError}
+      />
     </section>
   );
 }

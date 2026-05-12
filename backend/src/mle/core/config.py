@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # Texto completo de cada resultado (contents.text.maxCharacters) — alimenta filtro de relevancia y auto-enrich.
     exa_text_max_characters: int = Field(default=12_000, ge=2_000, le=100_000, alias="EXA_TEXT_MAX_CHARACTERS")
     # Número de subpáginas a crawlear por resultado (páginas /contacto, /about, etc.).
-    exa_subpages: int = Field(default=2, ge=0, le=5, alias="EXA_SUBPAGES")
+    exa_subpages: int = Field(default=0, ge=0, le=5, alias="EXA_SUBPAGES")
     # Tamaño máximo del snippet de vista previa tras unir highlights/text (UI y JSON del job).
     exa_preview_snippet_max_chars: int = Field(default=12_000, ge=2_000, le=100_000, alias="EXA_PREVIEW_SNIPPET_MAX_CHARS")
     exa_preview_num_highlights: int = Field(default=16, ge=4, le=32, alias="EXA_PREVIEW_NUM_HIGHLIGHTS")
@@ -36,14 +36,7 @@ class Settings(BaseSettings):
     exa_enrich_snippet_prompt_max: int = Field(default=2000, ge=400, le=8_000, alias="EXA_ENRICH_SNIPPET_PROMPT_MAX")
     # Excerpt del filtro de relevancia (antes 1400, ahora amplio porque ya tenemos text completo).
     relevance_filter_excerpt_max_chars: int = Field(default=6000, ge=1_000, le=20_000, alias="RELEVANCE_FILTER_EXCERPT_MAX_CHARS")
-    # === Playwright Search (contact enrichment via Chrome automation - Knowledge Panel + Google Maps) ===
-    opencli_enabled: bool = Field(default=True, alias="OPENCLI_ENABLED")
-    opencli_binary_path: str = Field(default="/app/playwright_tool/bin/mle-search", alias="OPENCLI_BINARY_PATH")
-    opencli_chrome_profile_path: str = Field(default="", alias="OPENCLI_CHROME_PROFILE_PATH")
-    opencli_concurrency: int = Field(default=5, ge=1, le=20, alias="OPENCLI_CONCURRENCY")
-    opencli_timeout_seconds: int = Field(default=10, ge=5, le=120, alias="OPENCLI_TIMEOUT_SECONDS")
-    opencli_include_facebook: bool = Field(default=False, alias="OPENCLI_INCLUDE_FACEBOOK")
-    opencli_include_instagram: bool = Field(default=False, alias="OPENCLI_INCLUDE_INSTAGRAM")
+    # === Brave Search (contact enrichment + local search) ===
     brave_search_api_key: str | None = Field(default=None, alias="BRAVE_SEARCH_API_KEY")
     brave_search_enabled: bool = Field(default=True, alias="BRAVE_SEARCH_ENABLED")
     brave_search_timeout_seconds: float = Field(default=10.0, alias="BRAVE_SEARCH_TIMEOUT_SECONDS")
@@ -53,7 +46,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, alias="OPEN_API_KEY")
     openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
     llm_provider: str = Field(default="openai", alias="LLM_PROVIDER")
-    # Concurrencia de auto_enrich_node — separada de opencli para controlar rate limit LLM (OpenAI 500 RPM, Gemini 15 RPM).
+    # Concurrencia de auto_enrich_node para controlar rate limit LLM (OpenAI 500 RPM, Gemini 15 RPM).
     auto_enrich_concurrency: int = Field(default=5, ge=1, le=20, alias="AUTO_ENRICH_CONCURRENCY")
     export_dir: str = Field(default="/app/exports", alias="EXPORT_DIR")
     langsmith_tracing: bool = Field(default=False, alias="LANGSMITH_TRACING")

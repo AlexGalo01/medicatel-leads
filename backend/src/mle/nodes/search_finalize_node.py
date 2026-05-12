@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from langsmith import traceable
 
+from mle.clients.brave_client import BraveSearchClient
 from mle.core.config import get_settings
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.services.exa_preview_enrich_service import enrich_exa_preview_rows
@@ -15,12 +17,72 @@ from mle.state.graph_state import LeadSearchGraphState
 logger = logging.getLogger(__name__)
 
 PIPELINE_MODE_SEARCH_ONLY = "presearch_and_search_only"
-MAX_EXA_PREVIEW_ITEMS = 60
+MAX_EXA_PREVIEW_ITEMS = 80
 MAX_EXA_ACCUMULATED_RAW = 120
+MIN_SUGGESTED_SOURCES = 10
 
 
 def _url_key_for_merge(url: str) -> str:
     return str(url or "").strip().lower().rstrip("/")
+
+
+def _normalize_title(title: str) -> str:
+    """Limpia títulos de ruido: navegación, separadores, afiliaciones.
+
+    Ejemplos:
+    - "Dr. Dacarett: Inicio" → "Dr. Dacarett"
+    - "Dra. Gabriela López - Doctores de Honduras" → "Dra. Gabriela López"
+    - "Karina Egans | Gerente de ventas" → "Karina Egans"
+    - "Inicio - Dr. Reichmann - Clínica..." → "Dr. Reichmann"
+    """
+    t = str(title or "").strip()
+    if not t:
+        return ""
+
+    # Palabras de navegación a eliminar al inicio/final
+    nav_words = {"inicio", "home", "principal", "index"}
+
+    # Si contiene pipe |, tomar solo la primera parte (antes de rol/descripción)
+    if "|" in t:
+        parts = [p.strip() for p in t.split("|")]
+        t = parts[0]
+
+    # Si contiene " - ", buscar patrón "Dr./Dra." en las partes
+    if " - " in t:
+        parts = [p.strip() for p in t.split(" - ")]
+        # Buscar primero la parte con Dr./Dra. o nombre completo
+        doctor_part = None
+        for part in parts:
+            if re.match(r"^(Dr\.|Dra\.)\s+", part, re.IGNORECASE):
+                doctor_part = part
+                break
+        if doctor_part:
+            # Tomar hasta el primer separador adicional (: o segunda parte)
+            t = re.split(r"[:|-]", doctor_part)[0].strip()
+        else:
+            # Sin Dr/Dra, tomar el primer non-nav word
+            for part in parts:
+                if part.lower() not in nav_words:
+                    t = part
+                    break
+
+    # Si contiene ":", tomar solo la parte antes del ":"
+    if ":" in t:
+        t = t.split(":")[0].strip()
+
+    # Remover palabras de navegación al inicio
+    words = t.split()
+    while words and words[0].lower() in nav_words:
+        words.pop(0)
+    t = " ".join(words)
+
+    # Remover palabras de navegación al final
+    words = t.split()
+    while words and words[-1].lower() in nav_words:
+        words.pop()
+    t = " ".join(words)
+
+    return t.strip()
 
 
 def _preview_item(raw: dict[str, Any], index: int) -> dict[str, Any]:
@@ -28,7 +90,8 @@ def _preview_item(raw: dict[str, Any], index: int) -> dict[str, Any]:
     title_max = s.exa_preview_title_max_chars
     join_max = s.exa_preview_snippet_max_chars
     hl_slots = s.exa_preview_num_highlights
-    title = str(raw.get("title", "")).strip()[:title_max]
+    raw_title = str(raw.get("title", "")).strip()[:title_max]
+    title = _normalize_title(raw_title)
     url = str(raw.get("url", "")).strip()[:2000]
     highlights = raw.get("highlights")
     snippet = ""
@@ -36,15 +99,78 @@ def _preview_item(raw: dict[str, Any], index: int) -> dict[str, Any]:
         snippet = " | ".join(str(h) for h in highlights[:hl_slots])[:join_max]
     elif raw.get("text"):
         snippet = str(raw.get("text", ""))[:join_max]
+
+    # Extraer LinkedIn URL si está presente
+    linkedin_url = None
+    if url and "linkedin.com" in url.lower():
+        linkedin_url = url
+
     out = {
         "index": index + 1,
         "title": title or url or "Sin titulo",
         "url": url,
         "snippet": snippet or None,
     }
+    if linkedin_url:
+        out["linkedin_url"] = linkedin_url
     if "_prefetched_maps" in raw:
         out["_prefetched_maps"] = raw["_prefetched_maps"]
     return out
+
+
+async def _fetch_brave_directory_sources(
+    query_text: str,
+    planner_output: dict[str, Any],
+    existing_urls: set[str],
+) -> list[dict[str, str]]:
+    """Busca fuentes/directorios con Brave para complementar suggested_source_urls."""
+    settings = get_settings()
+    if not settings.brave_search_enabled or not settings.brave_search_api_key:
+        return []
+
+    rel = planner_output.get("relevance_criteria", {}) if isinstance(planner_output.get("relevance_criteria"), dict) else {}
+    country = str(rel.get("country_text") or "").strip()
+    city = str(rel.get("city") or "").strip()
+    entity = str(rel.get("role_or_stack_hint") or "").strip()
+    location = " ".join(p for p in (city, country) if p) or ""
+    base_term = entity or query_text
+
+    # Queries orientadas a directorios y listados
+    brave_queries = [
+        f"directorio {base_term} {location}",
+        f"{base_term} {location} listado profesionales equipo staff",
+        f"{base_term} {location} asociación colegio gremio",
+    ]
+
+    iso = str(rel.get("country_iso2") or "").strip().upper()
+    brave_country = iso if len(iso) == 2 else None
+
+    brave_client = BraveSearchClient(
+        api_key=settings.brave_search_api_key,
+        timeout_seconds=settings.brave_search_timeout_seconds,
+    )
+
+    coros = [brave_client.web_search(q, country=brave_country, count=20, pages=1) for q in brave_queries]
+    outcomes = await asyncio.gather(*coros, return_exceptions=True)
+
+    sources: list[dict[str, str]] = []
+    seen = set(existing_urls)
+    for outcome in outcomes:
+        if isinstance(outcome, Exception) or not isinstance(outcome, list):
+            continue
+        for item in outcome:
+            url = str(item.get("url", "")).strip()
+            title = str(item.get("title", "")).strip()
+            key = url.lower().rstrip("/")
+            if not url or key in seen:
+                continue
+            # Excluir LinkedIn profiles individuales (solo queremos directorios/empresas)
+            if "linkedin.com/in/" in url.lower():
+                continue
+            seen.add(key)
+            sources.append({"url": url, "title": title or url, "source": "brave_directory_search"})
+
+    return sources
 
 
 def _build_exa_preview(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -68,11 +194,16 @@ async def search_finalize_node(state: LeadSearchGraphState) -> dict[str, object]
     """
     await asyncio.sleep(0)
     accumulated = [dict(item) for item in state.exa_raw_results[:MAX_EXA_ACCUMULATED_RAW] if isinstance(item, dict)]
+    logger.info("search_finalize: job_id=%s acumulados=%s", state.job_id, len(accumulated))
+
     preview = _build_exa_preview(accumulated)
+    logger.info("search_finalize: preview inicial job_id=%s items=%s", state.job_id, len(preview))
+
     try:
         preview = await enrich_exa_preview_rows(preview)
+        logger.info("search_finalize: preview enriquecido job_id=%s items=%s", state.job_id, len(preview))
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Enriquecimiento preview Exa omitido job_id=%s: %s", state.job_id, exc)
+        logger.warning("Enriquecimiento preview Exa omitido job_id=%s: %s", state.job_id, exc, exc_info=True)
 
     finalize_heuristic_meta: dict[str, Any] = {}
     planner_out = state.planner_output if isinstance(state.planner_output, dict) else {}
@@ -136,6 +267,39 @@ async def search_finalize_node(state: LeadSearchGraphState) -> dict[str, object]
     }
     if finalize_heuristic_meta:
         meta_out = {**meta_out, **finalize_heuristic_meta}
+
+    # Completar fuentes sugeridas si hay menos de MIN_SUGGESTED_SOURCES
+    existing_sources: list[dict[str, str]] = meta_out.get("suggested_source_urls", [])
+    if not isinstance(existing_sources, list):
+        existing_sources = []
+    if len(existing_sources) < MIN_SUGGESTED_SOURCES:
+        existing_source_urls = {s.get("url", "").strip().lower().rstrip("/") for s in existing_sources}
+        # También excluir URLs ya en resultados
+        result_urls = {_url_key_for_merge(str(r.get("url", ""))) for r in accumulated}
+        all_seen = existing_source_urls | result_urls
+        try:
+            brave_sources = await _fetch_brave_directory_sources(
+                query_text=state.query_text,
+                planner_output=planner_out,
+                existing_urls=all_seen,
+            )
+            needed = MIN_SUGGESTED_SOURCES - len(existing_sources)
+            existing_sources.extend(brave_sources[:needed])
+            logger.info(
+                "search_finalize: fuentes complementadas con Brave job_id=%s, total=%s",
+                state.job_id, len(existing_sources),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Brave directory sources falló job_id=%s: %s", state.job_id, exc)
+    meta_out["suggested_source_urls"] = existing_sources
+
+    # Construir preview de LPA desde los raw results
+    lpa_raw = meta_out.get("lpa_results") or []
+    if isinstance(lpa_raw, list) and lpa_raw:
+        lpa_preview = _build_exa_preview(lpa_raw)
+        meta_out["lpa_preview"] = lpa_preview
+        logger.info("search_finalize: lpa_preview job_id=%s items=%s", state.job_id, len(lpa_preview))
+
     return {
         "status": "running",
         "current_stage": "auto_enrich",

@@ -8,7 +8,7 @@ from typing import Any
 from langsmith import traceable
 
 from mle.clients.brave_client import BraveSearchClient
-from mle.clients.exa_client import ExaClient, exa_contents_full_config, finalize_exa_search_payload
+from mle.clients.exa_client import ExaClient, exa_contents_highlights_config, finalize_exa_search_payload
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
 from mle.core.config import effective_exa_search_timeout_seconds, get_settings
 from mle.state.graph_state import LeadSearchGraphState
@@ -16,7 +16,7 @@ from mle.state.graph_state import LeadSearchGraphState
 logger = logging.getLogger(__name__)
 
 MAX_DIRECTORY_EXA_CALLS = 8
-MIN_RESULTS_PER_QUERY = 8
+MIN_RESULTS_PER_QUERY = 35
 MAX_EXA_RESULTS_PER_CALL = 100
 _DEEP_SEARCH_TYPES = ("deep-reasoning",)
 
@@ -84,6 +84,7 @@ def _build_search_payload_for_query(
     planner_output: dict[str, Any],
     query: str,
     num_results: int,
+    slot_idx: int = 0,
 ) -> dict[str, Any]:
     settings = get_settings()
     search_config = planner_output.get("search_config", {})
@@ -92,6 +93,11 @@ def _build_search_payload_for_query(
     include_domains = list(search_config.get("include_domains", []))
     exclude_domains = list(search_config.get("exclude_domains", []))
     exa_category = search_config.get("exa_category")
+
+    # Estrategia de dos slots: slot 1 (main query) usa categoria del LLM,
+    # slot 2+ (additional_queries) siempre usa null para máxima cobertura
+    if slot_idx > 0:
+        exa_category = None
 
     # category es incompatible con deep-reasoning en API Exa → degradar a neural
     if exa_category in ("people", "company") and search_type in _DEEP_SEARCH_TYPES:
@@ -108,11 +114,11 @@ def _build_search_payload_for_query(
         payload["userLocation"] = iso
     if exa_category in ("people", "company"):
         payload["category"] = exa_category
-    payload["contents"] = exa_contents_full_config(
-        text_max_characters=settings.exa_text_max_characters,
-        highlights_max_characters=settings.exa_highlights_max_characters,
-        subpages=settings.exa_subpages,
+    payload["contents"] = exa_contents_highlights_config(
+        max_characters=settings.exa_highlights_max_characters,
     )
+    if settings.exa_subpages > 0:
+        payload["contents"]["subpages"] = settings.exa_subpages
     if include_domains:
         payload["includeDomains"] = include_domains
     if exclude_domains:
@@ -151,6 +157,7 @@ async def _run_slot_with_prefetch(
     semaphore: asyncio.Semaphore,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Ejecuta un slot Exa y retorna los resultados."""
+    query = str(payload.get("query", "")).strip()
     async with semaphore:
         search_response = await exa_client.search(payload)
     batch_results = _extract_results(search_response)
@@ -159,6 +166,25 @@ async def _run_slot_with_prefetch(
         "Exa slot job_id=%s slot=%s/%s pedidos=%s recibidos=%s",
         job_id, slot_idx + 1, n_queries, num_for_call, len(batch_results),
     )
+
+    # Log detallado de TODAS las respuestas crudas de EXA
+    logger.info("=" * 80)
+    logger.info("EXA RAW RESULTS — slot=%s/%s query=%s", slot_idx + 1, n_queries, query)
+    logger.info("=" * 80)
+    for idx, item in enumerate(batch_results, 1):
+        url = str(item.get("url", "")).strip()
+        title = str(item.get("title", "")).strip()
+        highlights = item.get("highlights", [])
+        snippet = " ".join(highlights[:2]) if highlights else "(sin snippet)"
+        logger.info(
+            "[%d] URL: %s | TITLE: %s | SNIPPET: %s",
+            idx,
+            url,
+            title,
+            snippet[:150],
+        )
+    logger.info("=" * 80)
+
     return batch_results, search_response
 
 
@@ -178,7 +204,7 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             raise ValueError("No existe planner_output para ejecutar Exa Search.")
 
         search_config = planner_output.get("search_config", {})
-        per_query_budget = min(MAX_EXA_RESULTS_PER_CALL, int(search_config.get("num_results", 50)))
+        per_query_budget = min(MAX_EXA_RESULTS_PER_CALL, max(MIN_RESULTS_PER_QUERY, int(search_config.get("num_results", 100))))
 
         queries = _queries_from_planner(planner_output)
         if not queries:
@@ -207,11 +233,28 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
         valid_payloads: list[tuple[int, int, dict[str, Any]]] = []
         for slot_idx, query_text in enumerate(queries):
             num_for_call = per_slot[slot_idx] if slot_idx < len(per_slot) else per_slot[-1]
-            payload = _build_search_payload_for_query(planner_output, query_text, num_for_call)
+            payload = _build_search_payload_for_query(planner_output, query_text, num_for_call, slot_idx=slot_idx)
             payload = _ensure_non_empty_query(payload, fallback_query=state.query_text)
             if not str(payload.get("query", "")).strip():
                 continue
             valid_payloads.append((slot_idx, num_for_call, payload))
+
+        # Brave Search: corre en paralelo con EXA como fuente complementaria
+        brave_coros: list[Any] = []
+        if settings.brave_search_enabled and settings.brave_search_api_key:
+            brave_client = BraveSearchClient(
+                api_key=settings.brave_search_api_key,
+                timeout_seconds=settings.brave_search_timeout_seconds,
+            )
+            brave_country = str((search_config or {}).get("country_iso2") or "").strip().upper() or None
+            brave_query = queries[0] if queries else state.query_text
+            # Query principal — más páginas para asegurar cobertura mínima
+            brave_coros.append(brave_client.web_search(brave_query, country=brave_country, count=20, pages=3))
+            # Query adicional para perfiles individuales cuando la búsqueda es de personas
+            exa_category = search_config.get("exa_category")
+            if exa_category == "people":
+                linkedin_query = f"site:linkedin.com/in {state.query_text}"
+                brave_coros.append(brave_client.web_search(linkedin_query, country=brave_country, count=20, pages=2))
 
         # Ejecutar todos los slots en paralelo (con semáforo para limitar concurrencia Exa)
         slot_coroutines = [
@@ -221,9 +264,15 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             )
             for slot_idx, num_for_call, payload in valid_payloads
         ]
-        slot_outcomes = await asyncio.gather(*slot_coroutines, return_exceptions=True)
 
-        # Procesar resultados
+        # Incluir Brave en el mismo gather para paralelismo
+        all_coros = slot_coroutines + brave_coros
+        all_outcomes = await asyncio.gather(*all_coros, return_exceptions=True)
+        slot_outcomes = all_outcomes[:len(slot_coroutines)]
+        brave_outcomes = all_outcomes[len(slot_coroutines):]
+
+        # Procesar resultados Exa
+        exa_all_failed = True
         for outcome_idx, (slot_idx, num_for_call, payload) in enumerate(valid_payloads):
             outcome = slot_outcomes[outcome_idx]
             search_type = str(payload.get("type", "auto"))
@@ -240,77 +289,31 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
                 batch_stats.append({"pedidos": num_for_call, "recibidos": 0})
                 continue
 
+            exa_all_failed = False
             batch_results, search_response = outcome
             batches.append(batch_results)
             batch_stats.append({"pedidos": num_for_call, "recibidos": len(batch_results)})
             request_ids.append(str(search_response.get("requestId", "")))
             last_search_type = str(search_response.get("searchType", search_type))
 
+        # Agregar resultados de Brave (si los hay) — _merge_exa_results deduplica por URL
+        for brave_outcome in brave_outcomes:
+            if brave_outcome and not isinstance(brave_outcome, Exception) and isinstance(brave_outcome, list):
+                logger.info("Brave Search: %d resultados pre-dedup", len(brave_outcome))
+                batches.append(brave_outcome)
+
         exa_results = _merge_exa_results(batches)
 
-        # Búsqueda complementaria keyword: cubre directorios y páginas web estáticas
-        # que el deep-reasoning semántico no alcanza
-        if valid_payloads:
-            keyword_payloads = []
-            for slot_idx, num_for_call, payload in valid_payloads[:3]:
-                kp = {**payload, "type": "keyword", "numResults": 30}
-                kp.pop("category", None)
-                keyword_payloads.append(kp)
-
-            async def _keyword_search(payload: dict[str, Any]) -> dict[str, Any]:
-                async with exa_semaphore:
-                    return await exa_client.search(payload)
-
-            keyword_outcomes = await asyncio.gather(
-                *[_keyword_search(kp) for kp in keyword_payloads],
-                return_exceptions=True,
+        # Construir warnings para el frontend
+        warnings: list[str] = list(state.langsmith_metadata.get("warnings", []))
+        if exa_all_failed and valid_payloads:
+            warnings.append(
+                "La fuente principal de búsqueda (Exa) no está disponible. "
+                "Los resultados provienen únicamente de Brave Search y pueden ser limitados."
             )
-            keyword_batches: list[list[dict[str, Any]]] = []
-            for ko in keyword_outcomes:
-                if isinstance(ko, Exception):
-                    logger.warning("Exa keyword complementaria falló: %s", ko)
-                    keyword_batches.append([])
-                else:
-                    keyword_batches.append(_extract_results(ko))
-
-            # Etiquetar semantic + keyword antes del merge
-            all_source_types = ["exa_semantic"] * len(batches) + ["exa_keyword"] * len(keyword_batches)
-            exa_results = _merge_exa_results(batches + keyword_batches, source_types=all_source_types)
-
-        # Complemento Brave Web Search: cubre directorios locales y páginas regionales
-        brave_web_results: list[dict[str, Any]] = []
-        if valid_payloads and settings.brave_search_api_key and settings.brave_search_enabled:
-            brave = BraveSearchClient(
-                api_key=settings.brave_search_api_key,
-                timeout_seconds=settings.brave_search_timeout_seconds,
-            )
-            rel = planner_output.get("relevance_criteria") if isinstance(planner_output.get("relevance_criteria"), dict) else {}
-            country_iso2 = str(rel.get("country_iso2") or "").strip().upper() or None
-            main_query = str(planner_output.get("search_config", {}).get("query", "")).strip()
-            if main_query:
-                brave_web_results = await brave.web_search(
-                    query=main_query,
-                    country=country_iso2,
-                    count=20,
-                    pages=2,
-                )
-                logger.info(
-                    "Brave Web Search job_id=%s resultados=%s",
-                    state.job_id,
-                    len(brave_web_results),
-                )
-
-        # Merge final con etiquetas de fuente
-        all_batches_final = batches + keyword_batches + [brave_web_results]
-        all_source_types_final = (
-            ["exa_semantic"] * len(batches)
-            + ["exa_keyword"] * len(keyword_batches)
-            + ["brave_web"] * (1 if brave_web_results else 0)
-        )
-        exa_results = _merge_exa_results(all_batches_final, source_types=all_source_types_final)
 
         logger.info(
-            "Exa search node completado job_id=%s unicos_tras_merge=%s (exa+brave) llamadas=%s detalle_batches=%s",
+            "Exa search node completado job_id=%s resultados=%s llamadas=%s detalle_batches=%s",
             state.job_id,
             len(exa_results),
             len(batches),
@@ -324,6 +327,7 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             "exa_raw_results": exa_results,
             "langsmith_metadata": {
                 **state.langsmith_metadata,
+                "warnings": warnings,
                 "exa_payload": {
                     "query_count": len(batches),
                     "per_query_numResults": per_slot,

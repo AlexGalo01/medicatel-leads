@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Folder, Plus, Search, LayoutGrid, List, Trash2, ExternalLink, Pencil } from "lucide-react";
+import { Folder, FolderOpen, Plus, Search, LayoutGrid, List, Trash2, Pencil } from "lucide-react";
 
 import { listDirectories, deleteDirectory } from "../../../api";
 import { Card } from "../../../components/ui/card";
@@ -189,7 +189,7 @@ export function DirectoriesListPage(): JSX.Element {
                             className="directories-table-link"
                             title="Abrir directorio"
                           >
-                            <ExternalLink size={14} />
+                            <FolderOpen size={15} />
                           </Link>
                           <Link
                             to={`/directories/${dir.id}/edit`}

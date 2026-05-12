@@ -192,7 +192,7 @@ export function LeadDetailPage(): JSX.Element {
           <Card className="panel lead-detail-card lead-detail-contact-card">
             <h2 className="lead-detail-section-title">Contacto</h2>
             <p className="muted-text lead-detail-card-hint">
-              Datos extraídos automáticamente por el pipeline (Exa + OpenCLI).
+              Datos extraídos automáticamente por el pipeline (Exa + Brave).
             </p>
             <dl className="lead-contact-dl">
               <div className="lead-contact-row">

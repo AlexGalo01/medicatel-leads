@@ -160,6 +160,10 @@ async def push_entries_to_directory(
     current: User = Depends(require_permission("manage_opportunities")),
 ) -> dict[str, int | str]:
     """Empuja las entradas extraídas al directorio como Opportunities."""
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+
     async with async_session_factory() as session:
         repo = UrlScrapeJobsRepository(session)
         job = await repo.get_by_id(job_id)
@@ -173,9 +177,16 @@ async def push_entries_to_directory(
         if directory is None:
             raise HTTPException(status_code=404, detail="Directorio no encontrado")
 
-        # Get first step of target directory
+        # Get target step: use provided step_id or fallback to first step
         steps = await dirs_repo.list_steps(payload.directory_id)
-        first_step = min(steps, key=lambda s: s.display_order) if steps else None
+        target_step = None
+        if payload.step_id:
+            for s in steps:
+                if s.id == payload.step_id:
+                    target_step = s
+                    break
+        if target_step is None:
+            target_step = min(steps, key=lambda s: s.display_order) if steps else None
 
         # Get preview from metadata
         meta = job.metadata_json if isinstance(job.metadata_json, dict) else {}
@@ -224,8 +235,9 @@ async def push_entries_to_directory(
 
                 opp = Opportunity(
                     directory_id=payload.directory_id,
-                    current_step_id=first_step.id if first_step else None,
+                    current_step_id=target_step.id if target_step else None,
                     job_id=None,
+                    scrape_job_id=job_id,
                     title=title or url[:120] or "(sin título)",
                     source_url=url,
                     snippet=snippet,
@@ -235,6 +247,20 @@ async def push_entries_to_directory(
                 )
                 session.add(opp)
                 created_opps += 1
+
+        # If this scrape job is linked to a DirectorySource, mark as scraped
+        sources_repo = DirectorySourcesRepository(session)
+        linked_sources = await sources_repo.list_by_directory(
+            directory_id=payload.directory_id,
+            limit=50,
+        )
+        for src in linked_sources:
+            if src.scrape_job_id == job_id:
+                await sources_repo.update(
+                    src.id,
+                    status="scraped",
+                )
+                break
 
         await session.commit()
 

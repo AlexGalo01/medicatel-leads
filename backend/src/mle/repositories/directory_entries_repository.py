@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -36,7 +35,3 @@ class DirectoryEntriesRepository:
         rows = list(result.scalars().all())
         return rows, total
 
-    async def count_by_job(self, job_id: UUID) -> int:
-        count_q = select(func.count(ExaRawEntry.id)).where(ExaRawEntry.job_id == job_id)
-        result = await self.session.execute(count_q)
-        return int(result.scalar() or 0)

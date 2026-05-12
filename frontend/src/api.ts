@@ -6,6 +6,10 @@ import type {
   DirectoryCreateRequest,
   DirectoryEntriesListResponse,
   DirectoryListResponse,
+  DirectorySourceCreateRequest,
+  DirectorySourceItem,
+  DirectorySourceUpdateRequest,
+  DirectorySourcesListResponse,
   DirectoryStep,
   DirectoryStepCreate,
   DirectoryStepUpdate,
@@ -14,16 +18,15 @@ import type {
   LeadCrmUpdateRequest,
   LeadDetailResponse,
   LeadsExportFilters,
-  LeadsExportResponse,
   LeadsListResponse,
   LoginResponse,
   RegisterRequest,
   OpportunityCreateFromPreviewRequest,
+  OpportunityCreateManualRequest,
   OpportunityListResponse,
   OpportunityProfileOverrides,
   OpportunityResponse,
   OpportunityTerminatedOutcome,
-  ProfileInterpretResponse,
   ProfileSummaryRequest,
   ProfileSummaryResponse,
   SearchJobCreateRequest,
@@ -147,7 +150,7 @@ export async function clarifySearchJob(
   jobId: string,
   payload: { reply: string },
 ): Promise<{ job_id: string; status: string }> {
-  const response = await apiFetch(`${buildApiUrl("/search-jobs/${jobId}/clarify")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/search-jobs/${jobId}/clarify`)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -156,7 +159,7 @@ export async function clarifySearchJob(
 }
 
 export async function getSearchJobStatus(jobId: string): Promise<SearchJobStatusResponse> {
-  const response = await apiFetch(`${buildApiUrl("/search-jobs/${jobId}")}`);
+  const response = await apiFetch(`${buildApiUrl(`/search-jobs/${jobId}`)}`);
   return parseJsonResponse<SearchJobStatusResponse>(response);
 }
 
@@ -184,28 +187,19 @@ export async function listSearchJobs(params: {
 }
 
 export async function cancelSearchJob(jobId: string): Promise<{ status: string; job_id: string }> {
-  const response = await apiFetch(`${buildApiUrl("/search-jobs/${jobId}/cancel")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/search-jobs/${jobId}/cancel`)}`, {
     method: "POST",
   });
   return parseJsonResponse<{ status: string; job_id: string }>(response);
 }
 
 export async function loadMoreExaResults(jobId: string, numResults = 40): Promise<ExaMoreResultsResponse> {
-  const response = await apiFetch(`${buildApiUrl("/search-jobs/${jobId}/exa-more")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/search-jobs/${jobId}/exa-more`)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ num_results: numResults }),
   });
   return parseJsonResponse<ExaMoreResultsResponse>(response);
-}
-
-export async function interpretProfileTexts(texts: string[]): Promise<ProfileInterpretResponse> {
-  const response = await apiFetch(`${buildApiUrl("/profiles/interpret")}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ texts }),
-  });
-  return parseJsonResponse<ProfileInterpretResponse>(response);
 }
 
 export async function summarizeProfile(
@@ -238,7 +232,7 @@ export async function listDirectoryEntries(
     queryParams.set("page_size", String(params.pageSize));
   }
   const qs = queryParams.toString();
-  const url = `${buildApiUrl("/search-jobs/${jobId}/directory-entries")}${qs ? `?${qs}` : ""}`;
+  const url = `${buildApiUrl(`/search-jobs/${jobId}/directory-entries`)}${qs ? `?${qs}` : ""}`;
   const response = await apiFetch(url);
   return parseJsonResponse<DirectoryEntriesListResponse>(response);
 }
@@ -270,12 +264,12 @@ export async function listLeads(jobId: string, params: ListLeadsParams = {}): Pr
   if (typeof params.pageSize === "number") {
     queryParams.set("page_size", String(params.pageSize));
   }
-  const response = await apiFetch(`${buildApiUrl("/leads?${queryParams.toString()}")}`);
+  const response = await apiFetch(`${buildApiUrl(`/leads?${queryParams.toString()}`)}`);
   return parseJsonResponse<LeadsListResponse>(response);
 }
 
 export async function getLeadDetail(leadId: string): Promise<LeadDetailResponse> {
-  const response = await apiFetch(`${buildApiUrl("/leads/${leadId}")}`);
+  const response = await apiFetch(`${buildApiUrl(`/leads/${leadId}`)}`);
   return parseJsonResponse<LeadDetailResponse>(response);
 }
 
@@ -283,35 +277,12 @@ export async function updateLeadCrm(
   leadId: string,
   payload: LeadCrmUpdateRequest,
 ): Promise<LeadDetailResponse> {
-  const response = await apiFetch(`${buildApiUrl("/leads/${leadId}/crm")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/leads/${leadId}/crm`)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   return parseJsonResponse<LeadDetailResponse>(response);
-}
-
-export async function exportLeads(jobId: string, filters: LeadsExportFilters = {}): Promise<LeadsExportResponse> {
-  const payloadFilters: Record<string, string | number> = {};
-  if (typeof filters.min_score === "number") {
-    payloadFilters.min_score = filters.min_score;
-  }
-  if (filters.q?.trim()) {
-    payloadFilters.q = filters.q.trim();
-  }
-  if (filters.contact_filter?.trim() && filters.contact_filter.trim() !== "all") {
-    payloadFilters.contact_filter = filters.contact_filter.trim();
-  }
-  const response = await apiFetch(`${buildApiUrl("/leads/export")}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      job_id: jobId,
-      format: "csv",
-      filters: payloadFilters,
-    }),
-  });
-  return parseJsonResponse<LeadsExportResponse>(response);
 }
 
 export async function downloadLeadsCsvFile(jobId: string, filters: LeadsExportFilters = {}): Promise<void> {
@@ -325,7 +296,7 @@ export async function downloadLeadsCsvFile(jobId: string, filters: LeadsExportFi
   if (filters.contact_filter?.trim() && filters.contact_filter.trim() !== "all") {
     queryParams.set("contact_filter", filters.contact_filter.trim());
   }
-  const response = await apiFetch(`${buildApiUrl("/leads/export/file?${queryParams.toString()}")}`);
+  const response = await apiFetch(`${buildApiUrl(`/leads/export/file?${queryParams.toString()}`)}`);
   if (!response.ok) {
     const bodyText = await response.text();
     throw new Error(`Error al descargar CSV (${response.status}): ${bodyText || "Sin detalle"}`);
@@ -342,6 +313,105 @@ export async function downloadLeadsCsvFile(jobId: string, filters: LeadsExportFi
   URL.revokeObjectURL(objectUrl);
 }
 
+export async function downloadLeadsXlsxFile(jobId: string, filters: LeadsExportFilters = {}): Promise<void> {
+  const queryParams = new URLSearchParams({ job_id: jobId });
+  if (typeof filters.min_score === "number") {
+    queryParams.set("min_score", String(filters.min_score));
+  }
+  if (filters.q?.trim()) {
+    queryParams.set("q", filters.q.trim());
+  }
+  if (filters.contact_filter?.trim() && filters.contact_filter.trim() !== "all") {
+    queryParams.set("contact_filter", filters.contact_filter.trim());
+  }
+  const response = await apiFetch(`${buildApiUrl(`/leads/export/xlsx?${queryParams.toString()}`)}`);
+  if (!response.ok) {
+    const bodyText = await response.text();
+    throw new Error(`Error al descargar Excel (${response.status}): ${bodyText || "Sin detalle"}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = `leads_${jobId}.xlsx`;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export async function downloadPreviewXlsxFile(jobId: string): Promise<void> {
+  const response = await apiFetch(`${buildApiUrl(`/jobs/${jobId}/export/preview/xlsx`)}`);
+  if (!response.ok) {
+    const bodyText = await response.text();
+    throw new Error(`Error al descargar Excel (${response.status}): ${bodyText || "Sin detalle"}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = `preview_${jobId}.xlsx`;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export async function downloadPreviewResultXlsx(jobId: string, resultIndex: number, defaultName?: string): Promise<void> {
+  const response = await apiFetch(`${buildApiUrl(`/jobs/${jobId}/preview/${resultIndex}/export/xlsx`)}`);
+  if (!response.ok) {
+    const bodyText = await response.text();
+    throw new Error(`Error al descargar Excel (${response.status}): ${bodyText || "Sin detalle"}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+
+  let filename = `resultado_${resultIndex}.xlsx`;
+  if (defaultName) {
+    const cleanName = defaultName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    filename = `${cleanName}.xlsx`;
+  }
+  const disposition = response.headers.get("Content-Disposition");
+  if (disposition && disposition.includes("filename=")) {
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    if (match?.[1]) filename = match[1];
+  }
+  
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export async function downloadOpportunityXlsx(opportunityId: string, name?: string): Promise<void> {
+  const response = await apiFetch(`${buildApiUrl(`/opportunities/${opportunityId}/export/xlsx`)}`);
+  if (!response.ok) {
+    const bodyText = await response.text();
+    throw new Error(`Error al descargar Excel (${response.status}): ${bodyText || "Sin detalle"}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  let filename = `oportunidad_${opportunityId}.xlsx`;
+  if (name) {
+    const cleanName = name.replace(/[^a-z0-9]/gi, '_');
+    filename = `${cleanName}.xlsx`;
+  }
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export async function getOpportunityByPreview(
   jobId: string,
   exaPreviewIndex: number,
@@ -350,7 +420,7 @@ export async function getOpportunityByPreview(
     job_id: jobId,
     exa_preview_index: String(exaPreviewIndex),
   });
-  const response = await apiFetch(`${buildApiUrl("/opportunities/by-preview?${query}")}`);
+  const response = await apiFetch(`${buildApiUrl(`/opportunities/by-preview?${query}`)}`);
   if (response.status === 404) {
     return null;
   }
@@ -366,9 +436,26 @@ export async function createOpportunityFromPreview(
     body: JSON.stringify({
       job_id: payload.job_id,
       exa_preview_index: payload.exa_preview_index,
+      step_id: payload.step_id,
+      contact_overrides: payload.contact_overrides,
     }),
   });
   return parseJsonResponse<OpportunityResponse>(response);
+}
+
+export async function savePreviewContact(
+  jobId: string,
+  index: number,
+  data: { email?: string; phone?: string; whatsapp?: string; source_urls?: string[] },
+): Promise<void> {
+  const response = await apiFetch(`${buildApiUrl(`/jobs/${jobId}/preview/${index}/contact`)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    throw new Error("Error al guardar datos de contacto");
+  }
 }
 
 export async function listOpportunities(params: {
@@ -390,12 +477,12 @@ export async function listOpportunities(params: {
   if (typeof params.limit === "number") {
     query.set("limit", String(params.limit));
   }
-  const response = await apiFetch(`${buildApiUrl("/opportunities?${query}")}`);
+  const response = await apiFetch(`${buildApiUrl(`/opportunities?${query}`)}`);
   return parseJsonResponse<OpportunityListResponse>(response);
 }
 
 export async function getOpportunity(opportunityId: string): Promise<OpportunityResponse> {
-  const response = await apiFetch(`${buildApiUrl("/opportunities/${opportunityId}")}`);
+  const response = await apiFetch(`${buildApiUrl(`/opportunities/${opportunityId}`)}`);
   return parseJsonResponse<OpportunityResponse>(response);
 }
 
@@ -409,7 +496,7 @@ export async function patchOpportunity(
     contact_type?: "employee" | "company";
   },
 ): Promise<OpportunityResponse> {
-  const response = await apiFetch(`${buildApiUrl("/opportunities/${opportunityId}")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/opportunities/${opportunityId}`)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -422,7 +509,7 @@ export async function postOpportunityBitacora(
   text: string,
   author?: string,
 ): Promise<OpportunityResponse> {
-  const response = await apiFetch(`${buildApiUrl("/opportunities/${opportunityId}/bitacora")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/opportunities/${opportunityId}/bitacora`)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, ...(author ? { author } : {}) }),
@@ -441,7 +528,7 @@ export async function putOpportunityContacts(
     is_primary: boolean;
   }>,
 ): Promise<OpportunityResponse> {
-  const response = await apiFetch(`${buildApiUrl("/opportunities/${opportunityId}/contacts")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/opportunities/${opportunityId}/contacts`)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ contacts }),
@@ -463,6 +550,7 @@ export interface OpportunityEnrichResult {
   linkedin_url: string;
   description: string;
   citations: Array<{ url?: string; title?: string; confidence?: string; source?: string }>;
+  contact_sources: Record<string, string>;
 }
 
 export async function enrichOpportunity(
@@ -470,7 +558,7 @@ export async function enrichOpportunity(
   onProgress?: (message: string) => void,
 ): Promise<OpportunityEnrichResult> {
   const response = await apiFetch(
-    `${buildApiUrl("/opportunities/${opportunityId}/enrich")}`,
+    `${buildApiUrl(`/opportunities/${opportunityId}/enrich`)}`,
     {
       method: "POST",
       headers: { Accept: "text/event-stream" },
@@ -573,7 +661,7 @@ export async function updateAdminUser(
   userId: string,
   body: AdminUpdateUserRequest,
 ): Promise<UserPublic> {
-  const response = await apiFetch(`${buildApiUrl("/admin/users/${userId}")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/admin/users/${userId}`)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -582,7 +670,7 @@ export async function updateAdminUser(
 }
 
 export async function deleteAdminUser(userId: string): Promise<void> {
-  const response = await apiFetch(`${buildApiUrl("/admin/users/${userId}")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/admin/users/${userId}`)}`, {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -591,13 +679,9 @@ export async function deleteAdminUser(userId: string): Promise<void> {
   }
 }
 
-export async function createManualOpportunity(body: {
-  title: string;
-  specialty?: string;
-  city?: string;
-  source_url?: string;
-  snippet?: string | null;
-}): Promise<OpportunityResponse> {
+export async function createManualOpportunity(
+  body: OpportunityCreateManualRequest,
+): Promise<OpportunityResponse> {
   const response = await apiFetch(`${buildApiUrl("/opportunities/manual")}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -608,7 +692,7 @@ export async function createManualOpportunity(body: {
 
 export async function deleteOpportunity(opportunityId: string): Promise<void> {
   const response = await apiFetch(
-    `${buildApiUrl("/opportunities/${opportunityId}")}`,
+    `${buildApiUrl(`/opportunities/${opportunityId}`)}`,
     { method: "DELETE" },
   );
   if (!response.ok) {
@@ -627,7 +711,7 @@ export async function listDirectories(): Promise<DirectoryListResponse> {
 }
 
 export async function getDirectory(directoryId: string): Promise<Directory> {
-  const response = await apiFetch(`${buildApiUrl("/directories/${directoryId}")}`);
+  const response = await apiFetch(`${buildApiUrl(`/directories/${directoryId}`)}`);
   return parseJsonResponse<Directory>(response);
 }
 
@@ -643,7 +727,7 @@ export async function updateDirectory(
   directoryId: string,
   payload: DirectoryUpdateRequest,
 ): Promise<Directory> {
-  const response = await apiFetch(`${buildApiUrl("/directories/${directoryId}")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/directories/${directoryId}`)}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
@@ -651,7 +735,7 @@ export async function updateDirectory(
 }
 
 export async function deleteDirectory(directoryId: string): Promise<void> {
-  const response = await apiFetch(`${buildApiUrl("/directories/${directoryId}")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/directories/${directoryId}`)}`, {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -664,7 +748,7 @@ export async function addDirectoryStep(
   directoryId: string,
   payload: DirectoryStepCreate,
 ): Promise<DirectoryStep> {
-  const response = await apiFetch(`${buildApiUrl("/directories/${directoryId}/steps")}`, {
+  const response = await apiFetch(`${buildApiUrl(`/directories/${directoryId}/steps`)}`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -677,7 +761,7 @@ export async function updateDirectoryStep(
   payload: DirectoryStepUpdate,
 ): Promise<DirectoryStep> {
   const response = await apiFetch(
-    `${buildApiUrl("/directories/${directoryId}/steps/${stepId}")}`,
+    `${buildApiUrl(`/directories/${directoryId}/steps/${stepId}`)}`,
     { method: "PATCH", body: JSON.stringify(payload) },
   );
   return parseJsonResponse<DirectoryStep>(response);
@@ -688,7 +772,7 @@ export async function reorderDirectorySteps(
   stepIds: string[],
 ): Promise<DirectoryStep[]> {
   const response = await apiFetch(
-    `${buildApiUrl("/directories/${directoryId}/steps/reorder")}`,
+    `${buildApiUrl(`/directories/${directoryId}/steps/reorder`)}`,
     { method: "POST", body: JSON.stringify({ step_ids: stepIds }) },
   );
   return parseJsonResponse<DirectoryStep[]>(response);
@@ -700,7 +784,7 @@ export async function deleteDirectoryStep(
   moveItemsToStepId?: string,
 ): Promise<void> {
   const response = await apiFetch(
-    `${buildApiUrl("/directories/${directoryId}/steps/${stepId}")}`,
+    `${buildApiUrl(`/directories/${directoryId}/steps/${stepId}`)}`,
     {
       method: "DELETE",
       body: JSON.stringify({ move_items_to_step_id: moveItemsToStepId ?? null }),
@@ -714,11 +798,11 @@ export async function deleteDirectoryStep(
 
 export async function moveOpportunityStep(
   opportunityId: string,
-  direction: "forward" | "backward",
+  targetStepId: string,
 ): Promise<OpportunityResponse> {
   const response = await apiFetch(
-    `${buildApiUrl("/opportunities/${opportunityId}/step")}`,
-    { method: "PATCH", body: JSON.stringify({ direction }) },
+    `${buildApiUrl(`/opportunities/${opportunityId}/step`)}`,
+    { method: "PATCH", body: JSON.stringify({ step_id: targetStepId }) },
   );
   return parseJsonResponse<OpportunityResponse>(response);
 }
@@ -729,7 +813,7 @@ export async function terminateOpportunity(
   note?: string | null,
 ): Promise<OpportunityResponse> {
   const response = await apiFetch(
-    `${buildApiUrl("/opportunities/${opportunityId}/terminate")}`,
+    `${buildApiUrl(`/opportunities/${opportunityId}/terminate`)}`,
     { method: "POST", body: JSON.stringify({ outcome, note: note ?? null }) },
   );
   return parseJsonResponse<OpportunityResponse>(response);
@@ -737,7 +821,7 @@ export async function terminateOpportunity(
 
 export async function reopenOpportunity(opportunityId: string): Promise<OpportunityResponse> {
   const response = await apiFetch(
-    `${buildApiUrl("/opportunities/${opportunityId}/reopen")}`,
+    `${buildApiUrl(`/opportunities/${opportunityId}/reopen`)}`,
     { method: "POST", body: JSON.stringify({}) },
   );
   return parseJsonResponse<OpportunityResponse>(response);
@@ -756,14 +840,14 @@ export async function createUrlScrapeJob(
 }
 
 export async function getUrlScrapeJobStatus(jobId: string): Promise<UrlScrapeJobStatusResponse> {
-  const response = await apiFetch(`${buildApiUrl("/url-scrape-jobs/${jobId}")}`);
+  const response = await apiFetch(`${buildApiUrl(`/url-scrape-jobs/${jobId}`)}`);
   return parseJsonResponse<UrlScrapeJobStatusResponse>(response);
 }
 
 export async function listUrlScrapeJobs(directoryId?: string): Promise<UrlScrapeJobsListResponse> {
   const query = new URLSearchParams();
   if (directoryId) query.set("directory_id", directoryId);
-  const response = await apiFetch(`${buildApiUrl("/url-scrape-jobs?${query}")}`);
+  const response = await apiFetch(`${buildApiUrl(`/url-scrape-jobs?${query}`)}`);
   return parseJsonResponse<UrlScrapeJobsListResponse>(response);
 }
 
@@ -771,15 +855,18 @@ export async function pushScrapeEntriesToDirectory(
   jobId: string,
   directoryId: string,
   entryIndices: number[] = [],
+  stepId?: string,
 ): Promise<{ created: number; directory_id: string }> {
+  const body: Record<string, unknown> = {
+    directory_id: directoryId,
+    entry_indices: entryIndices,
+  };
+  if (stepId) body.step_id = stepId;
   const response = await apiFetch(
-    `${buildApiUrl("/url-scrape-jobs/${jobId}/push-to-directory")}`,
+    `${buildApiUrl(`/url-scrape-jobs/${jobId}/push-to-directory`)}`,
     {
       method: "POST",
-      body: JSON.stringify({
-        directory_id: directoryId,
-        entry_indices: entryIndices,
-      }),
+      body: JSON.stringify(body),
     },
   );
   return parseJsonResponse<{ created: number; directory_id: string }>(response);
@@ -787,8 +874,76 @@ export async function pushScrapeEntriesToDirectory(
 
 export async function cancelUrlScrapeJob(jobId: string): Promise<{ status: string; job_id: string }> {
   const response = await apiFetch(
-    `${buildApiUrl("/url-scrape-jobs/${jobId}/cancel")}`,
+    `${buildApiUrl(`/url-scrape-jobs/${jobId}/cancel`)}`,
     { method: "POST" },
   );
   return parseJsonResponse<{ status: string; job_id: string }>(response);
+}
+
+// ---- Directory Sources (referencias guardadas) ----
+
+export async function listDirectorySources(
+  directoryId: string,
+  status?: string,
+): Promise<DirectorySourcesListResponse> {
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  const response = await apiFetch(
+    `${buildApiUrl(`/directories/${directoryId}/sources?${query}`)}`,
+  );
+  return parseJsonResponse<DirectorySourcesListResponse>(response);
+}
+
+export async function createDirectorySource(
+  directoryId: string,
+  payload: DirectorySourceCreateRequest,
+): Promise<DirectorySourceItem> {
+  const response = await apiFetch(
+    `${buildApiUrl(`/directories/${directoryId}/sources`)}`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+  return parseJsonResponse<DirectorySourceItem>(response);
+}
+
+export async function updateDirectorySource(
+  directoryId: string,
+  sourceId: string,
+  payload: DirectorySourceUpdateRequest,
+): Promise<DirectorySourceItem> {
+  const response = await apiFetch(
+    `${buildApiUrl(`/directories/${directoryId}/sources/${sourceId}`)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+  return parseJsonResponse<DirectorySourceItem>(response);
+}
+
+export async function deleteDirectorySource(
+  directoryId: string,
+  sourceId: string,
+): Promise<void> {
+  await apiFetch(
+    `${buildApiUrl(`/directories/${directoryId}/sources/${sourceId}`)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function scrapeDirectorySource(
+  directoryId: string,
+  sourceId: string,
+): Promise<{ scrape_job_id: string; status: string; source_id: string }> {
+  const response = await apiFetch(
+    `${buildApiUrl(`/directories/${directoryId}/sources/${sourceId}/scrape`)}`,
+    { method: "POST" },
+  );
+  return parseJsonResponse<{
+    scrape_job_id: string;
+    status: string;
+    source_id: string;
+  }>(response);
 }

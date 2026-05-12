@@ -1,4 +1,4 @@
-"""Enriquecimiento profundo de contactos: Exa (texto + /contents) + OpenCLI + Gemini reviewer.
+"""Enriquecimiento profundo de contactos: Exa (texto + /contents) + Brave (local + web) + Gemini reviewer.
 
 La función central `enrich_lead_contacts` es pura (no toca DB) — se usa desde
 `auto_enrich_node` en lotes y desde el wrapper legacy `deep_enrich_lead` por id.
@@ -17,7 +17,6 @@ from uuid import UUID
 from mle.clients.brave_client import BraveSearchClient
 from mle.clients.exa_client import ExaClient, exa_contents_full_config, finalize_exa_search_payload
 from mle.clients.gemini_client import GeminiClient
-from mle.clients.opencli_client import OpenCliClient
 from mle.core.config import Settings, effective_exa_search_timeout_seconds, get_settings
 from mle.db.base import async_session_factory
 from mle.db.models import Lead
@@ -320,128 +319,155 @@ async def _deep_fetch_contacts(
     return merged
 
 
-# ---------------- OpenCLI evidence ----------------
+async def _generate_brave_search_query(lead: LeadCore, proposer: GeminiClient) -> str:
+    """Usa Gemini para generar la query de Brave más efectiva para el lead."""
+    prompt = (
+        "Genera una query de búsqueda web corta para encontrar datos de contacto "
+        "(teléfono, dirección, email) de este profesional médico.\n"
+        "REGLAS:\n"
+        "- Extrae solo el nombre real (ignora texto después de '|', '/' o '-')\n"
+        "- Incluye especialidad médica en español (máximo 2 palabras)\n"
+        "- Incluye ciudad y país\n"
+        "- Máximo 8 palabras en total\n"
+        f"full_name: {lead.full_name}\n"
+        f"specialty: {lead.specialty}\n"
+        f"city: {lead.city}\n"
+        f"country: {lead.country}\n"
+        'Devuelve SOLO JSON: {"query": "texto de la query"}'
+    )
+    try:
+        result = await proposer.complete_json_prompt(prompt)
+        q = str(result.get("query", "")).strip()
+        if q:
+            return q
+    except Exception:  # noqa: BLE001
+        pass
+    # Fallback determinista
+    name = re.split(r"[|/\-]", lead.full_name)[0].strip()
+    return " ".join(p for p in [name, lead.specialty, lead.city, lead.country] if p)[:120]
 
 
-async def _opencli_evidence(
-    opencli: OpenCliClient,
+async def _brave_web_evidence(
+    brave: BraveSearchClient,
+    exa_client: ExaClient,
     lead: LeadCore,
-    brave: BraveSearchClient | None = None,
-    prefetched_maps: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Lanza adapters OpenCLI + Brave en paralelo y retorna dict por fuente.
+    proposer: GeminiClient,
+) -> tuple[str, list[dict[str, str]]]:
+    """Búsqueda Brave web + fetch de top 3 URLs → evidence string + regex contacts."""
+    try:
+        query = await _generate_brave_search_query(lead, proposer)
+        # Mapear país a ISO (Brave acepta None para no mapeados)
+        _COUNTRY_ISO = {
+            "Honduras": "HN", "Mexico": "MX", "Guatemala": "GT",
+            "El Salvador": "SV", "Costa Rica": "CR", "Panama": "PA",
+            "Colombia": "CO", "Venezuela": "VE", "Peru": "PE",
+            "Argentina": "AR", "Chile": "CL", "España": "ES"
+        }
+        country_iso = _COUNTRY_ISO.get(lead.country)
 
-    Para empresas: query simplificada (solo nombre + ciudad).
-    Para personas: query completa (nombre + especialidad + ciudad).
-    Para empresas: Facebook e Instagram siempre habilitados.
-    Usa Brave Local Search para extender ubicación/contacto en lugar de google_maps.
-    """
-    if not opencli.enabled:
-        return {}
+        brave_items = await brave.web_search(query, country=country_iso, count=10, pages=1)
+        top3_urls = [item["url"] for item in brave_items[:3] if item.get("url")]
+        if not top3_urls:
+            return ("", [])
 
-    is_company = lead.entity_type == "company"
+        # Fetch contenido completo con Exa
+        contents_payload: dict[str, Any] = {
+            "ids": top3_urls,
+            "text": {"maxCharacters": 50000},
+            "highlights": {"maxCharacters": 8000},
+            "subpages": 2,
+        }
+        response = await exa_client.get_contents(contents_payload)
+        full_items = _extract_results(response)
 
-    if is_company:
-        # Para empresas: solo nombre + ciudad
-        google_q = lead.full_name.strip()
-        if lead.city:
-            google_q = f"{google_q} {lead.city}".strip()
-        maps_q = google_q
-    else:
-        # Para personas: nombre + especialidad + ciudad (comportamiento original)
-        name_query = lead.full_name.strip()
-        if lead.specialty:
-            name_query = f"{name_query} {lead.specialty}".strip()
-        if lead.city:
-            name_query = f"{name_query} {lead.city}".strip()
-        google_q = maps_q = name_query
+        # Enriquecer items de Brave con texto completo de Exa
+        url_to_full = {item.get("url", ""): item for item in full_items}
+        enriched = []
+        for bi in brave_items[:3]:
+            url = bi.get("url", "")
+            ei = url_to_full.get(url)
+            enriched.append({**bi, "text": ei.get("text", bi.get("text", ""))} if ei else bi)
 
-    out: dict[str, Any] = {}
-    tasks: dict[str, Any] = {}
+        evidence = _flatten_evidence(enriched)
 
-    # Si ya tenemos datos de Google Maps prefetched, usarlos directamente
-    if prefetched_maps and isinstance(prefetched_maps, dict):
-        out["google_maps"] = prefetched_maps
-    elif brave is not None:
-        # Usar Brave Local Search como reemplazo de google_maps
-        tasks["brave_local"] = brave.local_search(maps_q)
+        # Extraer regex contacts del texto completo
+        regex_contacts: list[dict[str, str]] = []
+        for item in full_items:
+            if item.get("text"):
+                regex_contacts.extend(_extract_regex_contacts(item["text"], item.get("url", "")))
+            for sp in item.get("subpages") or []:
+                if sp.get("text"):
+                    regex_contacts.extend(_extract_regex_contacts(sp["text"], sp.get("url", "")))
 
-    # Para empresas: Facebook e Instagram siempre activados
-    # Para personas: solo si está habilitado en settings
-    if is_company or opencli.include_facebook:
-        tasks["facebook"] = opencli.facebook_page(google_q)
-    if is_company or opencli.include_instagram:
-        tasks["instagram"] = opencli.instagram_profile(google_q)
-
-    keys = list(tasks.keys())
-    values = await asyncio.gather(*tasks.values(), return_exceptions=True)
-
-    for k, v in zip(keys, values, strict=False):
-        if isinstance(v, Exception):
-            logger.info("OpenCLI/Brave %s levantó excepción: %s", k, v)
-            continue
-        if isinstance(v, dict) and v:
-            out[k] = v
-    return out
+        return (evidence, regex_contacts)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("_brave_web_evidence falló: %s", exc)
+        return ("", [])
 
 
-def _merge_opencli_contacts(opencli_results: dict[str, Any]) -> dict[str, str]:
-    """Prioriza fuentes por confiabilidad: brave_local > google_maps > google_search > redes.
+async def _brave_local_evidence(brave: BraveSearchClient, lead: LeadCore) -> dict[str, str]:
+    """Brave Local Search → phone, address, hours, website."""
+    name_query = re.split(r"[|/\-]", lead.full_name)[0].strip()
+    if lead.specialty:
+        name_query = f"{name_query} {lead.specialty}".strip()
+    if lead.city:
+        name_query = f"{name_query} {lead.city}".strip()
+    try:
+        result = await brave.local_search(name_query)
+        if isinstance(result, dict) and result:
+            return {
+                "phone": str(result.get("phone", "") or "").strip(),
+                "address": str(result.get("address", "") or "").strip(),
+                "schedule_text": str(result.get("hours", result.get("schedule_text", "")) or "").strip(),
+                "website": str(result.get("website", "") or "").strip(),
+                "email": str(result.get("email", "") or "").strip(),
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Brave local search falló: %s", exc)
+    return {}
 
-    Extrae también URLs de redes sociales (facebook_url, instagram_url) desde profile_url.
-    """
-    priority = ["brave_local", "google_maps", "google_search", "facebook", "instagram"]
-    merged: dict[str, str] = {
-        "phone": "",
-        "address": "",
-        "schedule_text": "",
-        "website": "",
-        "email": "",
-        "facebook_url": "",
-        "instagram_url": "",
+
+async def _brave_social_profiles(brave: BraveSearchClient, lead: LeadCore) -> dict[str, str]:
+    """Busca perfiles de Facebook e Instagram del lead en Brave."""
+    name = re.split(r"[|/\-]", lead.full_name)[0].strip()
+    city = lead.city or ""
+    specialty = lead.specialty or ""
+    _COUNTRY_ISO = {
+        "Honduras": "HN", "Mexico": "MX", "Guatemala": "GT",
+        "El Salvador": "SV", "Costa Rica": "CR", "Panama": "PA",
+        "Colombia": "CO", "Venezuela": "VE", "Peru": "PE",
+        "Argentina": "AR", "Chile": "CL", "España": "ES",
     }
-
-    for src in priority:
-        data = opencli_results.get(src) or {}
-        if not isinstance(data, dict):
-            continue
-        for target, candidates in (
-            ("phone", ["phone"]),
-            ("address", ["address"]),
-            ("schedule_text", ["hours", "schedule_text"]),
-            ("website", ["website"]),
-            ("email", ["email"]),
-        ):
-            if merged[target]:
-                continue
-            for key in candidates:
-                v = data.get(key)
-                if isinstance(v, str) and v.strip():
-                    merged[target] = v.strip()
-                    break
-
-    # Extraer URLs de redes sociales desde profile_url
-    if not merged["facebook_url"]:
-        fb_data = opencli_results.get("facebook") or {}
-        if isinstance(fb_data, dict):
-            profile_url = fb_data.get("profile_url")
-            if isinstance(profile_url, str) and profile_url.strip():
-                merged["facebook_url"] = profile_url.strip()
-
-    if not merged["instagram_url"]:
-        ig_data = opencli_results.get("instagram") or {}
-        if isinstance(ig_data, dict):
-            profile_url = ig_data.get("profile_url")
-            if isinstance(profile_url, str) and profile_url.strip():
-                merged["instagram_url"] = profile_url.strip()
-
-    return merged
+    country_iso = _COUNTRY_ISO.get(lead.country)
+    out: dict[str, str] = {}
+    try:
+        fb_q = f'site:facebook.com "{name}" {city}'.strip()
+        fb_items = await brave.web_search(fb_q, country=country_iso, count=5, pages=1)
+        for item in fb_items:
+            url = str(item.get("url", "")).strip()
+            if "facebook.com/" in url and "/profile.php" not in url and "/posts/" not in url:
+                out["facebook_url"] = url
+                break
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        ig_q = f'site:instagram.com "{name}" {specialty} {city}'.strip()
+        ig_items = await brave.web_search(ig_q, country=country_iso, count=5, pages=1)
+        for item in ig_items:
+            url = str(item.get("url", "")).strip()
+            if "instagram.com/" in url and "/p/" not in url and "/reel/" not in url:
+                out["instagram_url"] = url
+                break
+    except Exception:  # noqa: BLE001
+        pass
+    logger.debug("_brave_social_profiles lead=%s result=%s", lead.full_name, out)
+    return out
 
 
 # ---------------- Prompts ----------------
 
 
-def _proposer_prompt(evidence: str, lead: LeadCore, opencli_contacts: dict[str, str]) -> str:
+def _proposer_prompt(evidence: str, lead: LeadCore) -> str:
     ctx = json.dumps(
         {
             "full_name": lead.full_name,
@@ -451,9 +477,6 @@ def _proposer_prompt(evidence: str, lead: LeadCore, opencli_contacts: dict[str, 
             "linkedin_url_known": lead.linkedin_url,
             "email_known": lead.email,
             "whatsapp_known": lead.whatsapp,
-            "opencli_phone": opencli_contacts.get("phone", ""),
-            "opencli_address": opencli_contacts.get("address", ""),
-            "opencli_hours": opencli_contacts.get("schedule_text", ""),
         },
         ensure_ascii=False,
     )
@@ -511,20 +534,17 @@ async def enrich_lead_contacts(
     lead: LeadCore,
     *,
     exa_client: ExaClient,
-    opencli: OpenCliClient,
     proposer: GeminiClient,
     reviewer: GeminiClient,
     settings: Settings | None = None,
     brave: BraveSearchClient | None = None,
-    prefetched_maps: dict[str, Any] | None = None,
     exclude_linkedin: bool = False,
     progress_callback: callable | None = None,
 ) -> EnrichmentResult:
-    """Enriquece un lead con Exa (evidencia textual) + OpenCLI/Brave (contactos estructurados) + Gemini reviewer.
+    """Enriquece un lead con Exa (evidencia textual) + Brave (local + web) + Gemini reviewer.
 
     Función pura: no persiste en DB. El caller decide qué hacer con el resultado.
-    Si brave está configurado, lo usa para búsqueda local de contactos.
-    Si prefetched_maps está disponible, usa esos datos en lugar de llamar a APIs de mapas.
+    Si brave está configurado, lo usa para búsqueda local y web.
     exclude_linkedin: si True, excluye linkedin.com de los resultados Exa (solo para enriquecimiento manual).
     progress_callback: callable async que recibe un string con el mensaje de progreso.
     """
@@ -534,11 +554,10 @@ async def enrich_lead_contacts(
     if progress_callback:
         await progress_callback("Buscando información del perfil en la web...")
 
-    # Ejecutar exa y opencli en paralelo usando create_task para mejor control
+    # Ejecutar exa usando create_task para mejor control
     exa_task = asyncio.create_task(_exa_evidence(exa_client, lead, st, exclude_linkedin=exclude_linkedin))
-    opencli_task = asyncio.create_task(_opencli_evidence(opencli, lead, brave=brave, prefetched_maps=prefetched_maps))
 
-    # Esperar a que exa termine, luego lanzar deep_fetch en paralelo con opencli
+    # Esperar a que exa termine, luego lanzar deep_fetch
     exa_results, evidence, regex_contacts = await exa_task
 
     if progress_callback:
@@ -551,17 +570,53 @@ async def enrich_lead_contacts(
         )
     )
 
-    # Esperar a opencli y deep_fetch en paralelo
-    if progress_callback:
-        await progress_callback("Consultando Google Maps y Knowledge Panel...")
+    local_task: asyncio.Task | None = None
+    if brave is not None:
+        local_task = asyncio.create_task(_brave_local_evidence(brave, lead))
 
-    opencli_results, deep_contacts = await asyncio.gather(opencli_task, deep_fetch_task)
+    brave_task: asyncio.Task | None = None
+    if brave is not None and st.brave_search_enabled:
+        brave_task = asyncio.create_task(
+            _brave_web_evidence(brave, exa_client, lead, proposer)
+        )
+
+    social_task: asyncio.Task | None = None
+    if brave is not None and st.brave_search_enabled:
+        social_task = asyncio.create_task(_brave_social_profiles(brave, lead))
+
+    # Esperar a deep_fetch, local_task, brave_task y social_task en paralelo
+    if progress_callback:
+        await progress_callback("Consultando datos locales y redes sociales...")
+
+    gather_tasks: list = [deep_fetch_task]
+    if local_task:
+        gather_tasks.append(local_task)
+    if brave_task:
+        gather_tasks.append(brave_task)
+    if social_task:
+        gather_tasks.append(social_task)
+
+    results = await asyncio.gather(*gather_tasks)
+    deep_contacts = results[0]
+    idx = 1
+    if local_task:
+        brave_local: dict[str, str] = results[idx]; idx += 1
+    else:
+        brave_local = {}
+    if brave_task:
+        brave_evidence, brave_regex = results[idx]; idx += 1
+    else:
+        brave_evidence, brave_regex = "", []
+    if social_task:
+        social_profiles: dict[str, str] = results[idx]; idx += 1
+    else:
+        social_profiles = {}
 
     if progress_callback:
         await progress_callback("Verificando datos con inteligencia artificial...")
 
-    # Combinar todos los contactos directos (regex + deep_fetch), deduplicar
-    all_direct_contacts = regex_contacts + deep_contacts
+    # Combinar todos los contactos directos (regex + deep_fetch + brave), deduplicar
+    all_direct_contacts = regex_contacts + deep_contacts + brave_regex
     seen = set()
     unique_direct_contacts = []
     for c in all_direct_contacts:
@@ -570,23 +625,29 @@ async def enrich_lead_contacts(
             seen.add(key)
             unique_direct_contacts.append(c)
 
-    opencli_merged = _merge_opencli_contacts(opencli_results)
+    result = EnrichmentResult()
 
-    result = EnrichmentResult(enriched_sources=opencli_results)
+    # Contactos estructurados de Brave Local Search
+    if brave_local.get("phone") and not lead.phone:
+        result.phone = brave_local["phone"][:40]
+        result.contact_sources["phone"] = "brave_local"
+    if brave_local.get("email") and not lead.email:
+        result.email = brave_local["email"][:255]
+        result.contact_sources["email"] = "brave_local"
+    if brave_local.get("address") and not lead.address:
+        result.address = brave_local["address"][:500]
+    if brave_local.get("schedule_text") and not lead.schedule_text:
+        result.schedule_text = brave_local["schedule_text"][:500]
+    if brave_local.get("website"):
+        result.website = brave_local["website"][:500]
 
-    # Contactos estructurados (Google Knowledge Panel, Maps, etc.) tienen preferencia directa.
-    if opencli_merged["phone"] and not lead.phone:
-        result.phone = opencli_merged["phone"][:40]
-    if opencli_merged["address"] and not lead.address:
-        result.address = opencli_merged["address"][:500]
-    if opencli_merged["schedule_text"] and not lead.schedule_text:
-        result.schedule_text = opencli_merged["schedule_text"][:500]
-    if opencli_merged["website"]:
-        result.website = opencli_merged["website"][:500]
-    if opencli_merged["facebook_url"]:
-        result.facebook_url = opencli_merged["facebook_url"][:500]
-    if opencli_merged["instagram_url"]:
-        result.instagram_url = opencli_merged["instagram_url"][:500]
+    # Perfiles sociales encontrados por Brave (Facebook / Instagram)
+    if social_profiles.get("facebook_url") and not (lead.facebook_url or "").strip():
+        result.facebook_url = social_profiles["facebook_url"]
+        result.contact_sources["facebook_url"] = social_profiles["facebook_url"]
+    if social_profiles.get("instagram_url") and not (lead.instagram_url or "").strip():
+        result.instagram_url = social_profiles["instagram_url"]
+        result.contact_sources["instagram_url"] = social_profiles["instagram_url"]
 
     # Aplicar contactos extraídos con regex del texto completo (prioridad: OpenCLI > regex > LLM)
     for direct_contact in unique_direct_contacts:
@@ -625,6 +686,10 @@ async def enrich_lead_contacts(
                 "source": "direct_regex",
             })
 
+    # Añadir evidencia de Brave si la hay
+    if brave_evidence.strip():
+        evidence = evidence + "\n\n--- FUENTES BRAVE WEB SEARCH ---\n" + brave_evidence
+
     # Si no hay evidencia ni de Exa ni de OpenCLI, termina no_verified_data.
     if not evidence.strip() and not any([result.phone, result.address, result.schedule_text]):
         result.message = NO_DATA_ES
@@ -633,7 +698,7 @@ async def enrich_lead_contacts(
     # Gemini proposer + reviewer sobre evidencia Exa.
     if evidence.strip():
         try:
-            proposal = await proposer.complete_json_prompt(_proposer_prompt(evidence, lead, opencli_merged))
+            proposal = await proposer.complete_json_prompt(_proposer_prompt(evidence, lead))
         except Exception as exc:  # noqa: BLE001
             logger.warning("Gemini proponente falló: %s", exc)
             proposal = {"description": "", "email": "", "whatsapp": "", "linkedin_url": ""}
@@ -669,17 +734,13 @@ async def enrich_lead_contacts(
         result.description = finals["description_final"]
         result.audit = list(reviewed.get("rejected") or [])[:20]
 
-    # Fallback: OpenCLI también puede haber encontrado email (sin evidencia LLM pero adapter determinista).
-    if opencli_merged["email"] and not lead.email and not result.email:
-        result.email = opencli_merged["email"][:255]
-
-    # Citations: URLs de Exa.
-    citations: list[dict[str, Any]] = []
-    seen_urls: set[str] = set()
+    # Citations: URLs de Exa (se agregan a las ya existentes de regex, sin duplicar).
+    seen_urls: set[str] = {c["url"] for c in result.citations if c.get("url")}
+    first_exa_url: str = ""
     for item in exa_results:
         u = str(item.get("url", "")).strip()
         if u and u not in seen_urls:
-            citations.append(
+            result.citations.append(
                 {
                     "url": u,
                     "title": str(item.get("title", "") or "Fuente")[:240],
@@ -688,9 +749,10 @@ async def enrich_lead_contacts(
                 }
             )
             seen_urls.add(u)
-    result.citations = citations
-    if citations and not lead.primary_source_url:
-        result.primary_source_url = str(citations[0].get("url", ""))[:500]
+            if not first_exa_url:
+                first_exa_url = u
+    if first_exa_url and not lead.primary_source_url:
+        result.primary_source_url = first_exa_url[:500]
 
     has_contact = any([result.email, result.whatsapp, result.linkedin_url, result.phone, result.address])
     has_desc = bool(result.description)
@@ -795,7 +857,6 @@ async def deep_enrich_lead(lead_id: UUID) -> LeadRead | None:
             api_key=settings.exa_api_key,
             timeout_seconds=effective_exa_search_timeout_seconds(settings),
         )
-        opencli = OpenCliClient(settings)
         proposer = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_model)
         reviewer = GeminiClient(api_key=settings.google_api_key, model_name=settings.google_reviewer_model)
 
@@ -809,7 +870,6 @@ async def deep_enrich_lead(lead_id: UUID) -> LeadRead | None:
         enrichment = await enrich_lead_contacts(
             _lead_to_core(lead_orm),
             exa_client=exa_client,
-            opencli=opencli,
             proposer=proposer,
             reviewer=reviewer,
             settings=settings,

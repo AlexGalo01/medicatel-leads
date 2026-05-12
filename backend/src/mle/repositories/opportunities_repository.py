@@ -138,7 +138,7 @@ class OpportunitiesRepository:
         opp.updated_at = datetime.now(timezone.utc)
 
     async def create_or_get_from_preview(
-        self, job: SearchJob, exa_preview_index: int, owner_user_id: UUID | None = None
+        self, job: SearchJob, exa_preview_index: int, owner_user_id: UUID | None = None, contact_overrides: dict[str, str] | None = None
     ) -> tuple[Opportunity, bool]:
         existing = await self.get_by_job_and_preview_index(job.id, exa_preview_index)
         if existing is not None:
@@ -175,6 +175,26 @@ class OpportunitiesRepository:
                     "is_primary": len(contacts) == 0,
                 }
             )
+
+        # Apply contact overrides (enriched data from frontend)
+        if contact_overrides:
+            for kind, value in contact_overrides.items():
+                if kind in ("email", "whatsapp", "phone", "linkedin"):
+                    value_str = str(value).strip()[:500]
+                    if value_str:
+                        # Remove existing contact of this kind
+                        contacts = [c for c in contacts if c["kind"] != kind]
+                        # Add new contact with override value
+                        contacts.append(
+                            {
+                                "id": f"override-{kind}-{len(contacts)}",
+                                "kind": kind,
+                                "value": value_str,
+                                "note": "Enriquecido",
+                                "role": None,
+                                "is_primary": len(contacts) == 0,
+                            }
+                        )
 
         now = datetime.now(timezone.utc)
         initial_note = {
@@ -213,6 +233,9 @@ class OpportunitiesRepository:
         source_url: str = "",
         snippet: str | None = None,
         owner_user_id: UUID | None = None,
+        directory_id: UUID | None = None,
+        current_step_id: UUID | None = None,
+        contacts: list[dict[str, Any]] | None = None,
     ) -> Opportunity:
         now = datetime.now(timezone.utc)
         initial_note = {
@@ -221,6 +244,20 @@ class OpportunitiesRepository:
             "author": "sistema",
             "text": "Oportunidad creada manualmente.",
         }
+        normalized_contacts: list[dict[str, Any]] = []
+        if contacts:
+            primary_seen = False
+            for c in contacts:
+                if not isinstance(c, dict):
+                    continue
+                n = _normalize_contact(c)
+                if n["is_primary"]:
+                    if primary_seen:
+                        n["is_primary"] = False
+                    else:
+                        primary_seen = True
+                normalized_contacts.append(n)
+
         opp = Opportunity(
             job_id=None,
             exa_preview_index=None,
@@ -230,7 +267,9 @@ class OpportunitiesRepository:
             specialty=specialty.strip()[:160],
             city=city.strip()[:120],
             stage=DEFAULT_OPPORTUNITY_STAGE,
-            contacts=[],
+            contacts=normalized_contacts,
+            directory_id=directory_id,
+            current_step_id=current_step_id,
             activity_timeline=[initial_note],
             owner_user_id=owner_user_id,
             created_at=now,

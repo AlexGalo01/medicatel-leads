@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Calidad sobre latencia: lotes pequeños para mejor precisión del modelo
 DEFAULT_CHUNK_SIZE = 8
-DEFAULT_CONFIDENCE_THRESHOLD = 6
+DEFAULT_CONFIDENCE_THRESHOLD = 8
 
 
 def _exa_category_entity_rules(exa_category: str | None) -> str:
@@ -66,13 +66,15 @@ def _professional_intent_rules_block(user_query: str, role_or_stack_hint: str | 
         f"Sector/profesión objetivo: \"{search_term}\"\n"
         f"IMPORTANTE: Si '{search_term}' contiene palabras geográficas ('en Honduras', 'en Tegucigalpa', etc.), "
         f"esas son contexto de ubicación, no el sector. Evalúa SECTOR, no geografía.\n"
-        f"DEBES verificar que cada resultado sea DIRECTAMENTE del sector/profesión buscada.\n"
-        f"- match=true SOLO si título o excerpt demuestran que el resultado ES del sector/profesión objetivo.\n"
-        f"- match=false INMEDIATAMENTE si el resultado es de OTRO sector, rubro o actividad.\n"
-        f"  Si el título del resultado pertenece claramente a un rubro diferente al buscado → match=false, confidence=1.\n"
-        f"  Ejemplo: si el usuario busca 'clínicas dentales' y el resultado es una ferretería o una escuela de idiomas → match=false.\n"
-        f"- El nombre comercial por sí solo NO prueba nada. Verifica el excerpt.\n"
-        f"- Si no puedes confirmar con certeza que el resultado es del sector buscado → match=false y confidence=1.\n"
+        f"PASO 1 — LEE EL TÍTULO. Si el título contiene palabras de sector DIFERENTE al buscado → STOP, match=false, confidence=1. NO leas el excerpt.\n"
+        f"  Ejemplos de títulos que deben rechazarse INMEDIATAMENTE (independientemente del excerpt):\n"
+        f"    - Búsqueda 'psicólogos': título dice 'Hotel', 'Hostal', 'Trivago', 'Hotelmix', 'Booking', 'Rentas', 'Inmobiliaria', 'Consultora de comercio', 'Profesor', 'Ingeniero' → match=false, confidence=1\n"
+        f"    - Búsqueda 'cardiólogos': título dice 'Hotel', 'Ferretería', 'Consultor de negocios', 'Recursos Humanos', 'Renta', 'Abogado' → match=false, confidence=1\n"
+        f"  La geografía compartida (ej: ambos en Honduras) NO hace relevante a un hotel cuando se busca un médico.\n"
+        f"PASO 2 — Solo si el título NO descarta: verifica excerpt para confirmar que el resultado ES del sector buscado.\n"
+        f"- match=true SOLO si título o excerpt demuestran positivamente que el resultado ES del sector/profesión objetivo.\n"
+        f"- REGLA CRÍTICA: si no puedes identificar DIRECTAMENTE la profesión/sector buscado → match=false, confidence=1.\n"
+        f"- Cuando en duda → DESCARTA. Buscamos precisión, no cobertura.\n"
     )
 
 
@@ -100,6 +102,20 @@ def _academic_exclusion_rules_block() -> str:
         "- URL que apunta a un PDF académico → match=false, confidence=0.\n"
         "- Solo son válidos resultados que representen un contacto directo activo "
         "(persona o empresa/clínica que ofrece el servicio buscado).\n"
+    )
+    
+
+def _aggregator_exclusion_rules_block() -> str:
+    """Regla obligatoria para excluir listados, agregadores y noticias generales."""
+    return (
+        "*** REGLA DE EXCLUSIÓN — Agregadores, Listicles y Noticias ***\n"
+        "- match=false si el resultado es un LISTADO o AGREGADOR: 'Los 5 mejores...', 'Directorio de...', "
+        "'Páginas amarillas', 'Lista de psicólogos', 'Encuentra tu especialista', etc.\n"
+        "- match=false si es una NOTICIA o ARTÍCULO DE PRENSA: 'Psicólogos brindan atención...', 'El gremio de psicólogos dice...', "
+        "'Noticias sobre salud en...'\n"
+        "- match=false si es una PÁGINA DE CATEGORÍA de un sitio web (ej. Doctoralia, Encuentra24) que no representa un perfil individual.\n"
+        "- Solo son válidos RESULTADOS DIRECTOS: el sitio web personal del profesional, su perfil individual (no listado), "
+        "o el sitio oficial de su clínica.\n"
     )
 
 
@@ -169,6 +185,23 @@ _ACADEMIC_TITLE_KEYWORDS = frozenset({
     "faculty of ", "school of ",
 })
 
+_SOURCE_URL_PATH_FRAGMENTS = frozenset({
+    "/equipo", "/staff", "/team", "/nuestro-equipo", "/our-team",
+    "/directorio", "/medicos", "/doctors", "/profesionales", "/especialistas",
+    "/empleo", "/empleos", "/jobs", "/vacantes", "/trabajo", "/ofertas-de-empleo"
+})
+
+_NEWS_URL_FRAGMENTS = frozenset({
+    "/noticias/", "/news/", "/blog/", "/articulo/",
+    "/nota/", "/reportaje/", "/prensa/", "/opinion/",
+})
+
+_NEWS_DOMAINS = frozenset({
+    "eldiario.hn", "laprensa.hn", "latribuna.hn", "criterio.hn",
+    "proceso.hn", "tiempo.hn", "hondurastv.hn", "elheraldo.hn",
+    "diarioel.hn", "radiohrn.hn",
+})
+
 _DIRECTORY_TITLE_RE = re.compile(
     r"(?i)"
     r"(¿busca\s+(un|una|al)\s+)"
@@ -186,6 +219,66 @@ _DIRECTORY_TITLE_RE = re.compile(
     r"|(compara\s+y\s+reserva)"
     r"|(\d+\s+mejores?\s+\w+\s+en\s+)"
     r"|(profesionales\s+en\s+\w+\s*[—–-])"
+    r"|(^equipo\s*[-—])"
+    r"|(nuestro\s+equipo)"
+    r"|(personal\s+m[eé]dico)"
+    r"|(staff\s+m[eé]dico)"
+    r"|(m[eé]dicos?\s+del\s+hospital)"
+    r"|(nuestros?\s+especialistas?)"
+    r"|(nuestros?\s+m[eé]dicos?)"
+    r"|(^\d+\s*empleos?\s+de\s+)"
+    r"|(empleos?\s+en\s+)"
+    r"|(trabajos?\s+en\s+)"
+    r"|(ofertas?\s+de\s+empleo)"
+    r"|(\bvacantes?\b)"
+    r"|(\bcomunidad\b)"
+    r"|(\bbusca\s+empleo\b)"
+    r"|(\bbuscamos\b.*\btalento\b)"
+    r"|(computrabajo\.)"
+    r"|(tecoloco\.)"
+    r"|(opcionempleo\.)"
+    r"|(glassdoor\.)"
+    r"|(\bc[aá]mara\s+de\b)"
+    r"|(^seguros?\s+de\s+)"
+    r"|(instagram\s+photos\s+and\s+videos)"
+    r"|(facebook\s+[-–—]\s+\w)"
+    r"|(fotos?\s+y\s+videos?\s+de\s+instagram)"
+    r"|(\bperfil\s+de\s+empresa\b)"
+    r"|(^psic[oó]logos?\s+(en|de)\s)"         # "Psicólogos en Tegucigalpa" sin nombre
+    r"|(^m[eé]dicos?\s+(en|de)\s)"            # "Médicos en Honduras" sin nombre
+    r"|(^especialistas?\s+(en|de)\s)"
+    r"|(^cl[ií]nicas?\s+(en|de)\s)"
+    r"|(^odont[oó]logos?\s+(en|de)\s)"
+)
+
+_NEWS_TITLE_RE = re.compile(
+    r"(?i)"
+    r"(^por\s+la\s+\w+\s+de\s+)"
+    r"|(^cómo\s+\w+\s+(puede|logr|evit|mejorar))"
+    r"|(^por\s+qué\s+debes?\s+)"
+    r"|(médicos?\s+cubanos?)"
+    r"|(dejaron\s+.{0,30}a\s+la\s+deriva)"
+    r"|(pacientes?\s+quedaron)"
+    r"|(conoce\s+el\s+mejor\s+)"
+    r"|(por\s+qué\s+visit)"
+    r"|(^historia\s+de\b)"
+    r"|(\blanza\b.*\bbolet[ií]n\b)"
+    r"|(\bpagan\s+(l\d+|usd|millones))"
+    r"|(\bmillones\s+en\b)"
+)
+
+_NEWS_PROFILE_TITLE_RE = re.compile(
+    r"(?i)^(dr\.|dra\.|doctor\s|doctora\s)\s*\w[\w\s]+\s*:"
+)
+
+_INSTITUTIONAL_PAGE_TITLE_RE = re.compile(
+    r"(?i)"
+    r"(\s*[-–—|]\s*inicio\s*$)"   # "CERVO - Inicio", "X | Inicio"
+    r"|(^\w[\w\s]+\s*[|]\s*$)"    # "laservision |" — título vacío tras pipe
+    r"|(^hospital\s+\w)"           # "Hospital MEDICASA", "Hospital de Especialidades"
+    r"|(^centro\s+(m[eé]dico|oftalmol[oó]gic|de\s+salud|de\s+ojos|visual|cl[ií]nico))"
+    r"|(^policl[ií]nica\s)"
+    r"|(^cl[ií]nica\s+(?!del?\s+dr|del?\s+dra|dr\.|dra\.))"  # "Clínica Robles" pero NO "Clínica del Dr. X"
 )
 
 
@@ -226,8 +319,43 @@ def _heuristic_academic_drop_reason(item: dict[str, Any]) -> str | None:
     return None
 
 
+def _source_page_is_sector_relevant(item: dict[str, Any], user_query: str) -> bool:
+    """True si una página de directorio/listado es relevante al sector buscado.
+    Evita guardar como fuente hoteles, restaurantes, páginas de sector incorrecto."""
+    if not user_query.strip():
+        return True  # sin query no podemos filtrar, conservar
+    title = str(item.get("title") or "").lower()
+    url = str(item.get("url") or "").lower()
+    blob = (title + " " + url).lower()
+
+    # Extraer términos clave de la query (palabras de 4+ chars, excluyendo stopwords geo)
+    _STOPWORDS = frozenset({"honduras", "tegucigalpa", "pedro", "ceiba", "comayagua", "en", "de", "los", "las", "para"})
+    query_terms = [
+        w.strip(".,;:") for w in user_query.lower().split()
+        if len(w.strip(".,;:")) >= 4 and w.strip(".,;:") not in _STOPWORDS
+    ]
+    if not query_terms:
+        return True
+
+    # Exact match OR stem-based match (primeros 8 chars para plurales/variantes españolas)
+    # Ej: "oftalmólogos" (stem: "oftalm") coincida con "oftalmología"
+    for term in query_terms:
+        if term in blob:
+            return True
+        stem = term[:8] if len(term) >= 8 else term
+        if stem in blob:
+            return True
+    return False
+
+
 def _is_directory_source_page(item: dict[str, Any]) -> bool:
     """True si el item parece una página de listado/directorio, no un contacto directo."""
+    url = str(item.get("url") or "").lower()
+    # Check URL path fragments (equipo/, staff/, directorio/, etc.)
+    for frag in _SOURCE_URL_PATH_FRAGMENTS:
+        if frag in url:
+            return True
+
     title = str(item.get("title") or "").strip()
     if not title:
         return False
@@ -236,29 +364,81 @@ def _is_directory_source_page(item: dict[str, Any]) -> bool:
 
 def _heuristic_entity_page_for_people_search(item: dict[str, Any], exa_category: str | None) -> bool:
     """
-    Detecta páginas de organización/entidad cuando se busca en modo 'people'.
-    Retorna True si el item es una organización que debe guardarse como directorio, no como lead.
+    Detecta páginas de organización/entidad (no personas individuales).
+    Retorna True si el item es una organización/directorio que debe guardarse como fuente, no como lead.
     """
-    if (exa_category or "").strip().lower() != "people":
+    title = str(item.get("title") or "").strip()
+    title_lower = title.lower()
+    if not title_lower:
         return False
 
-    title = str(item.get("title") or "").strip().lower()
-    if not title:
+    # Si el título tiene nombre personal explícito al inicio (Dr., Dra., nombre propio), es persona
+    if re.match(r"(?i)^(dr\.|dra\.|doctor\s|doctora\s|lic\.|licda\.|ing\.|prof\.)\s*[A-ZÁÉÍÓÚÑ]", title):
         return False
 
-    # Homepage indicators (Bienvenidos, Welcome, Contáctenos, etc.)
-    if re.search(r'\bbienvenidos\b', title):
+    # Gremios / colegios profesionales
+    if re.search(r'(?i)\b(colegio|asociaci[oó]n|federaci[oó]n|gremio|sindicato)\s+de\b', title_lower):
         return True
-    if re.search(r'\bcontácten(?:os|os)\b', title):
+
+    # Social media de organizaciones: "@handle" en el título
+    if re.search(r'@\w{3,}', title):
         return True
+
+    # Instagram/FB pages con "• Instagram" o "• Facebook"
+    if re.search(r'(?i)[•·]\s*(instagram|facebook|twitter|tiktok)', title_lower):
+        return True
+
+    # Plataformas o portales de servicios (terminan en dominio de país como "HN", "MX" etc.)
+    if re.search(r'(?i)^[A-Z][a-zA-Z]+HN\b', title):  # e.g. "TuPsicologaHN"
+        return True
+
+    exa_cat_lower = (exa_category or "").strip().lower()
+    if exa_cat_lower == "people":
+        # Homepage indicators
+        if re.search(r'\bbienvenidos\b', title_lower):
+            return True
+        if re.search(r'\bcontácten(?:os|os)\b', title_lower):
+            return True
 
     # Organization indicators (Consultora, Consultoría, S.A., Ltda., etc.)
-    if re.search(r'\bconsultor[aí]s?\b', title):
+    if re.search(r'\bconsultor[aí]s?\b', title_lower):
         return True
-    if re.search(r'\b(s\.a\.|s\.a|srl|s\.r\.l\.|ltda\.|c\.a\.|s\.a\.s\.|s\.a\.c\.|inc\.|corp\.)\b', title):
+    if re.search(r'\b(s\.a\.|s\.a|srl|s\.r\.l\.|ltda\.|c\.a\.|s\.a\.s\.|s\.a\.c\.|inc\.|corp\.)\b', title_lower):
         return True
 
     return False
+
+
+def _is_news_article(item: dict[str, Any]) -> bool:
+    """True si el item parece un artículo de noticias o blog, no un perfil ni directorio."""
+    url = str(item.get("url") or "").lower()
+    for frag in _NEWS_URL_FRAGMENTS:
+        if frag in url:
+            return True
+    title = str(item.get("title") or "").strip()
+    return bool(_NEWS_TITLE_RE.search(title))
+
+
+def _is_news_professional_profile(item: dict[str, Any]) -> bool:
+    """True si el item es un artículo periodístico cuyo sujeto principal es un profesional nombrado.
+    Ej: 'Dra. Carolina Palma: una trayectoria brillante en la oftalmología - eldiario.hn'
+    Estos artículos son fuentes de exploración, no leads directos."""
+    url = str(item.get("url") or "").lower()
+    title = str(item.get("title") or "").strip()
+    is_news_domain = any(domain in url for domain in _NEWS_DOMAINS)
+    is_professional_profile_title = bool(_NEWS_PROFILE_TITLE_RE.search(title))
+    return is_news_domain and is_professional_profile_title
+
+
+def _is_institutional_clinic_page(item: dict[str, Any]) -> bool:
+    """True si el item parece homepage de hospital, clínica o centro médico (no perfil individual)."""
+    title = str(item.get("title") or "").strip()
+    if not title:
+        return False
+    # No confundir con perfiles individuales: si tiene "Dr." prominente al inicio, es perfil
+    if re.match(r"(?i)^(dr\.|dra\.|doctor\s|doctora\s)", title.strip()):
+        return False
+    return bool(_INSTITUTIONAL_PAGE_TITLE_RE.search(title))
 
 
 def _heuristic_drop_reason(item: dict[str, Any], target_iso: str | None) -> str | None:
@@ -384,11 +564,12 @@ def _compact_items_for_chunk(
 def _parse_verdicts(
     parsed: dict[str, Any],
     confidence_threshold: int = DEFAULT_CONFIDENCE_THRESHOLD,
-) -> dict[int, bool]:
+) -> dict[int, str]:
+    """Retorna dict[index, "keep"|"lpa"|"drop"]."""
     verdicts = parsed.get("verdicts")
     if not isinstance(verdicts, list):
         return {}
-    out: dict[int, bool] = {}
+    out: dict[int, str] = {}
     for row in verdicts:
         if not isinstance(row, dict):
             continue
@@ -397,20 +578,17 @@ def _parse_verdicts(
         except (TypeError, ValueError):
             continue
         match = row.get("match")
-        if isinstance(match, bool):
-            out[idx] = match
-        elif str(match).lower() in ("true", "1", "yes", "si", "sí"):
-            out[idx] = True
-        elif str(match).lower() in ("false", "0", "no"):
-            out[idx] = False
-        # Apply confidence threshold: low-confidence matches become rejections
-        if out.get(idx) is True:
+        m_str = str(match).lower().strip() if match is not None else ""
+        if m_str == "lpa":
+            out[idx] = "lpa"
+        elif isinstance(match, bool) and match or m_str in ("true", "1", "yes", "si", "sí"):
             try:
                 confidence = int(row.get("confidence", 0))
             except (TypeError, ValueError):
                 confidence = 0
-            if confidence < confidence_threshold:
-                out[idx] = False
+            out[idx] = "keep" if confidence >= confidence_threshold else "drop"
+        else:
+            out[idx] = "drop"
     return out
 
 
@@ -452,6 +630,7 @@ async def filter_exa_raw_results_by_relevance(
     exa_cat_s = str(exa_cat).strip().lower() if exa_cat is not None else ""
 
     heuristic_drop: set[int] = set()
+    heuristic_lpa: set[int] = set()
     reasons: dict[int, str] = {}
     directory_sources: list[dict[str, str]] = []
     for i, item in enumerate(raw_results):
@@ -466,25 +645,62 @@ async def filter_exa_raw_results_by_relevance(
             heuristic_drop.add(i)
             reasons[i] = drop_reason
             continue
-        if _is_directory_source_page(item):
+        # Check for news articles → discard completely
+        if _is_news_article(item):
+            heuristic_drop.add(i)
+            reasons[i] = "Artículo de noticias o blog — no es un contacto ni directorio."
+            continue
+        # Check for news profile articles about professionals → save as exploration source
+        if _is_news_professional_profile(item) and _source_page_is_sector_relevant(item, user_query):
             directory_sources.append({
                 "url": str(item.get("url", "")).strip(),
                 "title": str(item.get("title", "")).strip(),
+                "source": "heuristic_news_profile",
             })
             heuristic_drop.add(i)
-            reasons[i] = "Página de listado/directorio — guardada como fuente para explorar."
+            reasons[i] = "Artículo de perfil sobre profesional — guardado como fuente para explorar."
+            continue
+        # Check for institutional clinic/hospital homepages → save as exploration source
+        if _is_institutional_clinic_page(item) and _source_page_is_sector_relevant(item, user_query):
+            directory_sources.append({
+                "url": str(item.get("url", "")).strip(),
+                "title": str(item.get("title", "")).strip(),
+                "source": "heuristic_institutional",
+            })
+            heuristic_drop.add(i)
+            reasons[i] = "Homepage institucional (hospital/clínica) — guardada como fuente para explorar."
+            continue
+        if _is_directory_source_page(item):
+            if _source_page_is_sector_relevant(item, user_query):
+                directory_sources.append({
+                    "url": str(item.get("url", "")).strip(),
+                    "title": str(item.get("title", "")).strip(),
+                })
+                heuristic_drop.add(i)
+                reasons[i] = "Página de listado/directorio — guardada como fuente para explorar."
+            else:
+                heuristic_drop.add(i)
+                reasons[i] = "Página de directorio pero no relevante al sector buscado."
             continue
         if _heuristic_entity_page_for_people_search(item, exa_cat_s):
-            directory_sources.append({
-                "url": str(item.get("url", "")).strip(),
-                "title": str(item.get("title", "")).strip(),
-            })
-            heuristic_drop.add(i)
-            reasons[i] = "Organización/entidad en búsqueda de personas — guardada como fuente potencial."
+            if _source_page_is_sector_relevant(item, user_query):
+                directory_sources.append({
+                    "url": str(item.get("url", "")).strip(),
+                    "title": str(item.get("title", "")).strip(),
+                })
+                heuristic_drop.add(i)
+                reasons[i] = "Organización/entidad en búsqueda de personas — guardada como fuente potencial."
+            else:
+                heuristic_drop.add(i)
+                reasons[i] = "Página de entidad pero no relevante al sector buscado."
             continue
 
     pending_indices = [i for i in range(len(raw_results)) if i not in heuristic_drop]
-    match_by_index: dict[int, bool] = {i: False for i in heuristic_drop}
+    match_by_index: dict[int, str] = {i: "drop" for i in heuristic_drop}
+    # Heuristic LPA items (set in future heuristic passes, currently unused at init)
+    for i in heuristic_lpa:
+        match_by_index[i] = "lpa"
+    is_source_page_by_index: dict[int, bool] = {}
 
     if pending_indices:
         if exa_cat_s not in ("people", "company"):
@@ -504,6 +720,7 @@ async def filter_exa_raw_results_by_relevance(
                 chunk_idx = pending_indices[start : start + chunk_size]
                 items_payload = _compact_items_for_chunk(raw_results, chunk_idx)
                 strict_geo = bool(criteria_compact.get("country_iso2"))
+                target_country = criteria_compact.get("country_iso2", "").strip().upper()
                 geo_rules = (
                     "Reglas estrictas de ubicación:\n"
                     "- Si country_iso2 del criterio indica un país (ej. HN = Honduras) y el candidato muestra "
@@ -517,6 +734,14 @@ async def filter_exa_raw_results_by_relevance(
                     geo_rules += (
                         "- Ejemplo: usuario pide Honduras; candidato en Cairo, Egypt (EG) → match=false.\n"
                     )
+                if target_country == "HN":
+                    geo_rules += (
+                        "*** REGLA CRÍTICA PARA HONDURAS (HN) ***\n"
+                        "- Honduras es país pequeño con baja cobertura LinkedIn. EXCLUSIÓN TOTAL de cualquier resultado que NO sea HN.\n"
+                        "- Candidato muestra: país diferente a HN, ciudad fuera de Honduras (ej. Ciudad de México, Bogotá, Miami, USA, etc.) → MATCH=FALSE AUTOMÁTICAMENTE, confidence=1.\n"
+                        "- Aceptar SOLO si hay SEÑAL POSITIVA clara de Honduras: (HN) en paréntesis, ciudad hondureña (Tegucigalpa, San Pedro Sula, La Ceiba, Comayagua, etc.), texto que diga 'Honduras'.\n"
+                        "- Trabajo remoto SIN mención de Honduras → RECHAZA, confidence=1.\n"
+                    )
                 entity_rules = _exa_category_entity_rules(exa_cat_s or None)
                 sector_rules = _sector_intent_rules_block(user_query)
                 academic_rules = _academic_exclusion_rules_block()
@@ -524,6 +749,7 @@ async def filter_exa_raw_results_by_relevance(
                 professional_rules = _professional_intent_rules_block(
                     user_query, criteria_compact.get("role_or_stack_hint"),
                 )
+                aggregator_rules = _aggregator_exclusion_rules_block()
                 prompt = (
                     "Eres un validador estricto de relevancia para prospección B2B.\n"
                     f"Consulta original del usuario (máxima prioridad): {user_query}\n"
@@ -531,17 +757,34 @@ async def filter_exa_raw_results_by_relevance(
                     f"{professional_rules}"
                     f"{geo_rules}"
                     f"{entity_rules}"
+                    f"{aggregator_rules}"
                     f"{academic_rules}"
                     f"{obituary_rules}"
                     f"{sector_rules}"
                     "Cada ítem tiene index (posición global en la lista original), title, url, excerpt.\n"
                     "Para CADA ítem pregúntate: ¿Este resultado ES realmente del sector/rubro/profesión que busca el usuario? "
+                    "Si el título menciona OTRA profesión explícitamente (educador, ingeniero, IT, etc.) → MATCH=FALSE AUTOMÁTICAMENTE. "
                     "Si la respuesta no es un SÍ claro → match=false.\n"
+                    "ADEMÁS — reglas para is_source_page:\n"
+                    "  • is_source_page=true: páginas que LISTAN múltiples profesionales (equipo, directorio, personal)\n"
+                    "  • is_source_page=true: homepages de hospitales, clínicas, centros médicos, centros oftalmológicos (aunque no sean directorios)\n"
+                    "  • is_source_page=true: páginas de servicios médicos de una institución (no un perfil individual)\n"
+                    "  • is_source_page=false + match=false: artículos de noticias, blogs, reportajes — NO guardar como fuente, solo descartar\n"
+                    "  • is_source_page=false: perfiles de médicos individuales\n"
+                    "  is_source_page=true indica: 'guardar esta URL para explorarla después en busca de más contactos'.\n"
+                    "CATEGORÍAS para el campo match:\n"
+                    "  • match=true: lead confirmado del sector (profesional individual claramente identificado)\n"
+                    "  • match=\"lpa\": posible lead a averiguar — página de Facebook/Instagram de clínica o centro del sector, "
+                    "profesional de especialidad adyacente relevante, perfil con poca info pero del sector correcto, "
+                    "post con teléfono de clínica relevante\n"
+                    "  • match=false: ubicación incorrecta, sector completamente diferente, obituario, nota de prensa, "
+                    "lista/directorio genérico, solo coordenadas o dirección sin persona ni clínica\n"
                     "Devuelve SOLO JSON con la forma exacta:\n"
-                    '{"verdicts":[{"index":0,"match":true,"confidence":8,"reason_es":"breve"}]}\n'
+                    '{"verdicts":[{"index":0,"match":true,"confidence":8,"is_source_page":false,"reason_es":"breve"}]}\n'
+                    "- match puede ser: true, \"lpa\", o false\n"
                     "- confidence (entero 0-10): qué tan seguro estás de que el resultado ES del sector buscado. "
                     "10 = 100% seguro que sí es. 1-3 = dudoso o parece ser de otro sector. "
-                    "Si confidence < 6, el resultado será descartado automáticamente.\n"
+                    "Si confidence < 8 y match=true, el resultado será descartado automáticamente. Solo marca confidence≥8 si estás MUY SEGURO de que es del sector.\n"
                     "Debes incluir un veredicto por cada index enviado (un objeto por index).\n"
                     f"Ítems: {json.dumps(items_payload, ensure_ascii=False)}"
                 )
@@ -556,38 +799,82 @@ async def filter_exa_raw_results_by_relevance(
                     except (TypeError, ValueError):
                         continue
                     reason_by_index[ix] = str(v.get("reason_es", "")).strip() or "No cumple criterios de relevancia."
+                    is_source_page_by_index[ix] = bool(v.get("is_source_page", False))
                 for idx in chunk_idx:
                     if idx in verdicts_map:
                         match_by_index[idx] = verdicts_map[idx]
-                        if not verdicts_map[idx]:
+                        if verdicts_map[idx] != "keep":
                             reasons[idx] = reason_by_index.get(idx, "No cumple criterios de relevancia.")
                     elif target_iso:
-                        match_by_index[idx] = False
+                        match_by_index[idx] = "drop"
                         reasons[idx] = "Sin veredicto del modelo; se excluye por criterio de país estricto."
                     else:
-                        match_by_index[idx] = True
+                        match_by_index[idx] = "keep"
                         reasons[idx] = "Sin veredicto del modelo; se conserva."
         except Exception as exc:  # noqa: BLE001
             logger.warning("Filtro de relevancia Gemini omitido: %s", exc)
             for idx in pending_indices:
                 if idx not in match_by_index:
-                    match_by_index[idx] = target_iso is None
+                    match_by_index[idx] = "keep" if target_iso is None else "drop"
+
+    # Procesar items marcados como is_source_page=true del LLM (URLs para explorar)
+    for idx, is_source in is_source_page_by_index.items():
+        if is_source:
+            item = raw_results[idx] if idx < len(raw_results) else {}
+            if isinstance(item, dict):
+                match_by_index[idx] = "drop"
+                # Apply sector relevance check before saving as source (evita "Muebles Para Hospitales", etc.)
+                if _source_page_is_sector_relevant(item, user_query):
+                    directory_sources.append({
+                        "url": str(item.get("url", "")).strip(),
+                        "title": str(item.get("title", "")).strip(),
+                        "source": "llm",
+                    })
+                    reasons[idx] = "Página que lista múltiples profesionales — guardada como fuente para explorar."
+                else:
+                    reasons[idx] = "Clasificada como fuente por LLM pero no relevante al sector buscado — descartada."
 
     kept: list[dict[str, Any]] = []
+    lpa_items: list[dict[str, Any]] = []
     discarded_meta: list[dict[str, Any]] = []
+
+    # Log detallado de evaluación por ítem
+    logger.info(
+        "FILTRO DE RELEVANCIA — Evaluación de %d ítems (heurística: %d descartados, %d pendientes LLM)",
+        len(raw_results),
+        len(heuristic_drop),
+        len(pending_indices),
+    )
+
     for i, item in enumerate(raw_results):
         if not isinstance(item, dict):
             continue
-        if match_by_index.get(i, True):
-            kept.append(item)
+
+        title = str(item.get("title", ""))[:100]
+        url = str(item.get("url", ""))[:80]
+        reason = reasons.get(i, "")
+        verdict = match_by_index.get(i, "keep")
+        is_source = "fuente para explorar" in reason.lower() or "source" in reason.lower()
+
+        if is_source and verdict == "drop":
+            logger.info("  [%d] 📁 FUENTE: %s | %s", i, title[:80], url)
+        elif verdict == "keep":
+            logger.info("  [%d] ✓ KEEP: %s | %s", i, title[:80], url)
+        elif verdict == "lpa":
+            logger.info("  [%d] ⚠ LPA: %s | %s | Razón: %s", i, title[:80], url, reason)
         else:
-            discarded_meta.append(
-                {
-                    "index": i,
-                    "url": str(item.get("url", "") or "")[:500],
-                    "reason_es": reasons.get(i, "Descartado."),
-                }
-            )
+            logger.info("  [%d] ✗ DROP: %s | %s | Razón: %s", i, title[:80], url, reason)
+
+        if verdict == "keep":
+            kept.append(item)
+        elif verdict == "lpa":
+            lpa_items.append(item)
+        else:
+            discarded_meta.append({
+                "index": i,
+                "url": url[:500],
+                "reason_es": reason,
+            })
 
     exa_for_meta = str(relevance_criteria.get("exa_category") or "").strip().lower()
     if exa_for_meta not in ("people", "company"):
@@ -599,6 +886,8 @@ async def filter_exa_raw_results_by_relevance(
         "relevance_filter_heuristic_drops": len(heuristic_drop),
         "relevance_filter_discarded_sample": discarded_meta[:40],
         "relevance_filter_mode": "applied",
+        "lpa_results": lpa_items,
+        "lpa_count": len(lpa_items),
     }
     if exa_for_meta:
         meta["relevance_filter_exa_category"] = exa_for_meta

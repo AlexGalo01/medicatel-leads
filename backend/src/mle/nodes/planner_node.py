@@ -15,6 +15,14 @@ from mle.state.graph_state import LeadSearchGraphState
 logger = logging.getLogger(__name__)
 
 ALLOWED_CONTACT_CHANNELS: set[str] = {"email", "whatsapp", "linkedin"}
+_CHANNEL_WORDS = frozenset({"email", "whatsapp", "linkedin", "contacto"})
+
+
+def _strip_channel_words_from_query(query: str) -> str:
+    """Remove channel name words (email, whatsapp, linkedin, contacto) from query string."""
+    words = query.split()
+    cleaned = [w for w in words if w.lower().rstrip(".,;:") not in _CHANNEL_WORDS]
+    return " ".join(cleaned).strip()
 
 
 def _normalize_text(raw_text: str) -> str:
@@ -33,7 +41,7 @@ def _extract_contact_channels(query_text: str) -> list[str]:
         detected_channels.append("linkedin")
 
     if not detected_channels:
-        return ["email", "whatsapp", "linkedin"]
+        return []
 
     unique_channels = sorted(set(detected_channels))
     return [channel for channel in unique_channels if channel in ALLOWED_CONTACT_CHANNELS]
@@ -62,8 +70,15 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
             text = str(item).strip()
             if not text or text.lower() == base_query.lower():
                 continue
+            # Strip channel words from additional queries
+            text = _strip_channel_words_from_query(text)
+            if not text or len(text) < 3:
+                continue
             if text not in additional_clean:
                 additional_clean.append(text[:400])
+
+    # Strip channel words from base query as safety measure
+    base_query = _strip_channel_words_from_query(base_query)
 
     exa_cat = plan_dict.get("exa_category")
     if exa_cat not in ("company", "people", None):
@@ -77,7 +92,7 @@ def _build_planner_output(state: LeadSearchGraphState) -> PlannerOutput:
         type=get_settings().exa_search_type,
         num_results=100,
         use_highlights=True,
-        additional_queries=additional_clean[:8],
+        additional_queries=additional_clean[:1],
         exa_category=exa_cat,
     )
 

@@ -21,6 +21,10 @@ from mle.api.schemas import (
     OpportunityCreateManualRequest,
     DirectoryEntriesListResponse,
     DirectoryEntryItemResponse,
+    DirectorySourceCreateRequest,
+    DirectorySourceItemResponse,
+    DirectorySourcesListResponse,
+    DirectorySourceUpdateRequest,
     ExaMoreResultsRequest,
     ExaMoreResultsResponse,
     LeadCrmUpdateRequest,
@@ -31,7 +35,6 @@ from mle.api.schemas import (
     LeadsListResponse,
     LoginRequest,
     LoginResponse,
-    RegisterRequest,
     OpportunityBitacoraRequest,
     OpportunityContactsReplaceRequest,
     OpportunityCreateFromPreviewRequest,
@@ -41,6 +44,7 @@ from mle.api.schemas import (
     OpportunityOwnerSnippet,
     OpportunityResponse,
     OpportunityUpdateRequest,
+    PreviewContactPatch,
     ProfileInterpretItemResponse,
     ProfileInterpretRequest,
     ProfileInterpretResponse,
@@ -57,7 +61,8 @@ from mle.api.schemas import (
     UserPublic,
 )
 from mle.db.base import async_session_factory
-from mle.db.models import Opportunity, User
+from mle.db.models import Opportunity, User, DirectoryStep
+from mle.repositories.url_scrape_jobs_repository import UrlScrapeJobsRepository
 from mle.repositories.directories_repository import DirectoriesRepository
 from mle.repositories.directory_entries_repository import DirectoryEntriesRepository
 from mle.repositories.jobs_repository import JobsRepository
@@ -80,7 +85,7 @@ from mle.schemas.directories import (
 )
 from mle.services.jwt_service import create_access_token
 from mle.services.passwords import hash_password, verify_password
-from mle.services.export_service import export_leads_to_csv
+from mle.services.export_service import export_leads_to_csv, export_leads_to_xlsx, export_preview_to_xlsx
 from mle.services.pipeline_service import run_job_pipeline
 from mle.services.query_expansion_service import expand_user_search_query
 from mle.services.exa_more_results_service import append_exa_results_for_job
@@ -88,7 +93,7 @@ from mle.services.profile_interpret_service import interpret_profile_texts
 from mle.services.profile_interpret_service import extract_profile_summary
 from mle.services.lead_deep_enrich_service import LeadCore, enrich_lead_contacts, EnrichmentResult
 from mle.clients.exa_client import ExaClient
-from mle.clients.opencli_client import OpenCliClient
+from mle.clients.brave_client import BraveSearchClient
 from mle.clients.llm_factory import get_llm_client, get_reviewer_llm_client
 from mle.core.config import get_settings, effective_exa_search_timeout_seconds
 from mle.schemas.leads import LeadRead
@@ -523,6 +528,12 @@ async def get_search_job_status(
         if isinstance(raw_cq_status, str) and raw_cq_status.strip():
             clarifying_display = raw_cq_status.strip()
 
+    warnings_raw = job.metadata_json.get("warnings")
+    warnings: list[str] = warnings_raw if isinstance(warnings_raw, list) else []
+
+    lpa_preview_raw = job.metadata_json.get("lpa_preview")
+    lpa_preview: list[dict[str, Any]] = lpa_preview_raw if isinstance(lpa_preview_raw, list) else []
+
     return SearchJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
@@ -530,6 +541,7 @@ async def get_search_job_status(
         current_stage=pipeline_stage,
         metrics=metrics,
         quality_metrics=quality_metrics,
+        created_at=job.created_at,
         updated_at=job.updated_at,
         pipeline_mode=pipeline_mode,
         exa_results_preview=exa_preview,
@@ -541,6 +553,8 @@ async def get_search_job_status(
         awaiting_clarification=awaiting_clarification,
         clarifying_question=clarifying_display,
         suggested_source_urls=suggested_source_urls,
+        lpa_preview=lpa_preview,
+        warnings=warnings,
     )
 
 
@@ -764,6 +778,7 @@ async def export_leads(
 
     async with async_session_factory() as session:
         leads_repository = LeadsRepository(session)
+        jobs_repo = JobsRepository(session)
         leads_page = await leads_repository.list_by_job(
             job_id=job_id,
             min_score=parsed_min_score,
@@ -772,6 +787,8 @@ async def export_leads(
             page=1,
             page_size=5000,
         )
+        # Get job to extract query_text
+        job = await jobs_repo.get_by_id(job_id)
 
     leads_payload = [
         {
@@ -787,11 +804,18 @@ async def export_leads(
         }
         for lead in leads_page.items
     ]
+
+    # Extract query text from job metadata
+    query_text = None
+    if job and isinstance(job.metadata_json, dict):
+        query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or "").strip() or None
+
     settings = get_settings()
     export_path = export_leads_to_csv(
         job_id=job_id,
         leads=leads_payload,
         export_dir_path=settings.export_dir,
+        query_text=query_text,
     )
     return LeadsExportResponse(
         download_path=export_path,
@@ -809,6 +833,7 @@ async def export_leads_file(
 ) -> FileResponse:
     async with async_session_factory() as session:
         leads_repository = LeadsRepository(session)
+        jobs_repo = JobsRepository(session)
         leads_page = await leads_repository.list_by_job(
             job_id=job_id,
             min_score=min_score,
@@ -817,6 +842,8 @@ async def export_leads_file(
             page=1,
             page_size=5000,
         )
+        # Get job to extract query_text
+        job = await jobs_repo.get_by_id(job_id)
 
     leads_payload = [
         {
@@ -832,21 +859,451 @@ async def export_leads_file(
         }
         for lead in leads_page.items
     ]
+
+    # Extract query text from job metadata
+    query_text = None
+    if job and isinstance(job.metadata_json, dict):
+        query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or "").strip() or None
+
     settings = get_settings()
     export_path_str = export_leads_to_csv(
         job_id=job_id,
         leads=leads_payload,
         export_dir_path=settings.export_dir,
+        query_text=query_text,
     )
     export_path = Path(export_path_str)
     if not export_path.is_file():
         raise HTTPException(status_code=500, detail="No se pudo generar el archivo CSV")
 
+    # Use the filename from export_path (which includes query and date)
+    filename = export_path.name
+
     return FileResponse(
         path=str(export_path),
-        filename=f"leads_{job_id}.csv",
+        filename=filename,
         media_type="text/csv; charset=utf-8",
     )
+
+
+@protected_router.get("/leads/export/xlsx")
+async def export_leads_xlsx_file(
+    job_id: UUID = Query(...),
+    min_score: float | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=200),
+    contact_filter: str | None = Query(default=None, max_length=40),
+    _u: User = Depends(require_permission("use_search")),
+) -> FileResponse:
+    async with async_session_factory() as session:
+        leads_repository = LeadsRepository(session)
+        jobs_repo = JobsRepository(session)
+        leads_page = await leads_repository.list_by_job(
+            job_id=job_id,
+            min_score=min_score,
+            name_query=q,
+            contact_filter=contact_filter,
+            page=1,
+            page_size=5000,
+        )
+        # Get job to extract query_text
+        job = await jobs_repo.get_by_id(job_id)
+
+    leads_payload = [
+        {
+            "full_name": lead.full_name,
+            "specialty": lead.specialty,
+            "country": lead.country,
+            "city": lead.city,
+            "score": lead.score,
+            "score_reasoning": lead.score_reasoning,
+            "email": lead.contacts.email,
+            "whatsapp": lead.contacts.whatsapp,
+            "phone": lead.contacts.phone,
+            "linkedin_url": str(lead.contacts.linkedin_url) if lead.contacts.linkedin_url else None,
+            "address": lead.address,
+            "schedule_text": lead.schedule_text,
+            "primary_source_url": lead.primary_source_url,
+        }
+        for lead in leads_page.items
+    ]
+
+    # Extract query text from job metadata
+    query_text = None
+    if job and isinstance(job.metadata_json, dict):
+        query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or "").strip() or None
+
+    settings = get_settings()
+    export_path_str = export_leads_to_xlsx(
+        job_id=job_id,
+        leads=leads_payload,
+        export_dir_path=settings.export_dir,
+        query_text=query_text,
+    )
+    export_path = Path(export_path_str)
+    if not export_path.is_file():
+        raise HTTPException(status_code=500, detail="No se pudo generar el archivo Excel")
+
+    # Use the filename from export_path (which includes query and date)
+    filename = export_path.name
+
+    return FileResponse(
+        path=str(export_path),
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@protected_router.get("/jobs/{job_id}/export/preview/xlsx")
+async def export_preview_xlsx_file(
+    job_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> FileResponse:
+    """Export exa_results_preview (search-only mode) to Excel."""
+    async with async_session_factory() as session:
+        jobs_repo = JobsRepository(session)
+        job = await jobs_repo.get_by_id(job_id)
+        if job is None:
+            _raise_not_found("Job")
+
+    # Extract query text from metadata
+    query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or "").strip() or None
+
+    preview_raw = job.metadata_json.get("exa_results_preview", [])
+    preview_rows = []
+    if isinstance(preview_raw, list):
+        for idx, row in enumerate(preview_raw):
+            if isinstance(row, dict):
+                preview_rows.append({
+                    "index": idx + 1,
+                    "title": row.get("title", ""),
+                    "specialty": row.get("specialty", ""),
+                    "city": row.get("city", ""),
+                    "linkedin_url": row.get("linkedin_url", ""),
+                    "url": row.get("url", ""),
+                    "snippet": row.get("snippet", ""),
+                })
+
+    settings = get_settings()
+    export_path_str = export_preview_to_xlsx(
+        job_id=job_id,
+        rows=preview_rows,
+        export_dir_path=settings.export_dir,
+        query_text=query_text,
+    )
+    export_path = Path(export_path_str)
+    if not export_path.is_file():
+        _raise_not_found("Export file")
+
+    # Use the filename from export_path (which includes query and date)
+    filename = export_path.name
+
+    return FileResponse(
+        path=str(export_path),
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@protected_router.get("/jobs/{job_id}/preview/{index}/export/xlsx")
+async def export_preview_result_xlsx(
+    job_id: UUID,
+    index: int,
+    _u: User = Depends(require_permission("use_search")),
+) -> FileResponse:
+    """Exportar un resultado preview individual a Excel."""
+    async with async_session_factory() as session:
+        jobs_repo = JobsRepository(session)
+        job = await jobs_repo.get_by_id(job_id)
+        if not job:
+            _raise_not_found("Job")
+
+        preview = job.metadata_json.get("exa_results_preview", []) if isinstance(job.metadata_json, dict) else []
+        row = None
+        for item in preview:
+            if isinstance(item, dict) and item.get("index") == index:
+                row = item
+                break
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Preview item no encontrado")
+
+        # Extract query text from metadata for filename
+        query_text = None
+        if isinstance(job.metadata_json, dict):
+            query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or "").strip() or None
+
+    settings = get_settings()
+    export_path_str = export_preview_to_xlsx(
+        job_id=job_id,
+        rows=[row],
+        export_dir_path=settings.export_dir,
+        query_text=query_text,
+    )
+    export_path = Path(export_path_str)
+
+    return FileResponse(
+        path=str(export_path),
+        filename=export_path.name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@protected_router.get("/opportunities/{opportunity_id}/export/xlsx")
+async def export_opportunity_xlsx(
+    opportunity_id: UUID,
+    _u: User = Depends(require_permission("manage_opportunities")),
+) -> FileResponse:
+    """Exportar una oportunidad individual a Excel (sin markdown)."""
+    async with async_session_factory() as session:
+        repo = OpportunitiesRepository(session)
+        opp = await repo.get_by_id(opportunity_id)
+        if not opp:
+            _raise_not_found("Oportunidad")
+
+        opp_data = {
+            "title": opp.title,
+            "specialty": opp.specialty,
+            "city": opp.city,
+            "stage": opp.stage,
+            "source_url": opp.source_url,
+            "snippet": opp.snippet,
+            "response_outcome": opp.response_outcome,
+            "contact_type": opp.contact_type,
+            "contacts": [
+                {
+                    "kind": c.kind,
+                    "value": c.value,
+                    "note": c.note,
+                }
+                for c in opp.contacts
+            ],
+            "profile_overrides": opp.profile_overrides if isinstance(opp.profile_overrides, dict) else {},
+            "created_at": opp.created_at.isoformat() if opp.created_at else None,
+        }
+
+    settings = get_settings()
+    # Build filename from title and creation date
+    title = str(opp.title).strip()[:50] if opp.title else "Oportunidad"
+    if opp.created_at:
+        date_str = opp.created_at.strftime("%d %m %Y")
+        filename = f"{title} {date_str}.xlsx"
+    else:
+        filename = f"{title}.xlsx"
+
+    export_path = settings.export_dir / filename
+
+    # Use modified export_opportunity_to_xlsx that accepts custom filename
+    from mle.services.export_service import _sanitize_filename
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    export_path.mkdir(parents=True, exist_ok=True)
+    filename_safe = _sanitize_filename(filename)
+    export_file = export_path.parent / filename_safe
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Oportunidad"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
+
+    row = 1
+    fields = [
+        ("Título", title),
+        ("Especialidad", opp_data.get("specialty", "")),
+        ("Ciudad", opp_data.get("city", "")),
+        ("Etapa", opp_data.get("stage", "")),
+        ("URL Fuente", opp_data.get("source_url", "")),
+        ("Descripción", opp_data.get("snippet", "")),
+        ("Resultado Respuesta", opp_data.get("response_outcome", "")),
+        ("Contacto Tipo", opp_data.get("contact_type", "")),
+    ]
+
+    for label, value in fields:
+        ws.cell(row=row, column=1, value=label).font = Font(bold=True)
+        ws.cell(row=row, column=2, value=value or "")
+        row += 1
+
+    row += 1
+    contacts_header = ws.cell(row=row, column=1, value="Contactos")
+    contacts_header.font = header_font
+    contacts_header.fill = header_fill
+    row += 1
+
+    contacts = opp_data.get("contacts", [])
+    if contacts:
+        ws.cell(row=row, column=1, value="Tipo").font = Font(bold=True)
+        ws.cell(row=row, column=2, value="Valor").font = Font(bold=True)
+        ws.cell(row=row, column=3, value="Nota").font = Font(bold=True)
+        row += 1
+
+        for contact in contacts:
+            ws.cell(row=row, column=1, value=contact.get("kind", ""))
+            ws.cell(row=row, column=2, value=contact.get("value", ""))
+            ws.cell(row=row, column=3, value=contact.get("note", ""))
+            row += 1
+
+    profile = opp_data.get("profile_overrides", {})
+    if profile:
+        row += 1
+        profile_header = ws.cell(row=row, column=1, value="Perfil")
+        profile_header.font = header_font
+        profile_header.fill = header_fill
+        row += 1
+
+        about = profile.get("about")
+        if about:
+            ws.cell(row=row, column=1, value="Acerca de").font = Font(bold=True)
+            from mle.services.export_service import _strip_markdown
+            ws.cell(row=row, column=2, value=_strip_markdown(about))
+            row += 1
+
+        location = profile.get("location")
+        if location:
+            ws.cell(row=row, column=1, value="Ubicación").font = Font(bold=True)
+            ws.cell(row=row, column=2, value=location)
+            row += 1
+
+        experiences = profile.get("experiences", [])
+        if experiences:
+            ws.cell(row=row, column=1, value="Experiencias").font = Font(bold=True)
+            row += 1
+            for exp in experiences:
+                role = exp.get("role", "")
+                org = exp.get("organization", "")
+                period = exp.get("period", "")
+                exp_text = f"{role}"
+                if org:
+                    exp_text += f" - {org}"
+                if period:
+                    exp_text += f" ({period})"
+                ws.cell(row=row, column=2, value=exp_text)
+                row += 1
+
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 60
+    ws.column_dimensions["C"].width = 40
+
+    wb.save(export_file)
+
+    return FileResponse(
+        path=str(export_file),
+        filename=filename_safe,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@protected_router.get("/directories/{directory_id}/entries/{entry_id}/export/xlsx")
+async def export_directory_entry_xlsx(
+    directory_id: UUID,
+    entry_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> FileResponse:
+    """Exportar una entrada de directorio a Excel."""
+    async with async_session_factory() as session:
+        entries_repo = DirectoryEntriesRepository(session)
+        entry = await entries_repo.get_by_id(entry_id)
+        if not entry:
+            _raise_not_found("DirectoryEntry")
+
+        entry_data = {
+            "display_title": entry.display_title,
+            "entity_type": entry.entity_type,
+            "city": entry.city,
+            "country": entry.country,
+            "primary_url": str(entry.primary_url) if entry.primary_url else "",
+            "snippet": entry.snippet,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        }
+
+    settings = get_settings()
+
+    # Build filename from title and creation date
+    title = str(entry.display_title).strip()[:50] if entry.display_title else "Entrada"
+    if entry.created_at:
+        date_str = entry.created_at.strftime("%d %m %Y")
+        filename = f"{title} {date_str}.xlsx"
+    else:
+        filename = f"{title}.xlsx"
+
+    from mle.services.export_service import _sanitize_filename, _strip_markdown
+    import openpyxl
+    from openpyxl.styles import Font
+
+    export_dir = Path(settings.export_dir)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    filename_safe = _sanitize_filename(filename)
+    export_file = export_dir / filename_safe
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Entrada"
+
+    row = 1
+    fields = [
+        ("Título", entry_data.get("display_title", "")),
+        ("Tipo Entidad", entry_data.get("entity_type", "")),
+        ("Ciudad", entry_data.get("city", "")),
+        ("País", entry_data.get("country", "")),
+        ("URL Principal", entry_data.get("primary_url", "")),
+        ("Descripción", _strip_markdown(entry_data.get("snippet", ""))),
+    ]
+
+    for label, value in fields:
+        ws.cell(row=row, column=1, value=label).font = Font(bold=True)
+        ws.cell(row=row, column=2, value=value or "")
+        row += 1
+
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 60
+
+    wb.save(export_file)
+
+    return FileResponse(
+        path=str(export_file),
+        filename=filename_safe,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@protected_router.patch("/jobs/{job_id}/preview/{index}/contact")
+async def patch_preview_contact(
+    job_id: UUID,
+    index: int,
+    payload: PreviewContactPatch,
+    _u: User = Depends(require_permission("use_search")),
+) -> dict[str, Any]:
+    """Guardar datos de contacto validados en el preview item."""
+    async with async_session_factory() as session:
+        jobs_repo = JobsRepository(session)
+        job = await jobs_repo.get_by_id(job_id)
+        if not job:
+            _raise_not_found("Job")
+
+        meta = dict(job.metadata_json or {})
+        preview = list(meta.get("exa_results_preview", []))
+
+        updated = False
+        for item in preview:
+            if isinstance(item, dict) and item.get("index") == index:
+                if payload.email is not None:
+                    item["email"] = payload.email
+                if payload.phone is not None:
+                    item["phone"] = payload.phone
+                if payload.whatsapp is not None:
+                    item["whatsapp"] = payload.whatsapp
+                if payload.source_urls is not None:
+                    item["saved_source_urls"] = [str(u).strip() for u in payload.source_urls if str(u).strip()]
+                updated = True
+                break
+
+        if not updated:
+            raise HTTPException(status_code=404, detail="Preview item no encontrado")
+
+        meta["exa_results_preview"] = preview
+        await jobs_repo.update_status(job_id, job.status, job.progress, metadata_json=meta)
+        return {"ok": True}
 
 
 @protected_router.get(
@@ -881,7 +1338,7 @@ async def create_opportunity_from_preview(
         repo = OpportunitiesRepository(session)
         try:
             opp, created = await repo.create_or_get_from_preview(
-                job, payload.exa_preview_index, owner_user_id=current.id
+                job, payload.exa_preview_index, owner_user_id=current.id, contact_overrides=payload.contact_overrides
             )
         except ValueError as exc:
             if str(exc) == "preview_row_not_found":
@@ -890,6 +1347,17 @@ async def create_opportunity_from_preview(
                     detail="No hay fila de vista previa Exa con ese índice para este job.",
                 ) from exc
             raise HTTPException(status_code=400, detail="Datos de oportunidad no válidos.") from exc
+
+        # If step_id is provided and this is a new opportunity, assign it to the step
+        if payload.step_id and created:
+            result = await session.execute(select(DirectoryStep).where(DirectoryStep.id == payload.step_id))
+            step = result.scalars().first()
+            if step is None:
+                raise HTTPException(status_code=400, detail="El step especificado no existe.")
+            opp.current_step_id = step.id
+            opp.directory_id = step.directory_id
+            await session.commit()
+
         await session.refresh(opp)
         owner = await _load_owner_user(session, opp)
     response.status_code = 201 if created else 200
@@ -910,6 +1378,9 @@ async def create_opportunity_manual(
             source_url=payload.source_url,
             snippet=payload.snippet,
             owner_user_id=current.id,
+            directory_id=payload.directory_id,
+            current_step_id=payload.step_id,
+            contacts=[c.model_dump() for c in payload.contacts] if payload.contacts else [],
         )
         owner = await _load_owner_user(session, opp)
     return _opportunity_to_response(opp, owner=owner, created=True)
@@ -934,10 +1405,21 @@ async def list_opportunities(
             offset=0,
         )
         owners = await _load_owners_map(session, rows)
+        # Fetch target_url for any scrape-sourced opportunities
+        scrape_ids = {o.scrape_job_id for o in rows if o.scrape_job_id}
+        scrape_url_map: dict = {}
+        if scrape_ids:
+            scrape_repo = UrlScrapeJobsRepository(session)
+            for sid in scrape_ids:
+                sj = await scrape_repo.get_by_id(sid)
+                if sj:
+                    scrape_url_map[sj.id] = sj.target_url
     items = [
         OpportunityListItemResponse(
             opportunity_id=str(o.id),
             job_id=str(o.job_id) if o.job_id else None,
+            scrape_job_id=str(o.scrape_job_id) if o.scrape_job_id else None,
+            scrape_target_url=scrape_url_map.get(o.scrape_job_id) if o.scrape_job_id else None,
             exa_preview_index=o.exa_preview_index,
             directory_id=str(o.directory_id) if o.directory_id else None,
             current_step_id=str(o.current_step_id) if o.current_step_id else None,
@@ -999,13 +1481,11 @@ async def enrich_opportunity(opportunity_id: UUID):
         api_key=st.exa_api_key,
         timeout_seconds=effective_exa_search_timeout_seconds(st),
     )
-    opencli = OpenCliClient(st)
     proposer = get_llm_client(st)
     reviewer = get_reviewer_llm_client(st)
 
     brave = None
     if st.brave_search_api_key and st.brave_search_enabled:
-        from mle.clients.brave_client import BraveSearchClient
         brave = BraveSearchClient(
             api_key=st.brave_search_api_key,
             timeout_seconds=st.brave_search_timeout_seconds,
@@ -1023,7 +1503,6 @@ async def enrich_opportunity(opportunity_id: UUID):
             result = await enrich_lead_contacts(
                 lead,
                 exa_client=exa_client,
-                opencli=opencli,
                 proposer=proposer,
                 reviewer=reviewer,
                 settings=st,
@@ -1111,6 +1590,7 @@ async def enrich_opportunity(opportunity_id: UUID):
                         linkedin_url=result.linkedin_url,
                         description=result.description,
                         citations=result.citations,
+                        contact_sources=result.contact_sources,
                     )
                     yield f"event: done\ndata: {response_data.model_dump_json()}\n\n"
                     break
@@ -1175,6 +1655,12 @@ async def patch_opportunity(
             updates = payload.profile_cv.model_dump(exclude_unset=True)
             if updates:
                 opp = await repo.merge_profile_overrides(opp, updates, owner_user_id=current.id)
+        
+        if payload.title is not None and payload.title.strip() and payload.title != opp.title:
+            opp.title = payload.title.strip()
+            session.add(opp)
+            await session.commit()
+            
         await session.refresh(opp)
         owner = await _load_owner_user(session, opp)
     return _opportunity_to_response(opp, owner=owner, created=False)
@@ -1468,6 +1954,211 @@ async def delete_directory(
     return Response(status_code=204)
 
 
+# ============================================================================
+# DIRECTORY SOURCES — Referencias/scrapeo dentro de un directorio
+# ============================================================================
+
+
+@protected_router.get(
+    "/directories/{directory_id}/sources",
+    response_model=DirectorySourcesListResponse,
+)
+async def list_directory_sources(
+    directory_id: UUID,
+    status: str | None = Query(default=None, max_length=32),
+    _u: User = Depends(require_permission("use_search")),
+) -> DirectorySourcesListResponse:
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+
+    async with async_session_factory() as session:
+        repo = DirectorySourcesRepository(session)
+        sources = await repo.list_by_directory(
+            directory_id=directory_id, status=status
+        )
+    items = [
+        DirectorySourceItemResponse(
+            source_id=str(s.id),
+            directory_id=str(s.directory_id),
+            url=s.url,
+            title=s.title,
+            notes=s.notes,
+            status=s.status,
+            scrape_job_id=str(s.scrape_job_id) if s.scrape_job_id else None,
+            source_search_job_id=str(s.source_search_job_id)
+            if s.source_search_job_id
+            else None,
+            created_by_user_id=str(s.created_by_user_id)
+            if s.created_by_user_id
+            else None,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in sources
+    ]
+    return DirectorySourcesListResponse(items=items)
+
+
+@protected_router.post(
+    "/directories/{directory_id}/sources",
+    response_model=DirectorySourceItemResponse,
+    status_code=201,
+)
+async def create_directory_source(
+    directory_id: UUID,
+    payload: DirectorySourceCreateRequest,
+    current: User = Depends(require_permission("use_search")),
+) -> DirectorySourceItemResponse:
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+
+    async with async_session_factory() as session:
+        repo = DirectorySourcesRepository(session)
+        source = await repo.create(
+            directory_id=directory_id,
+            url=payload.url,
+            title=payload.title,
+            notes=payload.notes,
+            source_search_job_id=payload.source_search_job_id,
+            created_by_user_id=current.id,
+        )
+    return DirectorySourceItemResponse(
+        source_id=str(source.id),
+        directory_id=str(source.directory_id),
+        url=source.url,
+        title=source.title,
+        notes=source.notes,
+        status=source.status,
+        scrape_job_id=str(source.scrape_job_id) if source.scrape_job_id else None,
+        source_search_job_id=str(source.source_search_job_id)
+        if source.source_search_job_id
+        else None,
+        created_by_user_id=str(source.created_by_user_id)
+        if source.created_by_user_id
+        else None,
+        created_at=source.created_at,
+        updated_at=source.updated_at,
+    )
+
+
+@protected_router.patch(
+    "/directories/{directory_id}/sources/{source_id}",
+    response_model=DirectorySourceItemResponse,
+)
+async def update_directory_source(
+    directory_id: UUID,
+    source_id: UUID,
+    payload: DirectorySourceUpdateRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> DirectorySourceItemResponse:
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+
+    async with async_session_factory() as session:
+        repo = DirectorySourcesRepository(session)
+        source = await repo.get_by_id(source_id)
+        if source is None or source.directory_id != directory_id:
+            _raise_not_found("Fuente")
+        source = await repo.update(
+            source_id,
+            title=payload.title,
+            notes=payload.notes,
+            status=payload.status,
+        )
+    return DirectorySourceItemResponse(
+        source_id=str(source.id),
+        directory_id=str(source.directory_id),
+        url=source.url,
+        title=source.title,
+        notes=source.notes,
+        status=source.status,
+        scrape_job_id=str(source.scrape_job_id) if source.scrape_job_id else None,
+        source_search_job_id=str(source.source_search_job_id)
+        if source.source_search_job_id
+        else None,
+        created_by_user_id=str(source.created_by_user_id)
+        if source.created_by_user_id
+        else None,
+        created_at=source.created_at,
+        updated_at=source.updated_at,
+    )
+
+
+@protected_router.delete(
+    "/directories/{directory_id}/sources/{source_id}",
+    status_code=204,
+)
+async def delete_directory_source(
+    directory_id: UUID,
+    source_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> Response:
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+
+    async with async_session_factory() as session:
+        repo = DirectorySourcesRepository(session)
+        source = await repo.get_by_id(source_id)
+        if source is None or source.directory_id != directory_id:
+            _raise_not_found("Fuente")
+        ok = await repo.delete(source_id)
+        if not ok:
+            _raise_not_found("Fuente")
+    return Response(status_code=204)
+
+
+@protected_router.post(
+    "/directories/{directory_id}/sources/{source_id}/scrape",
+    status_code=202,
+)
+async def scrape_directory_source(
+    directory_id: UUID,
+    source_id: UUID,
+    current: User = Depends(require_permission("use_search")),
+) -> dict[str, str]:
+    """Crea un URL scrape job a partir de una fuente guardada y la vincula."""
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+    from mle.services.url_scrape_service import run_url_scrape_pipeline
+
+    async with async_session_factory() as session:
+        sources_repo = DirectorySourcesRepository(session)
+        source = await sources_repo.get_by_id(source_id)
+        if source is None or source.directory_id != directory_id:
+            _raise_not_found("Fuente")
+
+        scrape_jobs_repo = UrlScrapeJobsRepository(session)
+        prompt = (
+            f"Extraer profesionales y entidades del directorio: {source.title or source.url}"
+        )
+        scrape_job = await scrape_jobs_repo.create(
+            target_url=source.url,
+            user_prompt=prompt,
+            directory_id=directory_id,
+        )
+
+        await sources_repo.update(
+            source_id,
+            status="scraping",
+            scrape_job_id=scrape_job.id,
+        )
+
+        job_id = scrape_job.id
+
+    asyncio.create_task(run_url_scrape_pipeline(job_id))
+
+    return {
+        "scrape_job_id": str(job_id),
+        "status": "created",
+        "source_id": str(source_id),
+    }
+
+
 @protected_router.post("/directories/{directory_id}/steps", response_model=DirectoryStepRead, status_code=201)
 async def add_step(
     directory_id: UUID,
@@ -1571,7 +2262,7 @@ async def move_opportunity_step(
 ) -> OpportunityResponse:
     async with async_session_factory() as session:
         dir_repo = DirectoriesRepository(session)
-        opp = await dir_repo.move_opportunity(opportunity_id, payload.direction)
+        opp = await dir_repo.move_opportunity(opportunity_id, payload.step_id)
         if opp is None:
             raise HTTPException(
                 status_code=409,

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from mle.clients.brave_client import BraveSearchClient
 from mle.clients.exa_client import ExaClient
+from mle.clients.llm_factory import get_llm_client
 from mle.core.config import effective_exa_search_timeout_seconds, get_settings
 from mle.db.base import async_session_factory
 from mle.nodes.exa_webset_node import (
@@ -16,7 +19,10 @@ from mle.nodes.exa_webset_node import (
 from mle.nodes.search_finalize_node import MAX_EXA_ACCUMULATED_RAW, _build_exa_preview
 from mle.repositories.jobs_repository import JobsRepository
 from mle.services.exa_preview_enrich_service import enrich_exa_preview_rows
-from mle.services.relevance_filter_service import filter_exa_list_heuristic_only
+from mle.services.relevance_filter_service import (
+    filter_exa_list_heuristic_only,
+    filter_exa_raw_results_by_relevance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +66,7 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
     Una ronda extra de Exa con consulta variada; solo añade URLs no vistas.
     Solo para jobs en modo demo (presearch_and_search_only) con datos previos.
     """
+    logger.info("append_exa_results_for_job iniciado: job_id=%s, num_results=%s", job_id, num_results)
     n = min(MAX_EXA_RESULTS_PER_CALL, max(1, int(num_results)))
     settings = get_settings()
 
@@ -67,10 +74,12 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
         repo = JobsRepository(session)
         job = await repo.get_by_id(job_id)
         if job is None:
+            logger.error("Job no encontrado: job_id=%s", job_id)
             return {"ok": False, "error": "Job no encontrado"}
 
         meta = dict(job.metadata_json or {})
         if str(meta.get("pipeline_mode")) != "presearch_and_search_only":
+            logger.error("pipeline_mode incorrecto: job_id=%s, mode=%s", job_id, meta.get("pipeline_mode"))
             return {"ok": False, "error": "Cargar más resultados solo está disponible en la vista demo de búsqueda Exa"}
 
         raw = meta.get("exa_accumulated_raw")
@@ -108,18 +117,65 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
         rel_c = meta.get("relevance_criteria")
         if isinstance(rel_c, dict) and rel_c:
             minimal_planner["relevance_criteria"] = rel_c
+        iso = str((rel_c or {}).get("country_iso2") or "").strip().upper()
         payload = _build_search_payload_for_query(minimal_planner, query, n)
+
+        # --- Ejecutar Exa + Brave en paralelo ---
         exa = ExaClient(
             api_key=settings.exa_api_key,
             timeout_seconds=effective_exa_search_timeout_seconds(settings),
         )
-        try:
-            response = await exa.search(payload)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Exa cargar-mas fallo job_id=%s: %s", job_id, exc)
-            return {"ok": False, "error": f"Exa: {exc!s}"}
+        exa_coro = exa.search(payload)
 
-        batch = _extract_results(response)
+        brave_coros: list[Any] = []
+        if settings.brave_search_enabled and settings.brave_search_api_key:
+            brave_client = BraveSearchClient(
+                api_key=settings.brave_search_api_key,
+                timeout_seconds=settings.brave_search_timeout_seconds,
+            )
+            brave_country = iso if len(iso) == 2 else None
+            brave_coros.append(brave_client.web_search(main_q, country=brave_country, count=20, pages=3))
+            if exa_cat == "people":
+                brave_coros.append(brave_client.web_search(f"site:linkedin.com/in {main_q}", country=brave_country, count=20, pages=2))
+
+        logger.info("Llamando a EXA + %d Brave queries: job_id=%s", len(brave_coros), job_id)
+        all_outcomes = await asyncio.gather(exa_coro, *brave_coros, return_exceptions=True)
+        exa_outcome = all_outcomes[0]
+        brave_outcomes = all_outcomes[1:]
+
+        # Procesar Exa
+        exa_failed = False
+        batch: list[dict[str, Any]] = []
+        if isinstance(exa_outcome, Exception):
+            logger.warning("Exa cargar-mas fallo job_id=%s: %s", job_id, exa_outcome)
+            exa_failed = True
+        else:
+            batch = _extract_results(exa_outcome)
+            logger.info("EXA exitoso: job_id=%s, resultados=%s", job_id, len(batch))
+
+        # Procesar Brave
+        for bi, brave_outcome in enumerate(brave_outcomes):
+            if isinstance(brave_outcome, Exception):
+                logger.warning("Brave cargar-mas query %s fallo job_id=%s: %s", bi, job_id, brave_outcome)
+            elif isinstance(brave_outcome, list):
+                logger.info("Brave cargar-mas query %s: %d resultados job_id=%s", bi, len(brave_outcome), job_id)
+                batch.extend(brave_outcome)
+
+        if not batch:
+            error_detail = f"Exa: {exa_outcome!s}" if exa_failed else "Sin resultados de ninguna fuente"
+            return {"ok": False, "error": error_detail}
+
+        # Warning si Exa falló pero Brave trajo resultados
+        if exa_failed and batch:
+            existing_warnings = list(meta.get("warnings", []))
+            existing_warnings.append(
+                "La fuente principal (Exa) no está disponible. "
+                "Resultados adicionales provienen de Brave Search."
+            )
+            meta["warnings"] = existing_warnings
+
+        logger.info("Extrayendo resultados combinados: job_id=%s, batch_size=%s", job_id, len(batch))
+
         logger.info(
             "Exa cargar-mas job_id=%s pedidos=%s recibidos=%s urls_ya_vistas=%s",
             job_id,
@@ -156,15 +212,82 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
                 h_one.get("relevance_heuristic_only_kept"),
             )
 
+        # Apply LLM-based sector relevance filter to new items
+        llm_metadata: dict = {}
+        if new_items and isinstance(rel_c, dict):
+            llm = get_llm_client(settings)
+            try:
+                filtered_new, llm_metadata = await filter_exa_raw_results_by_relevance(
+                    raw_results=new_items,
+                    user_query=main_q,
+                    relevance_criteria=rel_c,
+                    gemini_client=llm,
+                )
+
+                # Log detallado de LLM filtering decisions
+                logger.info("=" * 80)
+                logger.info("LLM RELEVANCE FILTER — sector/profesion objetivo: %s", rel_c.get("role_or_stack_hint", main_q))
+                logger.info("=" * 80)
+                kept_set = {str(item.get("url", "")).strip().lower().rstrip("/") for item in filtered_new}
+                for item in new_items:
+                    url = str(item.get("url", "")).strip()
+                    title = str(item.get("title", "")).strip()
+                    url_key = url.lower().rstrip("/")
+                    status = "✓ KEPT" if url_key in kept_set else "✗ DROPPED"
+                    logger.info(
+                        "%s | %s | %s",
+                        status,
+                        title[:60],
+                        url[:70],
+                    )
+                logger.info("=" * 80)
+                logger.info(
+                    "LLM Filter Summary: total=%s, kept=%s, dropped=%s",
+                    len(new_items),
+                    llm_metadata.get("relevance_filter_kept", 0),
+                    llm_metadata.get("relevance_filter_dropped", 0),
+                )
+
+                # Replace merged list: remove the new_items that didn't pass LLM filter
+                merged = [
+                    item for item in merged
+                    if str(item.get("url", "")).strip().lower().rstrip("/") in kept_set
+                    or item in raw  # Keep all items from the original raw list
+                ]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Exa cargar-mas LLM relevance filter omitido job_id=%s: %s",
+                    job_id,
+                    exc,
+                    exc_info=True,
+                )
+
+        logger.info("Construyendo preview: job_id=%s, merged_count=%s", job_id, len(merged))
         preview = _build_exa_preview(merged)
+        logger.info("Preview construido: job_id=%s, preview_items=%s", job_id, len(preview))
+
+        logger.info("Enriqueciendo preview LLM: job_id=%s, preview_count=%s", job_id, len(preview))
         try:
             preview = await enrich_exa_preview_rows(preview)
+            logger.info("Preview enriquecido: job_id=%s, items=%s", job_id, len(preview))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Enriquecimiento preview tras cargar mas omitido job_id=%s: %s", job_id, exc)
+            logger.warning("Enriquecimiento preview tras cargar mas omitido job_id=%s: %s", job_id, exc, exc_info=True)
 
+        logger.info("Guardando metadata actualizada: job_id=%s", job_id)
         meta["exa_accumulated_raw"] = merged
         meta["exa_results_preview"] = preview
         meta["exa_more_rounds"] = rounds + 1
+        # Acumular LPA de esta ronda
+        new_lpa: list = llm_metadata.get("lpa_results") or []
+        if new_lpa:
+            existing_lpa: list = meta.get("lpa_results") or []
+            existing_lpa_urls = {str(x.get("url", "")).strip().lower() for x in existing_lpa}
+            for item in new_lpa:
+                if str(item.get("url", "")).strip().lower() not in existing_lpa_urls:
+                    existing_lpa.append(item)
+            meta["lpa_results"] = existing_lpa
+            meta["lpa_count"] = len(existing_lpa)
+            meta["lpa_preview"] = _build_exa_preview(existing_lpa)
         meta["sources_visited"] = len(merged)
         meta["leads_extracted"] = len(merged)
         meta["exa_last_more_at"] = datetime.now(timezone.utc).isoformat()
@@ -174,6 +297,13 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
             status=job.status,
             progress=job.progress,
             metadata_json=meta,
+        )
+        logger.info(
+            "append_exa_results_for_job completado: job_id=%s, added=%s, total=%s, preview=%s",
+            job_id,
+            len(new_items),
+            len(merged),
+            len(preview),
         )
 
         return {

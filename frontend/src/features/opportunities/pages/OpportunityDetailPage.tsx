@@ -6,6 +6,7 @@ import {
   Check,
   ChevronRight,
   ClipboardList,
+  Download,
   ExternalLink,
   FileText,
   ListFilter,
@@ -21,9 +22,12 @@ import {
 
 import {
   deleteOpportunity,
+  downloadOpportunityXlsx,
   enrichOpportunity,
+  getDirectory,
   getSearchJobStatus,
   getOpportunity,
+  moveOpportunityStep,
   patchOpportunity,
   postOpportunityBitacora,
   putOpportunityContacts,
@@ -43,6 +47,7 @@ import {
   opportunityStageLabel,
   responseOutcomeLabel,
 } from "../model/stages";
+import { EnrichContactModal, ENRICH_STAGES } from "../../../components/EnrichContactModal";
 import type {
   OpportunityContact,
   OpportunityContactKind,
@@ -57,13 +62,14 @@ function objectHasOwn(o: object, k: string): boolean {
   return Object.prototype.hasOwnProperty.call(o, k);
 }
 
-/** Quita marcadores tipo ## / ### al inicio de línea (ruido típico del resumen automático). */
 function stripMarkdownHeadingNoise(text: string): string {
   if (!text.trim()) return text;
   return text
     .split("\n")
-    .map((line) => line.replace(/^#{1,6}\s+/u, "").trimEnd())
+    .map((line) => line.replace(/^#{1,6}\s+/u, "").trim())
     .join("\n")
+    .replace(/\[\.\.\.\]/g, "")
+    .replace(/\s{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -117,12 +123,7 @@ function BitacoraStageIcon({ stage }: { stage: string }): JSX.Element {
 const CONTACT_KINDS: OpportunityContactKind[] = ["email", "phone", "whatsapp", "linkedin", "other"];
 const OUTCOMES: OpportunityResponseOutcome[] = ["pending", "positive", "negative"];
 
-const ENRICH_STAGES = [
-  "Buscando información del perfil en la web...",
-  "Consultando Google Maps y Knowledge Panel...",
-  "Visitando páginas personales y redes sociales...",
-  "Verificando datos con inteligencia artificial...",
-];
+
 
 export function OpportunityDetailPage(): JSX.Element {
   const { opportunityId = "" } = useParams();
@@ -130,6 +131,7 @@ export function OpportunityDetailPage(): JSX.Element {
   const queryClient = useQueryClient();
   const { canManageOpportunities } = usePermissions();
   const [stageDraft, setStageDraft] = useState<OpportunityStageKey | "">("");
+  const [stepDraft, setStepDraft] = useState<string>("");
   const [outcomeDraft, setOutcomeDraft] = useState<OpportunityResponseOutcome>("pending");
   const [stageNote, setStageNote] = useState("");
   const [bitacoraText, setBitacoraText] = useState("");
@@ -139,8 +141,10 @@ export function OpportunityDetailPage(): JSX.Element {
   const [locationDraft, setLocationDraft] = useState("");
   const [cvDirty, setCvDirty] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const [enrichModalOpen, setEnrichModalOpen] = useState(false);
   const [enrichStageIdx, setEnrichStageIdx] = useState(0);
+  const [isExporting, setIsExporting] = useState(false);
   const bitacoraScrollRef = useRef<HTMLDivElement>(null);
   const bitacoraTextareaRef = useRef<HTMLTextAreaElement>(null);
   const aboutTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -152,6 +156,31 @@ export function OpportunityDetailPage(): JSX.Element {
   });
 
   const data = detailQuery.data;
+
+  const directoryQuery = useQuery({
+    queryKey: ["directory", data?.directory_id],
+    queryFn: () => getDirectory(data!.directory_id!),
+    enabled: Boolean(data?.directory_id),
+    staleTime: 5 * 60 * 1000,
+  });
+  const dirSteps = (directoryQuery.data?.steps ?? [])
+    .filter((s) => !s.is_terminal)
+    .sort((a, b) => a.display_order - b.display_order);
+  const dirTerminalSteps = (directoryQuery.data?.steps ?? [])
+    .filter((s) => s.is_terminal)
+    .sort((a, b) => a.display_order - b.display_order);
+  const allDirSteps = [...dirSteps, ...dirTerminalSteps];
+  const useDirectorySteps = Boolean(data?.directory_id && allDirSteps.length > 0);
+
+  const moveStepMut = useMutation({
+    mutationFn: (targetStepId: string) => moveOpportunityStep(opportunityId, targetStepId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["opportunity", opportunityId] });
+      void queryClient.invalidateQueries({ queryKey: ["directory-items", data?.directory_id] });
+      setStepDraft("");
+    },
+  });
+
   const sourceJobQuery = useQuery({
     queryKey: ["job-status", data?.job_id],
     queryFn: () => {
@@ -182,6 +211,7 @@ export function OpportunityDetailPage(): JSX.Element {
 
   useEffect(() => {
     if (!data) return;
+    setTitleDraft(data.title || "");
     setStageDraft(data.stage);
     setOutcomeDraft((data.response_outcome as OpportunityResponseOutcome) || "pending");
     if (!contactsDirty) setContactsDraft(data.contacts?.length ? data.contacts : []);
@@ -235,7 +265,7 @@ export function OpportunityDetailPage(): JSX.Element {
   }, [aboutDraft]);
 
   const patchMut = useMutation({
-    mutationFn: (body: { stage?: string; response_outcome?: string | null; note?: string | null }) =>
+    mutationFn: (body: { title?: string; stage?: string; response_outcome?: string | null; note?: string | null }) =>
       patchOpportunity(opportunityId, body),
     onSuccess: (updated) => {
       queryClient.setQueryData(["opportunity", opportunityId], updated);
@@ -249,6 +279,15 @@ export function OpportunityDetailPage(): JSX.Element {
       queryClient.setQueryData(["opportunity", opportunityId], updated);
     },
   });
+
+  // Auto-set contact_type from exa_category when not yet defined
+  useEffect(() => {
+    if (!data || data.contact_type) return;
+    const exaCat = sourceJobQuery.data?.exa_category;
+    if (!exaCat) return;
+    const inferred = exaCat === "company" ? "company" : "employee";
+    contactTypeMut.mutate(inferred);
+  }, [data?.contact_type, sourceJobQuery.data?.exa_category]);
 
   const profileCvMut = useMutation({
     mutationFn: (body: { profile_cv: OpportunityProfileOverrides }) => patchOpportunity(opportunityId, body),
@@ -420,54 +459,118 @@ export function OpportunityDetailPage(): JSX.Element {
         aria-label="Progreso del embudo"
       >
         <h2 className="opportunity-journey-heading">Flujo de Oportunidad</h2>
-        <div
-          className="opportunity-journey-track-wrap"
-          style={{ "--opportunity-journey-fill-pct": `${journeyFillPct}%` } as React.CSSProperties}
-        >
-          <div className="opportunity-journey-rail" aria-hidden />
-          <ol className="opportunity-journey-track">
-            {OPPORTUNITY_STAGES_ORDER.map((key, idx) => {
-              const done = idx < stageIndex;
-              const current = idx === stageIndex;
-              const upcoming = idx > stageIndex;
-              const isPastPhase = idx < stageIndex;
-              return (
-                <li
-                  key={key}
-                  className={`opportunity-journey-step${done ? " is-done" : ""}${current ? " is-current" : ""}${upcoming ? " is-upcoming" : ""}`}
-                >
-                  <Button
-                    type="button"
-                    className="opportunity-journey-node"
-                    disabled={isPastPhase}
-                    onClick={() => {
-                      if (!isPastPhase) setStageDraft(key);
-                    }}
-                    aria-current={current ? "step" : undefined}
-                    aria-label={`Fase: ${opportunityStageLabel[key]}${current ? " (actual)" : ""}${isPastPhase ? " (completada, no se puede reactivar)" : ""}`}
+        {useDirectorySteps ? (() => {
+          const currentStepIdx = allDirSteps.findIndex((s) => s.id === data.current_step_id);
+          const fillPct = allDirSteps.length <= 1 ? 0 : (Math.max(0, currentStepIdx) / (allDirSteps.length - 1)) * 100;
+          return (
+            <div
+              className="opportunity-journey-track-wrap"
+              style={{ "--opportunity-journey-fill-pct": `${fillPct}%` } as React.CSSProperties}
+            >
+              <div className="opportunity-journey-rail" aria-hidden />
+              <ol className="opportunity-journey-track">
+                {allDirSteps.map((step, idx) => {
+                  const done = idx < currentStepIdx;
+                  const current = step.id === data.current_step_id;
+                  const upcoming = idx > currentStepIdx;
+                  return (
+                    <li
+                      key={step.id}
+                      className={`opportunity-journey-step${done ? " is-done" : ""}${current ? " is-current" : ""}${upcoming ? " is-upcoming" : ""}`}
+                    >
+                      <Button
+                        type="button"
+                        className="opportunity-journey-node"
+                        onClick={() => setStepDraft(step.id)}
+                        aria-current={current ? "step" : undefined}
+                        aria-label={`Fase: ${step.name}${current ? " (actual)" : ""}`}
+                      >
+                        <span className="opportunity-journey-circle" aria-hidden>
+                          {done ? <Check size={16} strokeWidth={2.5} /> : <span className="opportunity-journey-num">{idx + 1}</span>}
+                        </span>
+                        <span className="opportunity-journey-label">{step.name}</span>
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+          );
+        })() : (
+          <div
+            className="opportunity-journey-track-wrap"
+            style={{ "--opportunity-journey-fill-pct": `${journeyFillPct}%` } as React.CSSProperties}
+          >
+            <div className="opportunity-journey-rail" aria-hidden />
+            <ol className="opportunity-journey-track">
+              {OPPORTUNITY_STAGES_ORDER.map((key, idx) => {
+                const done = idx < stageIndex;
+                const current = idx === stageIndex;
+                const upcoming = idx > stageIndex;
+                const isPastPhase = idx < stageIndex;
+                return (
+                  <li
+                    key={key}
+                    className={`opportunity-journey-step${done ? " is-done" : ""}${current ? " is-current" : ""}${upcoming ? " is-upcoming" : ""}`}
                   >
-                    <span className="opportunity-journey-circle" aria-hidden>
-                      {done ? <Check size={16} strokeWidth={2.5} /> : <span className="opportunity-journey-num">{idx + 1}</span>}
-                    </span>
-                    <span className="opportunity-journey-label">{opportunityJourneyLabelShort[key]}</span>
-                  </Button>
-                  {key === "response" && current ? (
-                    <span className="opportunity-journey-sub">
-                      {responseOutcomeLabel[(data.response_outcome as OpportunityResponseOutcome) ?? "pending"]}
-                    </span>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ol>
-        </div>
+                    <Button
+                      type="button"
+                      className="opportunity-journey-node"
+                      disabled={isPastPhase}
+                      onClick={() => { if (!isPastPhase) setStageDraft(key); }}
+                      aria-current={current ? "step" : undefined}
+                    >
+                      <span className="opportunity-journey-circle" aria-hidden>
+                        {done ? <Check size={16} strokeWidth={2.5} /> : <span className="opportunity-journey-num">{idx + 1}</span>}
+                      </span>
+                      <span className="opportunity-journey-label">{opportunityJourneyLabelShort[key]}</span>
+                    </Button>
+                    {key === "response" && current ? (
+                      <span className="opportunity-journey-sub">
+                        {responseOutcomeLabel[(data.response_outcome as OpportunityResponseOutcome) ?? "pending"]}
+                      </span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        )}
         <p className="muted-text opportunity-journey-hint">
-          Solo puedes avanzar: las fases ya superadas no se pueden volver a activar. Elige la siguiente fase y guarda abajo.
+          Haz clic en una fase para seleccionarla y guarda abajo.
         </p>
       </Card>
 
       <Card className="panel opportunity-card opportunity-bento-card opportunity-summary-card opportunity-ficha-area-summary">
-        <h1 className="opportunity-summary-title">{data.title || "Sin título"}</h1>
+        <div className="opportunity-summary-title-wrapper" style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+          <Input
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={() => {
+              if (titleDraft.trim() !== data.title && titleDraft.trim()) {
+                patchMut.mutate({ title: titleDraft.trim() });
+              } else {
+                setTitleDraft(data.title || "");
+              }
+            }}
+            className="opportunity-summary-title-input"
+            style={{ fontSize: "1.5rem", fontWeight: "700", border: "1px solid transparent", background: "transparent", padding: "0.25rem 0.5rem", boxShadow: "none", flex: 1, margin: "-0.25rem -0.5rem" }}
+            title="Haz click para editar el nombre"
+            placeholder="Nombre de la oportunidad"
+          />
+          {data.source_url ? (
+            <a
+              href={data.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="opportunity-summary-title-link"
+              title="Ver fuente original"
+            >
+              <ExternalLink size={18} aria-hidden />
+            </a>
+          ) : null}
+          {patchMut.isPending && patchMut.variables?.title === titleDraft.trim() ? <Loader2 size={16} className="spin muted-text" /> : null}
+        </div>
         {data.owner ? (
           <p className="muted-text opportunity-owner-line" style={{ marginTop: "0.25rem" }}>
             A cargo: <strong>{data.owner.display_name}</strong>
@@ -487,17 +590,6 @@ export function OpportunityDetailPage(): JSX.Element {
         {data.contact_type === "company" ? (
           <div className="opportunity-summary-company-info">
             {data.snippet ? <p className="opportunity-summary-snippet muted-text">{data.snippet}</p> : null}
-            {data.source_url ? (
-              <a
-                href={data.source_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="link-button"
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", marginTop: "0.5rem" }}
-              >
-                <ExternalLink size={14} aria-hidden /> Ver fuente
-              </a>
-            ) : null}
           </div>
         ) : (
           <>
@@ -535,21 +627,32 @@ export function OpportunityDetailPage(): JSX.Element {
                 <h3 className="opportunity-card-subtitle">About</h3>
                 <label className="opportunity-field opportunity-summary-cv-field">
                   <span className="muted-text">Texto libre; se guarda en la oportunidad.</span>
-                  <textarea
-                    ref={aboutTextareaRef}
-                    className="opportunity-summary-cv-textarea"
-                    value={aboutDraft}
-                    onChange={(e) => {
-                      setCvDirty(true);
-                      setAboutDraft(e.target.value);
-                    }}
-                    rows={1}
-                    maxLength={8000}
-                    spellCheck
-                    readOnly={aboutFieldWaitingIa}
-                    aria-busy={aboutFieldWaitingIa}
-                    placeholder={aboutFieldWaitingIa ? "Generando resumen con la IA…" : undefined}
-                  />
+                    <textarea
+                      ref={aboutTextareaRef}
+                      className="opportunity-summary-cv-textarea"
+                      value={aboutDraft}
+                      onChange={(e) => {
+                        setCvDirty(true);
+                        setAboutDraft(e.target.value);
+                      }}
+                      rows={1}
+                      maxLength={8000}
+                      spellCheck
+                      readOnly={aboutFieldWaitingIa}
+                      aria-busy={aboutFieldWaitingIa}
+                      placeholder={aboutFieldWaitingIa ? "Generando resumen con la IA…" : "Añade una descripción profesional..."}
+                      style={{ 
+                        border: "none", 
+                        background: "transparent", 
+                        padding: "0", 
+                        boxShadow: "none", 
+                        minHeight: "120px",
+                        fontSize: "0.95rem",
+                        lineHeight: "1.6",
+                        color: "var(--color-text)",
+                        width: "100%"
+                      }}
+                    />
                 </label>
               </article>
               <article className="opportunity-summary-cv-block opportunity-summary-cv-block--experience">
@@ -618,18 +721,27 @@ export function OpportunityDetailPage(): JSX.Element {
           </label>
           <label className="opportunity-field">
             <span>Fase</span>
-            <Select
-              value={stageDraft || data.stage}
-              onChange={(e) => setStageDraft(e.target.value as OpportunityStageKey)}
-            >
-              {OPPORTUNITY_STAGES_ORDER.filter((_, i) => i >= stageIndex).map((k) => (
-                <option key={k} value={k}>
-                  {opportunityStageLabel[k]}
-                </option>
-              ))}
-            </Select>
+            {useDirectorySteps ? (
+              <Select
+                value={stepDraft || data.current_step_id || ""}
+                onChange={(e) => setStepDraft(e.target.value)}
+              >
+                {allDirSteps.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </Select>
+            ) : (
+              <Select
+                value={stageDraft || data.stage}
+                onChange={(e) => setStageDraft(e.target.value as OpportunityStageKey)}
+              >
+                {OPPORTUNITY_STAGES_ORDER.filter((_, i) => i >= stageIndex).map((k) => (
+                  <option key={k} value={k}>{opportunityStageLabel[k]}</option>
+                ))}
+              </Select>
+            )}
           </label>
-          {(stageDraft || data.stage) === "response" ? (
+          {!useDirectorySteps && (stageDraft || data.stage) === "response" ? (
             <label className="opportunity-field">
               <span>Resultado</span>
               <Select
@@ -637,9 +749,7 @@ export function OpportunityDetailPage(): JSX.Element {
                 onChange={(e) => setOutcomeDraft(e.target.value as OpportunityResponseOutcome)}
               >
                 {OUTCOMES.map((o) => (
-                  <option key={o} value={o}>
-                    {responseOutcomeLabel[o]}
-                  </option>
+                  <option key={o} value={o}>{responseOutcomeLabel[o]}</option>
                 ))}
               </Select>
             </label>
@@ -647,13 +757,29 @@ export function OpportunityDetailPage(): JSX.Element {
           <Button
             type="button"
             className="cta-button opportunity-phase-save"
-            disabled={patchMut.isPending || !stageDraft}
-            onClick={() => onSaveStage()}
+            disabled={
+              useDirectorySteps
+                ? moveStepMut.isPending || !stepDraft
+                : patchMut.isPending || !stageDraft
+            }
+            onClick={() => {
+              if (useDirectorySteps) {
+                if (stepDraft) moveStepMut.mutate(stepDraft);
+              } else {
+                onSaveStage();
+              }
+            }}
           >
-            {patchMut.isPending ? <Loader2 className="spin" size={16} aria-hidden /> : null} Guardar fase
+            {(useDirectorySteps ? moveStepMut.isPending : patchMut.isPending)
+              ? <Loader2 className="spin" size={16} aria-hidden />
+              : null
+            } Guardar fase
           </Button>
         </div>
-        {patchMut.isError ? <p className="error-text">No se pudo guardar.</p> : null}
+        {(useDirectorySteps ? moveStepMut.isError : patchMut.isError)
+          ? <p className="error-text">No se pudo guardar.</p>
+          : null
+        }
       </Card>
 
       <Card className="panel opportunity-card opportunity-bento-card opportunity-contacts-card">
@@ -672,6 +798,23 @@ export function OpportunityDetailPage(): JSX.Element {
             >
               <Search size={16} aria-hidden /> Enriquecer
             </Button>
+            <Button
+              type="button"
+              className="workspace-tool-btn"
+              onClick={async () => {
+                setIsExporting(true);
+                try {
+                  await downloadOpportunityXlsx(opportunityId, data.title);
+                } catch (err) {
+                  console.error("Export failed:", err);
+                } finally {
+                  setIsExporting(false);
+                }
+              }}
+              disabled={isExporting}
+            >
+              <Download size={16} aria-hidden /> Exportar
+            </Button>
             <Button type="button" className="workspace-tool-btn" onClick={() => addContactRow()}>
               <Plus size={16} aria-hidden /> Añadir
             </Button>
@@ -683,76 +826,82 @@ export function OpportunityDetailPage(): JSX.Element {
           <ul className="opportunity-contact-editor-list">
             {contactsDraft.map((c, idx) => (
               <li key={c.id || idx} className="opportunity-contact-editor-card">
-                <div className="opportunity-contact-editor-grid">
-                  <label className="opportunity-field">
-                    <span>Tipo</span>
-                    <Select
-                      value={c.kind}
-                      onChange={(e) => updateContact(idx, { kind: e.target.value as OpportunityContactKind })}
-                    >
-                      {CONTACT_KINDS.map((k) => (
-                        <option key={k} value={k}>
-                          {contactKindLabel[k]}
-                        </option>
-                      ))}
-                    </Select>
-                  </label>
-                  <label className="opportunity-field opportunity-field--grow">
-                    <span>Valor</span>
-                    <Input
-                      type="text"
-                      value={c.value}
-                      onChange={(e) => updateContact(idx, { value: e.target.value })}
-                      maxLength={500}
-                    />
-                  </label>
-                  <label className="opportunity-field">
-                    <span>Rol (opcional)</span>
-                    <Input
-                      type="text"
-                      value={c.role ?? ""}
-                      onChange={(e) => updateContact(idx, { role: e.target.value || null })}
-                      maxLength={120}
-                    />
-                  </label>
-                  <label className="opportunity-field opportunity-field--grow">
-                    <span>Nota</span>
-                    {c.note && isUrl(c.note) && (
-                      <a
-                        href={c.note}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="contact-source-badge"
-                        title="Fuente donde se encontró este dato"
+                  <div className="opportunity-contact-editor-card-inner">
+                    <div className="opportunity-contact-editor-header">
+                      <Select
+                        value={c.kind}
+                        onChange={(e) => updateContact(idx, { kind: e.target.value as OpportunityContactKind })}
+                        className="ui-select--minimal-bold"
                       >
-                        <ExternalLink size={12} aria-hidden />
-                        {new URL(c.note).hostname?.replace(/^www\./, "")}
-                      </a>
-                    )}
-                    <Input
-                      type="text"
-                      value={c.note ?? ""}
-                      onChange={(e) => updateContact(idx, { note: e.target.value || null })}
-                      maxLength={500}
-                    />
-                  </label>
-                  <label className="opportunity-field opportunity-field--checkbox">
-                    <input
-                      type="checkbox"
-                      checked={c.is_primary}
-                      onChange={(e) => updateContact(idx, { is_primary: e.target.checked })}
-                    />
-                    <span>Principal</span>
-                  </label>
-                </div>
-                <Button
-                  type="button"
-                  className="link-button opportunity-contact-remove"
-                  onClick={() => removeContact(idx)}
-                  aria-label="Eliminar contacto"
-                >
-                  <Trash2 size={16} aria-hidden />
-                </Button>
+                        {CONTACT_KINDS.map((k) => (
+                          <option key={k} value={k}>
+                            {contactKindLabel[k].toUpperCase()}
+                          </option>
+                        ))}
+                      </Select>
+                      <div className="opportunity-contact-actions">
+                        <label className="opportunity-field--checkbox-mini">
+                          <input
+                            type="checkbox"
+                            checked={c.is_primary}
+                            onChange={(e) => updateContact(idx, { is_primary: e.target.checked })}
+                          />
+                          <span>Principal</span>
+                        </label>
+                        <Button
+                          type="button"
+                          className="icon-btn-danger"
+                          onClick={() => removeContact(idx)}
+                          aria-label="Eliminar"
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </div>
+                    </div>
+                    
+                    <div className="opportunity-contact-editor-body">
+                      <Input
+                        type="text"
+                        value={c.value}
+                        onChange={(e) => updateContact(idx, { value: e.target.value })}
+                        maxLength={500}
+                        placeholder="Valor del contacto..."
+                        className="ui-input--minimal-value"
+                      />
+                      
+                      <div className="opportunity-contact-editor-meta">
+                        <Input
+                          type="text"
+                          value={c.role ?? ""}
+                          onChange={(e) => updateContact(idx, { role: e.target.value || null })}
+                          maxLength={120}
+                          placeholder="Cargo / Rol"
+                          className="ui-input--minimal-meta"
+                        />
+                        <div className="input-with-badge-mini">
+                          {c.note && isUrl(c.note) && (
+                            <a
+                              href={c.note}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="contact-source-badge-micro"
+                              title="Ver fuente"
+                            >
+                              <ExternalLink size={8} />
+                            </a>
+                          )}
+                          <Input
+                            type="text"
+                            value={c.note ?? ""}
+                            onChange={(e) => updateContact(idx, { note: e.target.value || null })}
+                            maxLength={500}
+                            placeholder="Nota o fuente"
+                            className="ui-input--minimal-meta"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
               </li>
             ))}
           </ul>
@@ -774,19 +923,6 @@ export function OpportunityDetailPage(): JSX.Element {
           <div>
             <dt>Trabajo de búsqueda</dt>
             <dd>Job de Búsqueda: "{sourceJobLabel}"</dd>
-          </div>
-          <div>
-            <dt>URL fuente</dt>
-            <dd>
-              {data.source_url ? (
-                <a href={data.source_url} target="_blank" rel="noreferrer" className="lead-source-anchor">
-                  Abrir enlace
-                  <ExternalLink size={14} aria-hidden />
-                </a>
-              ) : (
-                "—"
-              )}
-            </dd>
           </div>
         </dl>
       </Card>
@@ -894,116 +1030,41 @@ export function OpportunityDetailPage(): JSX.Element {
 
       </div>
 
-      {enrichModalOpen && (
-        <div
-          className="enrich-modal-overlay"
-          onClick={() => { if (!enrichMut.isPending) setEnrichModalOpen(false); }}
-        >
-          <div className="enrich-modal-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="enrich-modal-header">
-              <h3 className="enrich-modal-title">Búsqueda de contactos</h3>
-              {!enrichMut.isPending && (
-                <button
-                  type="button"
-                  className="enrich-modal-close"
-                  aria-label="Cerrar"
-                  onClick={() => setEnrichModalOpen(false)}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-
-            {enrichMut.isPending && (
-              <div className="enrich-modal-loading">
-                <Loader2 className="spin" size={32} aria-hidden />
-                <p className="enrich-modal-stage">{ENRICH_STAGES[enrichStageIdx]}</p>
-              </div>
-            )}
-
-            {enrichMut.isError && (
-              <p className="error-text" style={{ padding: "1rem" }}>
-                Error al buscar. Intenta de nuevo.
-              </p>
-            )}
-
-            {enrichMut.isSuccess && enrichMut.data && (() => {
-              const r = enrichMut.data;
-              const found = [
-                { kind: "email" as OpportunityContactKind,    label: "Email",      value: r.email },
-                { kind: "phone" as OpportunityContactKind,    label: "Teléfono",   value: r.phone },
-                { kind: "whatsapp" as OpportunityContactKind, label: "WhatsApp",   value: r.whatsapp },
-                { kind: "linkedin" as OpportunityContactKind, label: "LinkedIn",   value: r.linkedin_url },
-                { kind: "other" as OpportunityContactKind,    label: "Dirección",  value: r.address },
-                { kind: "other" as OpportunityContactKind,    label: "Sitio web",  value: r.website },
-                { kind: "other" as OpportunityContactKind,    label: "Facebook",   value: r.facebook_url },
-                { kind: "other" as OpportunityContactKind,    label: "Instagram",  value: r.instagram_url },
-              ].filter((x) => x.value.trim() !== "");
-
-              return (
-                <div className="enrich-modal-results">
-                  {found.length === 0 ? (
-                    <p className="muted-text" style={{ padding: "0.5rem 0" }}>
-                      No se encontró información de contacto verificada.
-                    </p>
-                  ) : (
-                    <>
-                      <p className="enrich-modal-summary">{found.length} dato{found.length !== 1 ? "s" : ""} encontrado{found.length !== 1 ? "s" : ""}</p>
-                      <ul className="enrich-modal-contact-list">
-                        {found.map((item, i) => (
-                          <li key={i} className="enrich-modal-contact-row">
-                            <span className="enrich-modal-contact-label">{item.label}</span>
-                            <span className="enrich-modal-contact-value">{item.value}</span>
-                          </li>
-                        ))}
-                      </ul>
-                      {r.citations.length > 0 && (
-                        <details className="enrich-modal-sources">
-                          <summary>Fuentes ({Math.min(r.citations.length, 3)})</summary>
-                          <ul>
-                            {r.citations.slice(0, 3).map((c, i) => (
-                              <li key={i}>
-                                <a href={c.url} target="_blank" rel="noreferrer" className="enrich-modal-source-link">
-                                  {c.url}
-                                </a>
-                                {c.source === "direct_regex" && <span className="enrich-modal-source-tag">extracción directa</span>}
-                              </li>
-                            ))}
-                          </ul>
-                        </details>
-                      )}
-                      <Button
-                        type="button"
-                        className="cta-button"
-                        style={{ marginTop: "1rem", width: "100%" }}
-                        onClick={() => {
-                          const newContacts = found
-                            .filter((item) => !contactsDraft.some((c) => c.value.toLowerCase().trim() === item.value.toLowerCase().trim()))
-                            .map((item, i) => ({
-                              id: `enrich-${Date.now()}-${i}`,
-                              kind: item.kind as OpportunityContactKind,
-                              value: item.value,
-                              note: null,
-                              role: null,
-                              is_primary: contactsDraft.length === 0 && i === 0,
-                            }));
-                          if (newContacts.length > 0) {
-                            setContactsDraft((prev) => [...prev, ...newContacts]);
-                            setContactsDirty(true);
-                          }
-                          setEnrichModalOpen(false);
-                        }}
-                      >
-                        Aplicar contactos encontrados
-                      </Button>
-                    </>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-      )}
+      <EnrichContactModal
+        isOpen={enrichModalOpen}
+        onClose={() => setEnrichModalOpen(false)}
+        isPending={enrichMut.isPending}
+        isError={enrichMut.isError}
+        stageIdx={enrichStageIdx}
+        data={enrichMut.data ?? null}
+        isSaving={contactsMut.isPending}
+        saveError={contactsMut.isError}
+        onSave={(selectedData) => {
+          const newContacts = [...contactsDraft];
+          let added = false;
+          const getNote = () => selectedData.source_urls?.[0] ?? null;
+          
+          if (selectedData.email && !newContacts.some(c => c.value.toLowerCase().trim() === selectedData.email!.toLowerCase().trim())) {
+            newContacts.push({ id: `enrich-${Date.now()}-e`, kind: "email", value: selectedData.email, note: getNote(), role: null, is_primary: newContacts.length === 0 });
+            added = true;
+          }
+          if (selectedData.phone && !newContacts.some(c => c.value.toLowerCase().trim() === selectedData.phone!.toLowerCase().trim())) {
+            newContacts.push({ id: `enrich-${Date.now()}-p`, kind: "phone", value: selectedData.phone, note: getNote(), role: null, is_primary: newContacts.length === 0 });
+            added = true;
+          }
+          if (selectedData.whatsapp && !newContacts.some(c => c.value.toLowerCase().trim() === selectedData.whatsapp!.toLowerCase().trim())) {
+            newContacts.push({ id: `enrich-${Date.now()}-w`, kind: "whatsapp", value: selectedData.whatsapp, note: getNote(), role: null, is_primary: newContacts.length === 0 });
+            added = true;
+          }
+          
+          if (added) {
+            setContactsDraft(newContacts);
+            setContactsDirty(true);
+            contactsMut.mutate(newContacts);
+          }
+          setEnrichModalOpen(false);
+        }}
+      />
     </div>
   );
 }

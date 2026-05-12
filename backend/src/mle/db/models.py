@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, DateTime, JSON, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, JSON, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID as pg_UUID
 from sqlmodel import Field, SQLModel
 
 
@@ -98,6 +99,7 @@ class Opportunity(SQLModel, table=True):
     directory_id: UUID | None = Field(default=None, index=True, foreign_key="directories.id")
     current_step_id: UUID | None = Field(default=None, index=True, foreign_key="directory_steps.id")
     job_id: UUID | None = Field(default=None, index=True, foreign_key="search_jobs.id")
+    scrape_job_id: UUID | None = Field(default=None, index=True, foreign_key="url_scrape_jobs.id")
     exa_preview_index: int | None = Field(default=None, index=True)
     title: str = Field(default="", max_length=500)
     source_url: str = Field(default="", max_length=2000)
@@ -203,6 +205,41 @@ class Lead(SQLModel, table=True):
     )
 
 
+class DirectorySource(SQLModel, table=True):
+    """Fuente/recurso guardado dentro de un directorio (URL sugerida o manual).
+
+    Una fuente puede estar:
+    - "pending": guardada como referencia, sin scrapear aún
+    - "scraped": ya se scrapeó y se crearon oportunidades
+    - "discarded": se descartó como no útil
+    """
+
+    __tablename__ = "directory_sources"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    directory_id: UUID = Field(index=True, foreign_key="directories.id")
+    url: str = Field(max_length=2000)
+    title: str = Field(default="", max_length=500)
+    notes: str | None = Field(default=None, max_length=1000)
+    status: str = Field(default="pending", index=True, max_length=32)
+    scrape_job_id: UUID | None = Field(
+        default=None, index=True, foreign_key="url_scrape_jobs.id"
+    )
+    source_search_job_id: UUID | None = Field(
+        default=None, index=True, foreign_key="search_jobs.id",
+        description="Job de búsqueda del que se sugirió esta fuente (opcional)",
+    )
+    created_by_user_id: UUID | None = Field(
+        default=None, index=True, foreign_key="users.id"
+    )
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+
+
 class UrlScrapeJob(SQLModel, table=True):
     """Job para scraping de URLs y extracción de directorios con LLM."""
 
@@ -211,7 +248,15 @@ class UrlScrapeJob(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     target_url: str = Field(max_length=2000)
     user_prompt: str = Field(sa_column=Column(Text, nullable=False))
-    directory_id: UUID | None = Field(default=None, index=True, foreign_key="directories.id")
+    directory_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            pg_UUID(as_uuid=True),
+            ForeignKey("directories.id", ondelete="CASCADE"),
+            nullable=True,
+            index=True,
+        ),
+    )
     status: str = Field(default="pending", index=True, max_length=32)
     progress: int = Field(default=0, ge=0, le=100)
     metadata_json: dict[str, Any] = Field(
