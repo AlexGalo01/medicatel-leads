@@ -216,6 +216,7 @@ class OpportunitiesRepository:
             contacts=contacts,
             activity_timeline=[initial_note],
             owner_user_id=owner_user_id,
+            directory_id=job.directory_id,
             created_at=now,
             updated_at=now,
         )
