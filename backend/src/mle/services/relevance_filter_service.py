@@ -895,15 +895,26 @@ async def filter_exa_raw_results_by_relevance(
                 items_payload = _compact_items_for_chunk(raw_results, chunk_idx)
                 strict_geo = bool(criteria_compact.get("country_iso2"))
                 target_country = criteria_compact.get("country_iso2", "").strip().upper()
+                city_val = (criteria_compact.get("city") or "").strip()
                 if exa_cat_s == "company":
                     # Para búsqueda de empresas: geo más suave — no descartar por certificaciones/equipamiento internacional
                     geo_rules = (
                         "Reglas de ubicación para búsqueda de empresas:\n"
                         "- Si el resultado es CLARAMENTE de otro país (UK clinic, US hospital, clínica en Australia) → match=false.\n"
                         f"- Si hay señal positiva del país buscado (dominio local, menciona {criteria_compact.get('country_text', 'el país objetivo')}) → match=true.\n"
-                        "- Si no hay señal clara de ubicación pero el sector coincide → match=true (beneficio de la duda).\n"
                         "- NO descartes por equipamiento internacional o certificaciones (FDA, ISO, JCI, etc.) — son señales técnicas, no de ubicación.\n"
                     )
+                    if city_val:
+                        geo_rules += (
+                            f"*** REGLA GEO OBLIGATORIA — La búsqueda especifica la ubicación: '{city_val}' ***\n"
+                            f"- INCLUIR SOLO entidades que mencionen '{city_val}' en su título, URL o descripción, "
+                            f"o que estén verificablemente ubicadas en esa zona.\n"
+                            f"- Entidades claramente ubicadas en otras ciudades del mismo país → match=false "
+                            f"(ej: hospital en Tegucigalpa cuando se busca '{city_val}').\n"
+                            f"- Si no hay señal geográfica clara que indique '{city_val}' → match=false.\n"
+                        )
+                    else:
+                        geo_rules += "- Si no hay señal clara de ubicación pero el sector coincide → match=true (beneficio de la duda).\n"
                 else:
                     geo_rules = (
                         "Reglas estrictas de ubicación:\n"

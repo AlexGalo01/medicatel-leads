@@ -173,11 +173,55 @@ async def _fetch_brave_directory_sources(
     return sources
 
 
+_ENTITY_NOISE_RE = re.compile(
+    r"^\s*(hospital y cl[íi]nica|hospital y clinica|cl[íi]nica m[eé]dica|centro m[eé]dico|"
+    r"hospital|cl[íi]nica|clinica|fundaci[oó]n|fundacion|grupo|dr\.|dra\.)\s+",
+    re.IGNORECASE,
+)
+
+_URL_QUALITY_RULES: list[tuple] = [
+    (lambda u: u.endswith(".hn") or ".hn/" in u, 10),
+    (lambda u: "linkedin.com/company" in u, 6),
+    (lambda u: any(x in u for x in ("facebook.com", "instagram.com")), 3),
+    (lambda u: any(x in u for x in ("wikipedia", "ecured", "mapcarta", "waze", "geonames", "mindat")), 1),
+]
+
+
+def _entity_key(title: str) -> str:
+    key = _ENTITY_NOISE_RE.sub("", title.lower().strip())
+    key = re.split(r"[\s\u2013\-|:/]+", key)[0]
+    return key[:40].strip()
+
+
+def _url_quality(url: str) -> int:
+    u = url.lower()
+    for fn, score in _URL_QUALITY_RULES:
+        if fn(u):
+            return score
+    return 5
+
+
 def _build_exa_preview(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for i, item in enumerate(results[:MAX_EXA_PREVIEW_ITEMS]):
-        if isinstance(item, dict):
-            out.append(_preview_item(item, i))
+    entity_seen: dict[str, int] = {}  # entity_key → best quality score seen so far
+    for item in results[:MAX_EXA_PREVIEW_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        raw_title = str(item.get("title", "")).strip()
+        url = str(item.get("url", "")).strip()
+        key = _entity_key(_normalize_title(raw_title))
+        quality = _url_quality(url)
+        if key and len(key) > 3:
+            if key in entity_seen:
+                if quality <= entity_seen[key]:
+                    continue  # already have a better URL for this entity
+                # this URL is better — replace the previous entry
+                out = [r for r in out if _entity_key(r.get("title", "")) != key]
+            entity_seen[key] = quality
+        out.append(_preview_item(item, len(out)))
+    # re-index sequentially
+    for idx, row in enumerate(out):
+        row["index"] = idx + 1
     return out
 
 
