@@ -2,6 +2,7 @@ import type {
   AdminCreateUserRequest,
   AdminUpdateUserRequest,
   AdminUsersListResponse,
+  AdminUserJobsResponse,
   Directory,
   DirectoryCreateRequest,
   DirectoryEntriesListResponse,
@@ -671,6 +672,36 @@ export async function updateAdminUser(
     body: JSON.stringify(body),
   });
   return parseJsonResponse<UserPublic>(response);
+}
+
+export async function setPreviewItemLabel(
+  jobId: string,
+  previewIndex: number,
+  label: string | null,
+): Promise<void> {
+  const response = await apiFetch(
+    `${buildApiUrl(`/search-jobs/${jobId}/preview/${previewIndex}/label`)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label }),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: "Error al guardar etiqueta" }));
+    throw new Error(err.detail || "Error al guardar etiqueta");
+  }
+}
+
+export async function listAdminUserJobs(
+  userId: string,
+  params?: { limit?: number; offset?: number },
+): Promise<AdminUserJobsResponse> {
+  const url = new URL(buildApiUrl(`/admin/users/${userId}/jobs`));
+  if (params?.limit !== undefined) url.searchParams.set("limit", String(params.limit));
+  if (params?.offset !== undefined) url.searchParams.set("offset", String(params.offset));
+  const response = await apiFetch(url.toString());
+  return parseJsonResponse<AdminUserJobsResponse>(response);
 }
 
 export async function deleteAdminUser(userId: string): Promise<void> {

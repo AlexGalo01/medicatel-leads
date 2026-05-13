@@ -18,6 +18,7 @@ import {
   listLeads,
   listOpportunities,
   loadMoreExaResults,
+  setPreviewItemLabel,
 } from "../api";
 import { Button } from "../components/ui/button";
 import type { ExaCategoryChoice, SearchFocus } from "../types";
@@ -46,6 +47,22 @@ function formatRelative(iso: string | undefined): string {
   return `hace ${diffD} día${diffD !== 1 ? "s" : ""}`;
 }
 
+type PreviewLabel = "no_relevante" | "duplicado" | "ya_contactado" | "fuente";
+
+const LABEL_OPTIONS: { value: PreviewLabel; label: string }[] = [
+  { value: "no_relevante", label: "No relevante" },
+  { value: "duplicado", label: "Duplicado" },
+  { value: "ya_contactado", label: "Ya contactado" },
+  { value: "fuente", label: "Fuente" },
+];
+
+const LABEL_STYLE: Record<PreviewLabel, { bg: string; color: string }> = {
+  no_relevante: { bg: "rgba(239,68,68,0.10)", color: "#DC2626" },
+  duplicado: { bg: "rgba(245,158,11,0.12)", color: "#B45309" },
+  ya_contactado: { bg: "rgba(59,130,246,0.10)", color: "#1D4ED8" },
+  fuente: { bg: "rgba(139,92,246,0.10)", color: "#7C3AED" },
+};
+
 interface RowData {
   id: string;
   title: string;
@@ -58,6 +75,7 @@ interface RowData {
   href: string;
   enriched: boolean;
   previewIndex: number | null;
+  label: PreviewLabel | null;
 }
 
 function stripEmojis(text: string): string {
@@ -276,6 +294,10 @@ export function JobSearchWorkspacePage(): JSX.Element {
         const idx = r.index;
         const opp = oppByPreviewIndex.get(idx);
         const stepName = opp?.stepId ? stepNameById.get(opp.stepId) : null;
+        const rawLabel = (r as PreviewExt & { label?: string }).label;
+        const label = LABEL_OPTIONS.some((o) => o.value === rawLabel)
+          ? (rawLabel as PreviewLabel)
+          : null;
         return {
           id: `preview-${idx}`,
           title: (r.title ?? "").trim() || "Sin título",
@@ -288,6 +310,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
           href: `/jobs/${jobId}/result/${idx}`,
           enriched: r.enrichment_status === "enriched",
           previewIndex: idx,
+          label,
         };
       });
     }
@@ -305,6 +328,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
         href: `/leads/${lead.lead_id}`,
         enriched: hasAny,
         previewIndex: null,
+        label: null,
       };
     });
   }, [searchOnlyDemo, previewRows, persistedLeads, jobId, oppByPreviewIndex, stepNameById]);
@@ -697,6 +721,31 @@ export function JobSearchWorkspacePage(): JSX.Element {
                     {row.stepLabel ? (
                       <span className="workspace-v3-row-step">{row.stepLabel}</span>
                     ) : null}
+                    {searchOnlyDemo && row.previewIndex != null && (
+                      <select
+                        className="preview-label-select"
+                        value={row.label ?? ""}
+                        style={row.label ? {
+                          background: LABEL_STYLE[row.label].bg,
+                          color: LABEL_STYLE[row.label].color,
+                          borderColor: LABEL_STYLE[row.label].color,
+                        } : undefined}
+                        onClick={(e) => e.preventDefault()}
+                        onChange={async (e) => {
+                          e.stopPropagation();
+                          const val = e.target.value || null;
+                          try {
+                            await setPreviewItemLabel(jobId, row.previewIndex!, val);
+                            void queryClient.invalidateQueries({ queryKey: ["job-status", jobId] });
+                          } catch { /* silent */ }
+                        }}
+                      >
+                        <option value="">Etiquetar…</option>
+                        {LABEL_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                   <ChevronRight size={14} aria-hidden className="workspace-v3-row-chevron" />
                 </Link>

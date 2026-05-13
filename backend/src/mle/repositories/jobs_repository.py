@@ -24,6 +24,7 @@ class JobsRepository:
         notes: str | None = None,
         metadata_json: dict[str, Any] | None = None,
         directory_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> SearchJob:
         normalized_query = expanded_query_text.strip()
         meta = dict(metadata_json or {})
@@ -37,6 +38,7 @@ class JobsRepository:
             requested_contact_channels=requested_contact_channels,
             notes=notes,
             directory_id=directory_id,
+            user_id=user_id,
             metadata_json=meta,
         )
         self.session.add(job)
@@ -100,6 +102,7 @@ class JobsRepository:
         offset: int = 0,
         query_text: str | None = None,
         directory_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> tuple[list[SearchJob], int]:
         base_query = select(SearchJob)
         normalized = (query_text or "").strip()
@@ -114,6 +117,8 @@ class JobsRepository:
             )
         if directory_id is not None:
             base_query = base_query.where(SearchJob.directory_id == directory_id)
+        if user_id is not None:
+            base_query = base_query.where(SearchJob.user_id == user_id)
         total_query = select(func.count()).select_from(base_query.subquery())
         total_result = await self.session.execute(total_query)
         total = int(total_result.scalar_one() or 0)

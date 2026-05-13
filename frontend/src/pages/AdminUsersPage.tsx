@@ -6,6 +6,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Search,
   Trash2,
   Power,
   X,
@@ -271,6 +272,12 @@ export function AdminUsersPage(): JSX.Element {
                       </span>
                     ))}
                   </div>
+                  <Link
+                    to={`/admin/users/${u.user_id}/jobs`}
+                    className="link-button"
+                  >
+                    <Search size={14} aria-hidden /> Búsquedas
+                  </Link>
                   <Button
                     className="link-button"
                     onClick={() => setEditingId(u.user_id)}

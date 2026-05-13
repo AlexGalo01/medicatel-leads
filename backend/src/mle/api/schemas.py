@@ -45,6 +45,13 @@ class ClarifySearchJobRequest(BaseModel):
     reply: str = Field(min_length=1, max_length=500)
 
 
+VALID_PREVIEW_LABELS = {"no_relevante", "duplicado", "ya_contactado", "fuente"}
+
+
+class PreviewLabelRequest(BaseModel):
+    label: str | None = Field(default=None, description="null clears the label")
+
+
 class ClarifySearchJobResponse(BaseModel):
     job_id: str
     status: str
@@ -174,6 +181,12 @@ class AdminUpdateUserRequest(BaseModel):
 
 class AdminUsersListResponse(BaseModel):
     items: list[UserPublic]
+
+
+class AdminUserJobsResponse(BaseModel):
+    items: list[SearchJobListItemResponse]
+    total: int
+    user: UserPublic
 
 
 class OpportunityOwnerSnippet(BaseModel):

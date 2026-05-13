@@ -27,6 +27,7 @@ class SearchJob(SQLModel, table=True):
     )
     notes: str | None = Field(default=None, max_length=500)
     directory_id: UUID | None = Field(default=None, index=True, foreign_key="directories.id")
+    user_id: UUID | None = Field(default=None, index=True, foreign_key="users.id")
     metadata_json: dict[str, Any] = Field(
         default_factory=dict, sa_column=Column(JSON, nullable=False)
     )

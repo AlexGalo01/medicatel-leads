@@ -18,6 +18,9 @@ from mle.api.schemas import (
     AdminCreateUserRequest,
     AdminUpdateUserRequest,
     AdminUsersListResponse,
+    AdminUserJobsResponse,
+    PreviewLabelRequest,
+    VALID_PREVIEW_LABELS,
     OpportunityCreateManualRequest,
     DirectoryEntriesListResponse,
     DirectoryEntryItemResponse,
@@ -232,7 +235,7 @@ def _serialize_source_citations(raw_citations: list[object]) -> list[dict[str, o
 @protected_router.post("/search-jobs", response_model=SearchJobCreateResponse, status_code=202)
 async def create_search_job(
     payload: SearchJobCreateRequest,
-    _u: User = Depends(require_permission("use_search")),
+    current_user: User = Depends(require_permission("use_search")),
 ) -> SearchJobCreateResponse:
     contact_channels = payload.contact_channels or ["email", "whatsapp", "linkedin"]
     user_query = payload.query.strip()
@@ -291,6 +294,7 @@ async def create_search_job(
             notes=payload.notes.strip() if payload.notes and payload.notes.strip() else None,
             metadata_json=job_metadata,
             directory_id=payload.directory_id,
+            user_id=current_user.id,
         )
 
     if not requires_clarification:
@@ -457,6 +461,39 @@ async def list_search_jobs(
         page_size=page_size,
         total_pages=total_pages,
     )
+
+
+@protected_router.patch("/search-jobs/{job_id}/preview/{preview_index}/label", status_code=200)
+async def set_preview_item_label(
+    job_id: UUID,
+    preview_index: int,
+    payload: PreviewLabelRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> dict[str, object]:
+    """Establece o limpia la etiqueta de un ítem del preview Exa."""
+    if payload.label is not None and payload.label not in VALID_PREVIEW_LABELS:
+        raise HTTPException(status_code=422, detail=f"Etiqueta inválida. Valores permitidos: {sorted(VALID_PREVIEW_LABELS)}")
+    async with async_session_factory() as session:
+        repo = JobsRepository(session)
+        job = await repo.get_by_id(job_id)
+        if job is None:
+            _raise_not_found("Job")
+        meta = dict(job.metadata_json or {})
+        preview = list(meta.get("exa_results_preview") or [])
+        updated = False
+        for item in preview:
+            if isinstance(item, dict) and item.get("index") == preview_index:
+                if payload.label is None:
+                    item.pop("label", None)
+                else:
+                    item["label"] = payload.label
+                updated = True
+                break
+        if not updated:
+            raise HTTPException(status_code=404, detail="Ítem de preview no encontrado")
+        meta["exa_results_preview"] = preview
+        await repo.update_status(job_id=job_id, status=job.status, progress=job.progress, metadata_json=meta)
+    return {"job_id": str(job_id), "preview_index": preview_index, "label": payload.label}
 
 
 @protected_router.post("/search-jobs/{job_id}/cancel", status_code=200)
@@ -1818,6 +1855,58 @@ async def admin_list_users(_admin: User = Depends(require_admin)) -> AdminUsersL
         repo = UsersRepository(session)
         users = await repo.list_all()
     return AdminUsersListResponse(items=[_user_to_public(u) for u in users])
+
+
+@protected_router.get("/admin/users/{user_id}/jobs", response_model=AdminUserJobsResponse)
+async def admin_list_user_jobs(
+    user_id: UUID,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    _admin: User = Depends(require_admin),
+) -> AdminUserJobsResponse:
+    async with async_session_factory() as session:
+        users_repo = UsersRepository(session)
+        target_user = await users_repo.get_by_id(user_id)
+        if target_user is None:
+            _raise_not_found("Usuario")
+        jobs_repo = JobsRepository(session)
+        jobs, total = await jobs_repo.list_jobs(limit=limit, offset=offset, user_id=user_id)
+        dir_ids = {job.directory_id for job in jobs if job.directory_id is not None}
+        dir_name_map: dict[UUID, str] = {}
+        if dir_ids:
+            from mle.db.models import Directory
+            result = await session.execute(
+                select(Directory).where(Directory.id.in_(list(dir_ids)))
+            )
+            for d in result.scalars().all():
+                dir_name_map[d.id] = d.name
+    items: list[SearchJobListItemResponse] = []
+    for job in jobs:
+        meta = job.metadata_json if isinstance(job.metadata_json, dict) else {}
+        query_text = str(meta.get("user_query") or meta.get("query_text") or job.specialty or "").strip()
+        plan = meta.get("search_plan")
+        exa_category: str | None = None
+        if isinstance(plan, dict):
+            raw_cat = plan.get("exa_category")
+            if raw_cat in ("people", "company"):
+                exa_category = str(raw_cat)
+        if exa_category is None:
+            cat_client = meta.get("exa_category_client")
+            if cat_client in ("people", "company"):
+                exa_category = str(cat_client)
+        items.append(
+            SearchJobListItemResponse(
+                job_id=str(job.id),
+                query=query_text or f"Búsqueda {str(job.id)[:8]}",
+                status=job.status,
+                created_at=job.created_at,
+                exa_category=exa_category,
+                directory_id=str(job.directory_id) if job.directory_id else None,
+                directory_name=dir_name_map.get(job.directory_id) if job.directory_id else None,
+                error_message=_pipeline_error_message(meta, max_length=160) if job.status == "error" else None,
+            )
+        )
+    return AdminUserJobsResponse(items=items, total=total, user=_user_to_public(target_user))
 
 
 VALID_PERMISSIONS = {"use_search", "manage_opportunities"}

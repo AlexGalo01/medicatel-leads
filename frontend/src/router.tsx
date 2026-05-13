@@ -10,6 +10,7 @@ import { OpportunitiesListPage } from "./features/opportunities/pages/Opportunit
 import { OpportunityCreatePage } from "./features/opportunities/pages/OpportunityCreatePage";
 import { OpportunityDetailPage } from "./features/opportunities/pages/OpportunityDetailPage";
 import { AdminCreateUserPage } from "./pages/AdminCreateUserPage";
+import { AdminUserJobsPage } from "./pages/AdminUserJobsPage";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { JobExaResultDetailPage } from "./pages/JobExaResultDetailPage";
 import { JobSearchWorkspacePage } from "./pages/JobSearchWorkspacePage";
@@ -46,6 +47,7 @@ export const appRouter = createBrowserRouter([
       { path: "opportunities/:opportunityId", element: <OpportunityDetailPage /> },
       { path: "admin/users", element: <AdminUsersPage /> },
       { path: "admin/users/new", element: <AdminCreateUserPage /> },
+      { path: "admin/users/:userId/jobs", element: <AdminUserJobsPage /> },
     ],
   },
 ]);

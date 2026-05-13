@@ -43,6 +43,12 @@ export interface AdminUsersListResponse {
   items: UserPublic[];
 }
 
+export interface AdminUserJobsResponse {
+  items: SearchJobListItem[];
+  total: number;
+  user: UserPublic;
+}
+
 export type SearchFocus = "general" | "linkedin" | "instagram";
 
 export type ExaCategoryChoice = "people" | "company";

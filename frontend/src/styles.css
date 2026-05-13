@@ -8207,6 +8207,26 @@ textarea.ui-input {
   white-space: nowrap;
 }
 
+.preview-label-select {
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  white-space: nowrap;
+  max-width: 110px;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.preview-label-select:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
 .modal-overlay-save-opp {
   position: fixed;
   top: 0;

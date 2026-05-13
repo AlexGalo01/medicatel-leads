@@ -63,6 +63,11 @@ export function DirectoriesListPage(): JSX.Element {
 
   function handleDeleteConfirm() {
     if (!confirmDeleteId) return;
+    // Directorio vacío: eliminar directamente sin reasignar
+    if (isEmpty) {
+      deleteMut.mutate({ id: confirmDeleteId });
+      return;
+    }
     if (deleteMode === "reassign") {
       if (creatingNew) {
         if (!newDirName.trim()) return;
