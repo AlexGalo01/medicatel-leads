@@ -250,11 +250,19 @@ async def exa_webset_node(state: LeadSearchGraphState) -> dict[str, object]:
             brave_query = queries[0] if queries else state.query_text
             # Query principal — más páginas para asegurar cobertura mínima
             brave_coros.append(brave_client.web_search(brave_query, country=brave_country, count=20, pages=3))
-            # Query adicional para perfiles individuales cuando la búsqueda es de personas
             exa_category = search_config.get("exa_category")
+            # Query adicional para perfiles individuales cuando la búsqueda es de personas
             if exa_category == "people":
                 linkedin_query = f"site:linkedin.com/in {state.query_text}"
                 brave_coros.append(brave_client.web_search(linkedin_query, country=brave_country, count=20, pages=2))
+            # Query adicional geo-específica cuando hay ciudad definida (aumenta cobertura en zonas de baja densidad)
+            rel = planner_output.get("relevance_criteria") if isinstance(planner_output.get("relevance_criteria"), dict) else {}
+            city_hint = str(rel.get("city") or "").strip()
+            entity_hint = str(rel.get("role_or_stack_hint") or "").strip()
+            if city_hint and entity_hint:
+                city_query = f"{entity_hint} {city_hint}"
+                if city_query.strip().lower() != brave_query.strip().lower():
+                    brave_coros.append(brave_client.web_search(city_query, country=brave_country, count=20, pages=2))
 
         # Ejecutar todos los slots en paralelo (con semáforo para limitar concurrencia Exa)
         slot_coroutines = [

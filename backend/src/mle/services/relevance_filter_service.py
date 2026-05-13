@@ -906,12 +906,14 @@ async def filter_exa_raw_results_by_relevance(
                     )
                     if city_val:
                         geo_rules += (
-                            f"*** REGLA GEO OBLIGATORIA — La búsqueda especifica la ubicación: '{city_val}' ***\n"
-                            f"- INCLUIR SOLO entidades que mencionen '{city_val}' en su título, URL o descripción, "
-                            f"o que estén verificablemente ubicadas en esa zona.\n"
-                            f"- Entidades claramente ubicadas en otras ciudades del mismo país → match=false "
-                            f"(ej: hospital en Tegucigalpa cuando se busca '{city_val}').\n"
-                            f"- Si no hay señal geográfica clara que indique '{city_val}' → match=false.\n"
+                            f"*** PREFERENCIA GEO — La búsqueda especifica: '{city_val}' ***\n"
+                            f"- PREFERIR entidades que mencionen '{city_val}' o estén verificablemente ubicadas allí.\n"
+                            f"- Si el resultado menciona EXPLÍCITAMENTE otra ciudad/departamento del mismo país "
+                            f"(ej: 'Hospital en Tegucigalpa' cuando se busca '{city_val}') → match=false.\n"
+                            f"- Si no hay señal de ciudad específica pero el país y sector coinciden → match=true "
+                            f"(el resultado puede ser de la zona sin mencionarla por nombre).\n"
+                            f"- IMPORTANTE: '{city_val}' puede ser un topónimo poco conocido — no requieras que "
+                            f"el resultado lo mencione textualmente para ser incluido.\n"
                         )
                     else:
                         geo_rules += "- Si no hay señal clara de ubicación pero el sector coincide → match=true (beneficio de la duda).\n"

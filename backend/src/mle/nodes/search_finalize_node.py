@@ -189,7 +189,10 @@ _URL_QUALITY_RULES: list[tuple] = [
 
 def _entity_key(title: str) -> str:
     key = _ENTITY_NOISE_RE.sub("", title.lower().strip())
-    key = re.split(r"[\s\u2013\-|:/]+", key)[0]
+    tokens = re.split(r"[\s\u2013\-|:/]+", key)
+    # Usar primeras 2 palabras para evitar colapsar entidades distintas
+    # que comparten primera palabra (Puerto Lempira ≠ Puerto Cortés)
+    key = " ".join(tokens[:2]) if len(tokens) > 1 else (tokens[0] if tokens else "")
     return key[:40].strip()
 
 
