@@ -1443,6 +1443,8 @@ textarea {
 
 .cta-button:hover:not(:disabled) {
   opacity: 0.88;
+  background: var(--color-primary);
+  color: var(--color-surface);
 }
 
 .cta-button:focus-visible,
@@ -5705,8 +5707,66 @@ textarea {
   color: white;
 }
 
-.dirs-confirm-btn--delete:hover {
+.dirs-confirm-btn--delete:hover:not(:disabled) {
   opacity: 0.9;
+}
+
+.dirs-confirm-btn--delete:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dirs-confirm-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.dirs-confirm-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.dirs-confirm-option input[type="radio"] {
+  accent-color: var(--color-primary);
+}
+
+.dirs-confirm-reassign {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.dirs-confirm-select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.dirs-confirm-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.dirs-confirm-input:focus,
+.dirs-confirm-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--focus-ring);
 }
 
 /* ---- Responsive ---- */
@@ -6434,6 +6494,26 @@ textarea {
   border-radius: 4px;
   padding: 1px 5px;
   max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory-board-card-search-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-alt);
+  border-radius: 4px;
+  padding: 2px 5px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.directory-board-card-search-query {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

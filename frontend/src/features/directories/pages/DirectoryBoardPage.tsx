@@ -109,7 +109,13 @@ function hostLabel(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url.slice(0, 30); }
 }
 
-function OpportunityCard({ opp }: { opp: OpportunityListItem }): JSX.Element {
+function OpportunityCard({
+  opp,
+  jobInfo,
+}: {
+  opp: OpportunityListItem;
+  jobInfo?: { query: string; exa_category: string | null | undefined };
+}): JSX.Element {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `opp-${opp.opportunity_id}`,
     data: { opportunityId: opp.opportunity_id, currentStepId: opp.current_step_id },
@@ -137,7 +143,14 @@ function OpportunityCard({ opp }: { opp: OpportunityListItem }): JSX.Element {
       >
         <strong className="directory-board-card-title">{opp.title || "Sin título"}</strong>
         {opp.city ? <span className="muted-text directory-board-card-meta">{opp.city}</span> : null}
-        {opp.scrape_target_url ? (
+        {jobInfo ? (
+          <span className="directory-board-card-search-badge" title={jobInfo.query}>
+            {jobInfo.exa_category === "company"
+              ? <Building2 size={10} aria-hidden />
+              : <Users size={10} aria-hidden />}
+            <span className="directory-board-card-search-query">{jobInfo.query}</span>
+          </span>
+        ) : opp.scrape_target_url ? (
           <span className="directory-board-card-source" title={opp.scrape_target_url}>
             {hostLabel(opp.scrape_target_url)}
           </span>
@@ -159,9 +172,11 @@ function OpportunityCard({ opp }: { opp: OpportunityListItem }): JSX.Element {
 function StepColumn({
   step,
   items,
+  jobMap,
 }: {
   step: DirectoryStep;
   items: OpportunityListItem[];
+  jobMap: Map<string, { query: string; exa_category: string | null | undefined }>;
 }): JSX.Element {
   const { setNodeRef, isOver } = useDroppable({ id: `step-${step.id}` });
   return (
@@ -187,7 +202,10 @@ function StepColumn({
       <ul className="directory-board-column-list">
         {items.map((opp) => (
           <li key={opp.opportunity_id}>
-            <OpportunityCard opp={opp} />
+            <OpportunityCard
+              opp={opp}
+              jobInfo={opp.job_id ? jobMap.get(opp.job_id) : undefined}
+            />
           </li>
         ))}
       </ul>
@@ -315,6 +333,14 @@ export function DirectoryBoardPage(): JSX.Element {
     return (itemsQuery.data?.items ?? []).filter((i) => i.terminated_at);
   }, [itemsQuery.data]);
 
+  const jobMap = useMemo(() => {
+    const map = new Map<string, { query: string; exa_category: string | null | undefined }>();
+    for (const job of searchesQuery.data?.items ?? []) {
+      map.set(job.job_id, { query: job.query, exa_category: job.exa_category });
+    }
+    return map;
+  }, [searchesQuery.data]);
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over) return;
@@ -413,6 +439,7 @@ export function DirectoryBoardPage(): JSX.Element {
                   key={step.id}
                   step={step}
                   items={itemsByStep.get(step.id) ?? []}
+                  jobMap={jobMap}
                 />
               ))}
             </div>

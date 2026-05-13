@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Folder, FolderOpen, Plus, Search, LayoutGrid, List, Trash2, Pencil } from "lucide-react";
+import { Folder, FolderOpen, Plus, Search, LayoutGrid, List, Trash2, Pencil, Loader2 } from "lucide-react";
 
-import { listDirectories, deleteDirectory } from "../../../api";
+import { listDirectories, deleteDirectory, createDirectory } from "../../../api";
 import { Card } from "../../../components/ui/card";
 
 const PAGE_SIZE = 12;
@@ -15,6 +15,12 @@ export function DirectoriesListPage(): JSX.Element {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // "delete" = eliminar opps también | "reassign" = reasignar
+  const [deleteMode, setDeleteMode] = useState<"delete" | "reassign">("reassign");
+  const [reassignTargetId, setReassignTargetId] = useState<string>("");
+  // crear directorio nuevo inline
+  const [creatingNew, setCreatingNew] = useState(false);
+  const [newDirName, setNewDirName] = useState("");
 
   const qc = useQueryClient();
   const query = useQuery({
@@ -23,12 +29,52 @@ export function DirectoriesListPage(): JSX.Element {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: string) => deleteDirectory(id),
+    mutationFn: ({ id, reassignToDirectoryId }: { id: string; reassignToDirectoryId?: string }) =>
+      deleteDirectory(id, reassignToDirectoryId ? { reassignToDirectoryId } : undefined),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["directories"] });
-      setConfirmDeleteId(null);
+      closeDeleteModal();
     },
   });
+
+  const createDirMut = useMutation({
+    mutationFn: (name: string) =>
+      createDirectory({
+        name,
+        description: null,
+        steps: [{ name: "Sin clasificar", is_terminal: false, is_won: false }],
+      }),
+    onSuccess: (newDir) => {
+      qc.invalidateQueries({ queryKey: ["directories"] });
+      // Usar el nuevo directorio como destino de reasignación
+      if (confirmDeleteId) {
+        deleteMut.mutate({ id: confirmDeleteId, reassignToDirectoryId: newDir.id });
+      }
+    },
+  });
+
+  function closeDeleteModal() {
+    setConfirmDeleteId(null);
+    setDeleteMode("reassign");
+    setReassignTargetId("");
+    setCreatingNew(false);
+    setNewDirName("");
+  }
+
+  function handleDeleteConfirm() {
+    if (!confirmDeleteId) return;
+    if (deleteMode === "reassign") {
+      if (creatingNew) {
+        if (!newDirName.trim()) return;
+        createDirMut.mutate(newDirName.trim());
+      } else {
+        if (!reassignTargetId) return;
+        deleteMut.mutate({ id: confirmDeleteId, reassignToDirectoryId: reassignTargetId });
+      }
+    } else {
+      deleteMut.mutate({ id: confirmDeleteId });
+    }
+  }
 
   const filtered = useMemo(() => {
     if (!query.data) return [];
@@ -57,15 +103,20 @@ export function DirectoriesListPage(): JSX.Element {
     e.preventDefault();
     e.stopPropagation();
     setConfirmDeleteId(id);
-  }
-
-  function handleDeleteConfirm() {
-    if (confirmDeleteId) {
-      deleteMut.mutate(confirmDeleteId);
-    }
+    setDeleteMode("reassign");
+    setReassignTargetId("");
+    setCreatingNew(false);
+    setNewDirName("");
   }
 
   const confirmDir = query.data?.items.find((d) => d.id === confirmDeleteId);
+  const otherDirs = (query.data?.items ?? []).filter((d) => d.id !== confirmDeleteId);
+  const isPending = deleteMut.isPending || createDirMut.isPending;
+  const isEmpty = (confirmDir?.item_count ?? 0) === 0;
+  const canConfirm = isEmpty
+    || deleteMode === "delete"
+    || (deleteMode === "reassign" && creatingNew && newDirName.trim().length > 0)
+    || (deleteMode === "reassign" && !creatingNew && reassignTargetId !== "");
 
   return (
     <section className="directories-page">
@@ -255,24 +306,106 @@ export function DirectoriesListPage(): JSX.Element {
       {confirmDir && (
         <div
           className="dirs-confirm-overlay"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !deleteMut.isPending) {
-              setConfirmDeleteId(null);
-            }
-          }}
+          onClick={(e) => { if (e.target === e.currentTarget && !isPending) closeDeleteModal(); }}
         >
           <div className="dirs-confirm-panel" onClick={(e) => e.stopPropagation()}>
-            <h2 className="dirs-confirm-title">Eliminar directorio</h2>
-            <p className="dirs-confirm-description">
-              ¿Estás seguro de que deseas eliminar el directorio "{confirmDir.name}"? Se eliminarán también todas
-              las oportunidades que contiene. Esta acción no se puede deshacer.
-            </p>
+            <h2 className="dirs-confirm-title">Eliminar «{confirmDir.name}»</h2>
+
+            {confirmDir.item_count > 0 ? (
+              <>
+                <p className="dirs-confirm-description">
+                  Este directorio tiene <strong>{confirmDir.item_count}</strong>{" "}
+                  {confirmDir.item_count === 1 ? "oportunidad" : "oportunidades"}. ¿Qué deseas hacer con ellas?
+                </p>
+
+                <div className="dirs-confirm-options">
+                  <label className="dirs-confirm-option">
+                    <input
+                      type="radio"
+                      name="delete-mode"
+                      value="reassign"
+                      checked={deleteMode === "reassign"}
+                      onChange={() => setDeleteMode("reassign")}
+                    />
+                    <span>Reasignar a otro directorio</span>
+                  </label>
+                  <label className="dirs-confirm-option">
+                    <input
+                      type="radio"
+                      name="delete-mode"
+                      value="delete"
+                      checked={deleteMode === "delete"}
+                      onChange={() => setDeleteMode("delete")}
+                    />
+                    <span>Eliminar las oportunidades también</span>
+                  </label>
+                </div>
+
+                {deleteMode === "reassign" && (
+                  <div className="dirs-confirm-reassign">
+                    {!creatingNew ? (
+                      <>
+                        <select
+                          value={reassignTargetId}
+                          onChange={(e) => setReassignTargetId(e.target.value)}
+                          className="dirs-confirm-select"
+                        >
+                          <option value="">Seleccionar directorio…</option>
+                          {otherDirs.map((d) => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="link-button"
+                          style={{ fontSize: "0.85rem", marginTop: "6px" }}
+                          onClick={() => { setCreatingNew(true); setReassignTargetId(""); }}
+                        >
+                          + Crear nuevo directorio
+                        </button>
+                      </>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                        <input
+                          type="text"
+                          className="dirs-confirm-input"
+                          placeholder="Nombre del nuevo directorio…"
+                          value={newDirName}
+                          onChange={(e) => setNewDirName(e.target.value)}
+                          autoFocus
+                          maxLength={160}
+                        />
+                        <button
+                          type="button"
+                          className="link-button"
+                          style={{ fontSize: "0.85rem" }}
+                          onClick={() => { setCreatingNew(false); setNewDirName(""); }}
+                        >
+                          ← Elegir existente
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="dirs-confirm-description">
+                El directorio está vacío. Esta acción no se puede deshacer.
+              </p>
+            )}
+
+            {(deleteMut.isError || createDirMut.isError) && (
+              <p className="error-text" style={{ fontSize: "0.85rem", marginTop: "8px" }}>
+                Ocurrió un error. Intenta de nuevo.
+              </p>
+            )}
+
             <div className="dirs-confirm-actions">
               <button
-                onClick={() => setConfirmDeleteId(null)}
+                onClick={closeDeleteModal}
                 className="dirs-confirm-btn dirs-confirm-btn--cancel"
                 type="button"
-                disabled={deleteMut.isPending}
+                disabled={isPending}
               >
                 Cancelar
               </button>
@@ -280,9 +413,9 @@ export function DirectoriesListPage(): JSX.Element {
                 onClick={handleDeleteConfirm}
                 className="dirs-confirm-btn dirs-confirm-btn--delete"
                 type="button"
-                disabled={deleteMut.isPending}
+                disabled={isPending || !canConfirm}
               >
-                {deleteMut.isPending ? "Eliminando…" : "Eliminar"}
+                {isPending ? <><Loader2 size={14} className="spin" /> Procesando…</> : "Confirmar"}
               </button>
             </div>
           </div>

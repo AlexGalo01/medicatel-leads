@@ -194,6 +194,7 @@ export type OpportunityTerminatedOutcome = "won" | "lost" | "no_response" | "no_
 export interface OpportunityResponse {
   opportunity_id: string;
   job_id: string | null;
+  scrape_job_id: string | null;
   exa_preview_index: number | null;
   directory_id: string | null;
   current_step_id: string | null;

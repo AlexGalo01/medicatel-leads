@@ -80,6 +80,26 @@ def _professional_intent_rules_block(user_query: str, role_or_stack_hint: str | 
     )
 
 
+def _company_search_intent_block(user_query: str) -> str:
+    """Bloque de prompt para búsqueda de empresas/clínicas: recall > precisión."""
+    return (
+        f"*** REGLA PRINCIPAL — Búsqueda de EMPRESAS/CLÍNICAS ***\n"
+        f"Consulta: \"{user_query}\"\n"
+        "OBJETIVO: Encontrar empresas, clínicas, hospitales, centros médicos del sector. NO personas individuales.\n"
+        "REGLA 1 — match=true si: es una empresa/clínica/hospital/centro del sector buscado. "
+        "Incluye: homepage, página de servicios, perfil empresarial, página de contacto.\n"
+        "REGLA 2 — is_source_page=false para: homepage de clínica/hospital individual = LEAD DIRECTO (NO fuente).\n"
+        "REGLA 3 — is_source_page=true SOLO para: páginas que listan MÚLTIPLES empresas distintas "
+        "(Páginas Amarillas, Google Maps lista, directorios tipo 'Hospitales en Honduras').\n"
+        "REGLA 4 — CUANDO EN DUDA → INCLUYE (match=true). Preferimos false positives sobre perder leads.\n"
+        "REGLA 5 — match=false SOLO si: claramente otro sector (hotel, ferretería, software) "
+        "o claramente otro país sin relación con la búsqueda.\n"
+        "REGLA 6 — NO diferencies entre clínica y hospital — ambos son leads válidos del sector salud.\n"
+        "EJEMPLO CORRECTO: 'Hospital Santa Lucía | https://hospitalsantalucia.hn' → match=true, is_source_page=false, confidence=9\n"
+        "EJEMPLO INCORRECTO: marcar un hospital como is_source_page=true porque tiene múltiples departamentos.\n"
+    )
+
+
 def _sector_intent_rules_block(user_query: str) -> str:
     """Alineación sectorial con balance entre precisión y cobertura."""
     return (
@@ -181,6 +201,15 @@ def _source_page_rules_block(exa_category: str) -> str:
             "  • is_source_page=false: homepage de hospital, clínica, empresa, negocio del sector — son el LEAD DIRECTO, NO una fuente para explorar\n"
             "  • is_source_page=false: perfiles de empresa en LinkedIn company, Facebook page, Instagram de la empresa\n"
             "  • is_source_page=false + match=false: artículos de noticias, blogs, reportajes\n"
+            "EJEMPLOS is_source_page=false (son leads directos — NO marcar como fuente):\n"
+            "  - 'Hospital Y Clínicas Viera | https://hospitalyclinicasviera.hn/' → is_source_page=FALSE\n"
+            "  - 'MEDICASA Hospital | https://medicasa.hn/' → is_source_page=FALSE\n"
+            "  - 'GyV Medical | https://gyvmedical.com/' → is_source_page=FALSE\n"
+            "  - 'Honduras Medical Center | https://hmc.com.hn/' → is_source_page=FALSE\n"
+            "  - Cualquier clínica u hospital individual → is_source_page=FALSE\n"
+            "EJEMPLOS is_source_page=true (son directorios, NO leads):\n"
+            "  - 'Hospitales en Tegucigalpa - yelu.hn' → is_source_page=TRUE\n"
+            "  - 'Directorio médico de Honduras | infopaginas.com' → is_source_page=TRUE\n"
         )
     return (
         "ADEMÁS — reglas para is_source_page:\n"
@@ -571,14 +600,20 @@ def _is_institutional_clinic_page(item: dict[str, Any]) -> bool:
     return bool(_INSTITUTIONAL_PAGE_TITLE_RE.search(title))
 
 
-def _heuristic_drop_reason(item: dict[str, Any], target_iso: str | None) -> str | None:
+def _heuristic_drop_reason(item: dict[str, Any], target_iso: str | None, exa_category: str = "") -> str | None:
     """Razón de descarte heurístico, o None si el ítem pasa a revisión con Gemini / se conserva."""
     if not target_iso or len(target_iso) != 2:
         return None
     t = target_iso.strip().upper()
+    url = str(item.get("url") or "").lower()
+    # Para company search: dominio local (.hn) siempre pasa — es un lead válido
+    if exa_category == "company" and (".hn/" in url or url.endswith(".hn")):
+        return None
     blob = _full_profile_blob(item)
     codes = extract_parenthesized_iso_codes(blob)
-    if codes:
+    # Para company search: omitir check de ISO en texto — demasiados falsos positivos
+    # (clínicas hondureñas mencionan equipamiento "(US FDA)", certificaciones "(ISO)", etc.)
+    if codes and exa_category != "company":
         primary = codes[-1].upper()
         if primary != t:
             return "Ubicación (código ISO en el perfil) no coincide con el país objetivo."
@@ -766,7 +801,7 @@ async def filter_exa_raw_results_by_relevance(
     for i, item in enumerate(raw_results):
         if not isinstance(item, dict):
             continue
-        drop_reason = _heuristic_drop_reason(item, target_iso)
+        drop_reason = _heuristic_drop_reason(item, target_iso, exa_category=exa_cat_s)
         if not drop_reason:
             drop_reason = _heuristic_obituary_drop_reason(item)
         if not drop_reason:
@@ -860,39 +895,58 @@ async def filter_exa_raw_results_by_relevance(
                 items_payload = _compact_items_for_chunk(raw_results, chunk_idx)
                 strict_geo = bool(criteria_compact.get("country_iso2"))
                 target_country = criteria_compact.get("country_iso2", "").strip().upper()
-                geo_rules = (
-                    "Reglas estrictas de ubicación:\n"
-                    "- Si country_iso2 del criterio indica un país (ej. HN = Honduras) y el candidato muestra "
-                    "residencia o empleo principal en otro país (ej. Egipto, Cairo, (EG)), match=false aunque el rol "
-                    "(ej. .NET, sistemas) coincida.\n"
-                    "- match=true solo si la ubicación actual o principal alinea con ese país o no hay señal "
-                    "contradictoria clara.\n"
-                    "- Trabajo remoto sin país: match=true solo si no hay señales fuertes de otro país como sede.\n"
-                )
-                if strict_geo:
-                    geo_rules += (
-                        "- Ejemplo: usuario pide Honduras; candidato en Cairo, Egypt (EG) → match=false.\n"
+                if exa_cat_s == "company":
+                    # Para búsqueda de empresas: geo más suave — no descartar por certificaciones/equipamiento internacional
+                    geo_rules = (
+                        "Reglas de ubicación para búsqueda de empresas:\n"
+                        "- Si el resultado es CLARAMENTE de otro país (UK clinic, US hospital, clínica en Australia) → match=false.\n"
+                        f"- Si hay señal positiva del país buscado (dominio local, menciona {criteria_compact.get('country_text', 'el país objetivo')}) → match=true.\n"
+                        "- Si no hay señal clara de ubicación pero el sector coincide → match=true (beneficio de la duda).\n"
+                        "- NO descartes por equipamiento internacional o certificaciones (FDA, ISO, JCI, etc.) — son señales técnicas, no de ubicación.\n"
                     )
-                if target_country == "HN":
-                    geo_rules += (
-                        "*** REGLA CRÍTICA PARA HONDURAS (HN) ***\n"
-                        "- Honduras es país pequeño con baja cobertura LinkedIn. EXCLUSIÓN TOTAL de cualquier resultado que NO sea HN.\n"
-                        "- Candidato muestra: país diferente a HN, ciudad fuera de Honduras (ej. Ciudad de México, Bogotá, Miami, USA, etc.) → MATCH=FALSE AUTOMÁTICAMENTE, confidence=1.\n"
-                        "- Aceptar SOLO si hay SEÑAL POSITIVA clara de Honduras: (HN) en paréntesis, ciudad hondureña (Tegucigalpa, San Pedro Sula, La Ceiba, Comayagua, etc.), texto que diga 'Honduras'.\n"
-                        "- Trabajo remoto SIN mención de Honduras → RECHAZA, confidence=1.\n"
+                else:
+                    geo_rules = (
+                        "Reglas estrictas de ubicación:\n"
+                        "- Si country_iso2 del criterio indica un país (ej. HN = Honduras) y el candidato muestra "
+                        "residencia o empleo principal en otro país (ej. Egipto, Cairo, (EG)), match=false aunque el rol "
+                        "(ej. .NET, sistemas) coincida.\n"
+                        "- match=true solo si la ubicación actual o principal alinea con ese país o no hay señal "
+                        "contradictoria clara.\n"
+                        "- Trabajo remoto sin país: match=true solo si no hay señales fuertes de otro país como sede.\n"
                     )
+                    if strict_geo:
+                        geo_rules += (
+                            "- Ejemplo: usuario pide Honduras; candidato en Cairo, Egypt (EG) → match=false.\n"
+                        )
+                    if target_country == "HN":
+                        geo_rules += (
+                            "*** REGLA CRÍTICA PARA HONDURAS (HN) ***\n"
+                            "- Honduras es país pequeño con baja cobertura LinkedIn. EXCLUSIÓN TOTAL de cualquier resultado que NO sea HN.\n"
+                            "- Candidato muestra: país diferente a HN, ciudad fuera de Honduras (ej. Ciudad de México, Bogotá, Miami, USA, etc.) → MATCH=FALSE AUTOMÁTICAMENTE, confidence=1.\n"
+                            "- Aceptar SOLO si hay SEÑAL POSITIVA clara de Honduras: (HN) en paréntesis, ciudad hondureña (Tegucigalpa, San Pedro Sula, La Ceiba, Comayagua, etc.), texto que diga 'Honduras'.\n"
+                            "- Trabajo remoto SIN mención de Honduras → RECHAZA, confidence=1.\n"
+                        )
                 confidence_threshold = COMPANY_CONFIDENCE_THRESHOLD if exa_cat_s == "company" else DEFAULT_CONFIDENCE_THRESHOLD
                 entity_rules = _exa_category_entity_rules(exa_cat_s or None)
                 sector_rules = _sector_intent_rules_block(user_query)
                 academic_rules = _academic_exclusion_rules_block()
                 obituary_rules = _obituary_exclusion_rules_block()
-                professional_rules = _professional_intent_rules_block(
-                    user_query, criteria_compact.get("role_or_stack_hint"),
-                )
-                aggregator_rules = _aggregator_exclusion_rules_block()
+                if exa_cat_s == "company":
+                    professional_rules = _company_search_intent_block(user_query)
+                    aggregator_rules = ""  # Para empresas: páginas de servicios de una sola empresa son leads válidos
+                else:
+                    professional_rules = _professional_intent_rules_block(
+                        user_query, criteria_compact.get("role_or_stack_hint"),
+                    )
+                    aggregator_rules = _aggregator_exclusion_rules_block()
                 source_page_rules = _source_page_rules_block(exa_cat_s)
                 match_categories = _match_categories_block(exa_cat_s)
                 confidence_hint = _confidence_hint_block(confidence_threshold)
+                doubt_rule = (
+                    "En caso de duda → INCLUYE (match=true). Ver REGLA 4 arriba.\n"
+                    if exa_cat_s == "company" else
+                    "Si la respuesta no es un SÍ claro → match=false.\n"
+                )
                 prompt = (
                     "Eres un validador estricto de relevancia para prospección B2B.\n"
                     f"Consulta original del usuario (máxima prioridad): {user_query}\n"
@@ -907,7 +961,7 @@ async def filter_exa_raw_results_by_relevance(
                     "Cada ítem tiene index (posición global en la lista original), title, url, excerpt.\n"
                     "Para CADA ítem pregúntate: ¿Este resultado ES realmente del sector/rubro/profesión que busca el usuario? "
                     "Si el título menciona OTRA profesión explícitamente (educador, ingeniero, IT, etc.) → MATCH=FALSE AUTOMÁTICAMENTE. "
-                    "Si la respuesta no es un SÍ claro → match=false.\n"
+                    f"{doubt_rule}"
                     f"{source_page_rules}"
                     f"{match_categories}"
                     "Devuelve SOLO JSON con la forma exacta:\n"
@@ -945,6 +999,13 @@ async def filter_exa_raw_results_by_relevance(
             for idx in pending_indices:
                 if idx not in match_by_index:
                     match_by_index[idx] = "keep" if target_iso is None else "drop"
+
+    # Para company search: si LLM marcó is_source_page=true pero match=true → es un lead, no fuente
+    # (el LLM confunde hospitales con múltiples departamentos con "páginas que listan empresas")
+    if exa_cat_s == "company":
+        for idx, is_source in list(is_source_page_by_index.items()):
+            if is_source and match_by_index.get(idx) == "keep":
+                is_source_page_by_index[idx] = False
 
     # Procesar items marcados como is_source_page=true del LLM (URLs para explorar)
     for idx, is_source in is_source_page_by_index.items():

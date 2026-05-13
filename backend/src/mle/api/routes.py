@@ -71,6 +71,7 @@ from mle.repositories.opportunities_repository import OpportunitiesRepository
 from mle.repositories.users_repository import UsersRepository
 from mle.schemas.directories import (
     DirectoryCreateRequest,
+    DirectoryDeleteRequest,
     DirectoryListResponse,
     DirectoryRead,
     DirectoryStepCreate,
@@ -142,6 +143,7 @@ def _opportunity_to_response(
     return OpportunityResponse(
         opportunity_id=str(opp.id),
         job_id=str(opp.job_id) if opp.job_id else None,
+        scrape_job_id=str(opp.scrape_job_id) if opp.scrape_job_id else None,
         exa_preview_index=opp.exa_preview_index,
         directory_id=str(opp.directory_id) if opp.directory_id else None,
         current_step_id=str(opp.current_step_id) if opp.current_step_id else None,
@@ -1968,11 +1970,16 @@ async def update_directory(
 @protected_router.delete("/directories/{directory_id}", status_code=204)
 async def delete_directory(
     directory_id: UUID,
-    _u: User = Depends(require_permission("use_search")),
+    payload: DirectoryDeleteRequest = DirectoryDeleteRequest(),
+    current_user: User = Depends(require_permission("use_search")),
 ) -> Response:
     async with async_session_factory() as session:
         repo = DirectoriesRepository(session)
-        ok = await repo.delete(directory_id)
+        ok = await repo.delete(
+            directory_id,
+            deleted_by_user_id=current_user.id,
+            reassign_to_directory_id=payload.reassign_to_directory_id,
+        )
         if not ok:
             _raise_not_found("Directorio")
     return Response(status_code=204)

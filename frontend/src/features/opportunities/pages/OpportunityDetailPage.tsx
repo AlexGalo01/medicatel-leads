@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   Building2,
   Check,
@@ -22,6 +22,7 @@ import {
   enrichOpportunity,
   getDirectory,
   getSearchJobStatus,
+  getUrlScrapeJobStatus,
   getOpportunity,
   moveOpportunityStep,
   patchOpportunity,
@@ -124,7 +125,6 @@ const OUTCOMES: OpportunityResponseOutcome[] = ["pending", "positive", "negative
 
 export function OpportunityDetailPage(): JSX.Element {
   const { opportunityId = "" } = useParams();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   usePermissions();
   const [stageDraft, setStageDraft] = useState<OpportunityStageKey | "">("");
@@ -173,6 +173,7 @@ export function OpportunityDetailPage(): JSX.Element {
     .sort((a, b) => a.display_order - b.display_order);
   const allDirSteps = [...dirSteps, ...dirTerminalSteps];
   const useDirectorySteps = Boolean(data?.directory_id && allDirSteps.length > 0);
+  const directoryStepsLoading = Boolean(data?.directory_id && directoryQuery.isLoading);
 
   const moveStepMut = useMutation({
     mutationFn: (targetStepId: string) => moveOpportunityStep(opportunityId, targetStepId),
@@ -193,6 +194,13 @@ export function OpportunityDetailPage(): JSX.Element {
       return getSearchJobStatus(jid);
     },
     enabled: Boolean(data?.job_id),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const scrapeJobQuery = useQuery({
+    queryKey: ["scrape-job-status", data?.scrape_job_id],
+    queryFn: () => getUrlScrapeJobStatus(data!.scrape_job_id!),
+    enabled: Boolean(data?.scrape_job_id),
     staleTime: 5 * 60 * 1000,
   });
   const profileSummaryQuery = useQuery({
@@ -349,9 +357,9 @@ export function OpportunityDetailPage(): JSX.Element {
 
   const stageIndex = useMemo(() => {
     if (!data) return 0;
-    const i = OPPORTUNITY_STAGES_ORDER.indexOf(data.stage);
+    const i = OPPORTUNITY_STAGES_ORDER.indexOf(stageDraft || data.stage);
     return i >= 0 ? i : 0;
-  }, [data]);
+  }, [data, stageDraft]);
 
   const journeyFillPct = useMemo(() => {
     const n = OPPORTUNITY_STAGES_ORDER.length;
@@ -426,10 +434,7 @@ export function OpportunityDetailPage(): JSX.Element {
   };
 
   const onSaveStage = () => {
-    if (!stageDraft) return;
-    const currentIdx = OPPORTUNITY_STAGES_ORDER.indexOf(data.stage);
-    const draftIdx = OPPORTUNITY_STAGES_ORDER.indexOf(stageDraft as OpportunityStageKey);
-    if (draftIdx >= 0 && currentIdx >= 0 && draftIdx < currentIdx) return;
+    if (!stageDraft || data.terminated_at) return;
     const body: { stage: string; response_outcome?: string | null; note?: string | null } = {
       stage: stageDraft,
       note: stageNote.trim() || null,
@@ -441,7 +446,6 @@ export function OpportunityDetailPage(): JSX.Element {
 
   const timelineNewestFirst = [...(data.activity_timeline ?? [])].reverse();
   const sourceJobLabel = sourceJobQuery.data?.query_text?.trim() || "No disponible";
-  const profileCompany = profileSummaryQuery.data?.company?.trim() || "No especificada";
   const storedProfileOverrides = data.profile_overrides ?? {};
   const profileIaPending = profileSummaryQuery.isPending && !cvDirty;
   const aboutFieldWaitingIa = profileIaPending && !objectHasOwn(storedProfileOverrides, "about");
@@ -450,14 +454,6 @@ export function OpportunityDetailPage(): JSX.Element {
     objectHasOwn(storedProfileOverrides, "experiences") &&
     Array.isArray(storedProfileOverrides.experiences) &&
     (storedProfileOverrides.experiences?.length ?? 0) > 0;
-
-  const profileExperiences = (() => {
-    const ov = data.profile_overrides;
-    if (ov && objectHasOwn(ov, "experiences") && Array.isArray(ov.experiences) && (ov.experiences?.length ?? 0) > 0) {
-      return ov.experiences ?? [];
-    }
-    return profileSummaryQuery.data?.experiences ?? [];
-  })();
 
   const saveProfileCv = () => {
     const loc = locationDraft.trim();
@@ -495,7 +491,11 @@ export function OpportunityDetailPage(): JSX.Element {
         aria-label="Progreso del embudo"
       >
         <h2 className="opportunity-journey-heading">Flujo de Oportunidad</h2>
-        {useDirectorySteps ? (() => {
+        {directoryStepsLoading ? (
+          <p className="muted-text" style={{ fontSize: "0.85rem" }}>
+            <Loader2 className="spin" size={14} strokeWidth={2} aria-hidden /> Cargando flujo…
+          </p>
+        ) : useDirectorySteps ? (() => {
           const rawIdx = allDirSteps.findIndex((s) => s.id === data.current_step_id);
           // If no step assigned yet, treat first step as current
           const currentStepIdx = rawIdx >= 0 ? rawIdx : 0;
@@ -546,7 +546,6 @@ export function OpportunityDetailPage(): JSX.Element {
                 const done = idx < stageIndex;
                 const current = idx === stageIndex;
                 const upcoming = idx > stageIndex;
-                const isPastPhase = idx < stageIndex;
                 return (
                   <li
                     key={key}
@@ -555,8 +554,8 @@ export function OpportunityDetailPage(): JSX.Element {
                     <Button
                       type="button"
                       className="opportunity-journey-node"
-                      disabled={isPastPhase}
-                      onClick={() => { if (!isPastPhase) setStageDraft(key); }}
+                      disabled={Boolean(data.terminated_at)}
+                      onClick={() => { if (!data.terminated_at) setStageDraft(key); }}
                       aria-current={current ? "step" : undefined}
                     >
                       <span className="opportunity-journey-circle" aria-hidden>
@@ -930,18 +929,18 @@ export function OpportunityDetailPage(): JSX.Element {
                       )}
                       
                       <div className="opportunity-contact-editor-meta">
-                        <div className="input-with-badge-mini">
-                          {c.note && isUrl(c.note) && (
-                            <a
-                              href={c.note}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="contact-source-badge-micro"
-                              title="Ver fuente"
-                            >
-                              <ExternalLink size={8} />
-                            </a>
-                          )}
+                        {c.note && isUrl(c.note) ? (
+                          <a
+                            href={c.note}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="link-button"
+                            style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: "3px" }}
+                            title={c.note}
+                          >
+                            <ExternalLink size={11} aria-hidden /> Ver fuente
+                          </a>
+                        ) : (
                           <Input
                             type="text"
                             value={c.note ?? ""}
@@ -950,7 +949,7 @@ export function OpportunityDetailPage(): JSX.Element {
                             placeholder="Nota o fuente"
                             className="ui-input--minimal-meta"
                           />
-                        </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -975,10 +974,20 @@ export function OpportunityDetailPage(): JSX.Element {
         <p className="muted-text" style={{ fontSize: "0.9rem", margin: 0 }}>
           {data.job_id
             ? `Búsqueda: "${sourceJobLabel}"`
-            : data.source_url
+            : data.scrape_job_id
               ? "Importada desde URL"
-              : "Creada manualmente"}
+              : data.source_url
+                ? "Encontrada en búsqueda"
+                : "Creada manualmente"}
         </p>
+        {data.scrape_job_id && scrapeJobQuery.data?.target_url ? (
+          <p className="muted-text" style={{ fontSize: "0.9rem", marginTop: "6px" }}>
+            URL importada:{" "}
+            <a href={scrapeJobQuery.data.target_url} target="_blank" rel="noreferrer" className="link-button">
+              {(() => { try { return new URL(scrapeJobQuery.data.target_url).hostname; } catch { return scrapeJobQuery.data.target_url; } })()}
+            </a>
+          </p>
+        ) : null}
         {data.source_url ? (
           <p className="muted-text" style={{ fontSize: "0.9rem", marginTop: "6px" }}>
             Fuente:{" "}

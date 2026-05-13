@@ -66,6 +66,10 @@ class Directory(SQLModel, table=True):
     name: str = Field(index=True, max_length=160)
     description: str | None = Field(default=None, max_length=1000)
     created_by_user_id: UUID | None = Field(default=None, index=True, foreign_key="users.id")
+    deleted_by: UUID | None = Field(default=None, index=True, foreign_key="users.id")
+    deleted_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     created_at: datetime = Field(
         default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
     )
@@ -123,6 +127,10 @@ class Opportunity(SQLModel, table=True):
     )
     contact_type: str | None = Field(default=None, max_length=32)
     owner_user_id: UUID | None = Field(default=None, index=True, foreign_key="users.id")
+    deleted_by: UUID | None = Field(default=None, index=True, foreign_key="users.id")
+    deleted_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     created_at: datetime = Field(
         default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
     )

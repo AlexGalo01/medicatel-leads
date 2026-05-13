@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mle.db.models import Directory, DirectoryStep, Opportunity, SearchJob
@@ -53,7 +53,9 @@ class DirectoriesRepository:
 
     async def list_all(self) -> list[Directory]:
         result = await self.session.execute(
-            select(Directory).order_by(Directory.created_at.asc())
+            select(Directory)
+            .where(Directory.deleted_at.is_(None))
+            .order_by(Directory.created_at.asc())
         )
         return list(result.scalars().all())
 
@@ -76,31 +78,64 @@ class DirectoriesRepository:
         await self.session.refresh(directory)
         return directory
 
-    async def delete(self, directory_id: UUID) -> bool:
+    async def delete(
+        self,
+        directory_id: UUID,
+        *,
+        deleted_by_user_id: UUID,
+        reassign_to_directory_id: UUID | None = None,
+    ) -> bool:
         directory = await self.session.get(Directory, directory_id)
-        if directory is None:
+        if directory is None or directory.deleted_at is not None:
             return False
-        # Antes de borrar search_jobs, nullear job_id en oportunidades que los referencian
-        # (pueden ser de este u otro directorio si la oportunidad fue movida).
-        job_ids_q = select(SearchJob.id).where(SearchJob.directory_id == directory_id)
+        now = datetime.now(timezone.utc)
+
+        if reassign_to_directory_id is not None:
+            # Obtener el primer step del directorio destino
+            target_steps_result = await self.session.execute(
+                select(DirectoryStep)
+                .where(DirectoryStep.directory_id == reassign_to_directory_id)
+                .order_by(DirectoryStep.display_order.asc())
+            )
+            target_steps = list(target_steps_result.scalars().all())
+            target_first_step = next((s for s in target_steps if not s.is_terminal), None) or (target_steps[0] if target_steps else None)
+            target_step_id = target_first_step.id if target_first_step else None
+
+            # Mover oportunidades no eliminadas al directorio destino
+            await self.session.execute(
+                update(Opportunity)
+                .where(
+                    Opportunity.directory_id == directory_id,
+                    Opportunity.deleted_at.is_(None),
+                )
+                .values(
+                    directory_id=reassign_to_directory_id,
+                    current_step_id=target_step_id,
+                    updated_at=now,
+                )
+            )
+        else:
+            # Soft-delete de todas las oportunidades del directorio
+            await self.session.execute(
+                update(Opportunity)
+                .where(
+                    Opportunity.directory_id == directory_id,
+                    Opportunity.deleted_at.is_(None),
+                )
+                .values(deleted_by=deleted_by_user_id, deleted_at=now, updated_at=now)
+            )
+
+        # Nullear directory_id en search_jobs (no eliminar, mantener historial)
         await self.session.execute(
-            update(Opportunity)
-            .where(Opportunity.job_id.in_(job_ids_q))
-            .values(job_id=None)
+            update(SearchJob)
+            .where(SearchJob.directory_id == directory_id)
+            .values(directory_id=None)
         )
-        # Eliminar todas las oportunidades del directorio (SQL directo para garantizar orden).
-        await self.session.execute(
-            delete(Opportunity).where(Opportunity.directory_id == directory_id)
-        )
-        # Eliminar search jobs del directorio.
-        await self.session.execute(
-            delete(SearchJob).where(SearchJob.directory_id == directory_id)
-        )
-        # Eliminar steps (SQL directo antes de que se elimine el directorio).
-        await self.session.execute(
-            delete(DirectoryStep).where(DirectoryStep.directory_id == directory_id)
-        )
-        await self.session.delete(directory)
+
+        # Soft-delete del directorio
+        directory.deleted_by = deleted_by_user_id
+        directory.deleted_at = now
+        directory.updated_at = now
         await self.session.commit()
         return True
 

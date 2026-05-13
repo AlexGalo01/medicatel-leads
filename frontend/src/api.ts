@@ -738,9 +738,18 @@ export async function updateDirectory(
   return parseJsonResponse<Directory>(response);
 }
 
-export async function deleteDirectory(directoryId: string): Promise<void> {
+export async function deleteDirectory(
+  directoryId: string,
+  options?: { reassignToDirectoryId?: string },
+): Promise<void> {
+  const body: Record<string, unknown> = {};
+  if (options?.reassignToDirectoryId) {
+    body.reassign_to_directory_id = options.reassignToDirectoryId;
+  }
   const response = await apiFetch(`${buildApiUrl(`/directories/${directoryId}`)}`, {
     method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: "Error al eliminar directorio" }));

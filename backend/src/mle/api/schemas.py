@@ -275,6 +275,7 @@ class OpportunityContactPayload(BaseModel):
 class OpportunityResponse(BaseModel):
     opportunity_id: str
     job_id: str | None = None
+    scrape_job_id: str | None = None
     exa_preview_index: int | None = None
     directory_id: str | None = None
     current_step_id: str | None = None

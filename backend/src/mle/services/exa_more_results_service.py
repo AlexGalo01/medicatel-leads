@@ -262,16 +262,37 @@ async def append_exa_results_for_job(job_id: UUID, num_results: int) -> dict[str
                     exc_info=True,
                 )
 
-        logger.info("Construyendo preview: job_id=%s, merged_count=%s", job_id, len(merged))
-        preview = _build_exa_preview(merged)
-        logger.info("Preview construido: job_id=%s, preview_items=%s", job_id, len(preview))
+        # Build preview: keep existing enriched rows + only enrich the new items
+        existing_preview: list[dict[str, Any]] = list(meta.get("exa_results_preview") or [])
+        existing_preview_urls = {
+            _normalize_url_key(str(r.get("url", "")))
+            for r in existing_preview
+            if isinstance(r, dict) and r.get("url")
+        }
 
-        logger.info("Enriqueciendo preview LLM: job_id=%s, preview_count=%s", job_id, len(preview))
-        try:
-            preview = await enrich_exa_preview_rows(preview)
-            logger.info("Preview enriquecido: job_id=%s, items=%s", job_id, len(preview))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Enriquecimiento preview tras cargar mas omitido job_id=%s: %s", job_id, exc, exc_info=True)
+        # Items that passed the filter and are genuinely new
+        new_kept_urls = {
+            _normalize_url_key(str(item.get("url", "")))
+            for item in merged
+            if _normalize_url_key(str(item.get("url", ""))) not in existing_preview_urls
+        }
+        new_raw_for_preview = [
+            item for item in merged
+            if _normalize_url_key(str(item.get("url", ""))) in new_kept_urls
+        ]
+
+        logger.info("Construyendo preview solo para nuevos items: job_id=%s, new_count=%s", job_id, len(new_raw_for_preview))
+        new_preview_rows = _build_exa_preview(new_raw_for_preview)
+
+        if new_preview_rows:
+            try:
+                new_preview_rows = await enrich_exa_preview_rows(new_preview_rows)
+                logger.info("Preview nuevos enriquecido: job_id=%s, items=%s", job_id, len(new_preview_rows))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Enriquecimiento preview nuevos omitido job_id=%s: %s", job_id, exc, exc_info=True)
+
+        preview = existing_preview + new_preview_rows
+        logger.info("Preview total: job_id=%s, items=%s (existing=%s + new=%s)", job_id, len(preview), len(existing_preview), len(new_preview_rows))
 
         logger.info("Guardando metadata actualizada: job_id=%s", job_id)
         meta["exa_accumulated_raw"] = merged

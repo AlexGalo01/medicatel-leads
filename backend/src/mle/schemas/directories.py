@@ -81,3 +81,12 @@ class StepDeleteRequest(BaseModel):
     """Al borrar un step con items dentro, se piden a dónde moverlos."""
 
     move_items_to_step_id: UUID | None = None
+
+
+class DirectoryDeleteRequest(BaseModel):
+    """Opciones al eliminar un directorio con oportunidades.
+    - reassign_to_directory_id: mover las opps a ese directorio (al primer step del mismo).
+    - Si es None, las oportunidades también se marcan como eliminadas.
+    """
+
+    reassign_to_directory_id: UUID | None = None
