@@ -11,13 +11,19 @@ function hostLabel(url: string): string {
   }
 }
 
+function absoluteUrl(url: string): string {
+  if (!url) return url;
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  return `https://${url}`;
+}
+
 function SourceBadge({ src }: { src: string }) {
   if (!src) return null;
   if (src === "brave_local") {
     return <span className="enrich-modal-contact-source">Google Maps</span>;
   }
   return (
-    <a href={src} target="_blank" rel="noreferrer" className="enrich-modal-contact-source enrich-modal-contact-source--link">
+    <a href={absoluteUrl(src)} target="_blank" rel="noreferrer" className="enrich-modal-contact-source enrich-modal-contact-source--link">
       {hostLabel(src)}
     </a>
   );
@@ -202,7 +208,7 @@ export function EnrichContactModal({
                           <li key={item.key} className="enrich-modal-info-row">
                             <span className="enrich-modal-info-label">{item.label}</span>
                             {item.key === "website" ? (
-                              <a href={item.value} target="_blank" rel="noreferrer" className="enrich-modal-info-value link">
+                              <a href={absoluteUrl(item.value)} target="_blank" rel="noreferrer" className="enrich-modal-info-value link">
                                 {hostLabel(item.value)}
                               </a>
                             ) : (
@@ -229,7 +235,7 @@ export function EnrichContactModal({
                                 }
                               />
                             </label>
-                            <a href={c.url} target="_blank" rel="noreferrer" className="enrich-modal-source-link">
+                            <a href={absoluteUrl(c.url)} target="_blank" rel="noreferrer" className="enrich-modal-source-link">
                               {hostLabel(c.url)}
                             </a>
                           </li>

@@ -1,23 +1,163 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Building2, Folder, Link as LinkIcon, Loader2, Search, Users } from "lucide-react";
+import {
+  ArrowRight,
+  Building2,
+  CheckCircle2,
+  CloudDownload,
+  Facebook,
+  Globe,
+  Instagram,
+  Link as LinkIcon,
+  Linkedin,
+  Loader2,
+  Map,
+  Plus,
+  Search,
+  Sparkles,
+  Twitter,
+  UserRound,
+  Youtube,
+  Zap,
+} from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import type { JobSearchLocationState } from "./JobSearchWorkspacePage";
 
 import { clarifySearchJob, createSearchJob, createUrlScrapeJob, listDirectories } from "../api";
 import { Button } from "../components/ui/button";
-import { Card, CardContent } from "../components/ui/card";
-import { Input } from "../components/ui/input";
-import { Select } from "../components/ui/select";
 import { SearchableSelect } from "../components/ui/SearchableSelect";
 import { defaultChannelsForFocus } from "../data/searchSuggestions";
 import type { ExaCategoryChoice, SearchFocus } from "../types";
 
-const EXA_CATEGORY_OPTIONS: { value: ExaCategoryChoice; label: string }[] = [
-  { value: "people", label: "Personas" },
-  { value: "company", label: "Empresas" },
-];
+const PRIMARY = "#0000FF";
+const BORDER = "#D3D3D3";
+const TEXT_MAIN = "#1F2937";
+const TEXT_MUTED = "#6B7280";
+const BG_LIGHT = "#F3F4F6";
+
+const cardStyle: React.CSSProperties = {
+  background: "white",
+  borderRadius: 16,
+  boxShadow: "0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)",
+  border: `1px solid ${BORDER}`,
+  padding: "8px 32px 32px",
+};
+
+const labelStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: 14,
+  fontWeight: 600,
+  color: TEXT_MAIN,
+  marginBottom: 12,
+};
+
+const inputBaseStyle: React.CSSProperties = {
+  width: "100%",
+  background: "white",
+  border: `1px solid ${BORDER}`,
+  borderRadius: 12,
+  fontSize: 14,
+  color: TEXT_MAIN,
+  outline: "none",
+  transition: "border-color 0.2s, box-shadow 0.2s",
+  boxSizing: "border-box",
+  fontFamily: "inherit",
+};
+
+function TypeCard({
+  selected,
+  onClick,
+  icon,
+  label,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        flex: 1,
+        padding: 16,
+        borderRadius: 12,
+        border: selected ? `2px solid ${PRIMARY}` : `1px solid ${BORDER}`,
+        background: selected ? "rgba(239,246,255,0.5)" : "white",
+        cursor: "pointer",
+        position: "relative",
+        textAlign: "center",
+        transition: "border-color 0.15s, background 0.15s",
+      }}
+    >
+      {selected && (
+        <CheckCircle2
+          size={16}
+          style={{ position: "absolute", top: 12, right: 12, color: PRIMARY }}
+        />
+      )}
+      <div
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: "50%",
+          background: selected ? "#DBEAFE" : "#F3F4F6",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          margin: "0 auto 8px",
+          color: selected ? PRIMARY : TEXT_MUTED,
+          transition: "background 0.15s, color 0.15s",
+        }}
+      >
+        {icon}
+      </div>
+      <span style={{ fontWeight: 500, color: TEXT_MAIN, fontSize: 14 }}>{label}</span>
+    </button>
+  );
+}
+
+function DirectoryRow({
+  directoryId,
+  setDirectoryId,
+  directoriesData,
+}: {
+  directoryId: string;
+  setDirectoryId: (id: string) => void;
+  directoriesData: Array<{ id: string; name: string }>;
+}) {
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <label style={{ ...labelStyle, marginBottom: 0 }}>Lista de destino</label>
+        <Link
+          to="/lists/new?returnTo=/search"
+          style={{
+            fontSize: 13,
+            color: PRIMARY,
+            fontWeight: 500,
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            textDecoration: "none",
+          }}
+        >
+          <Plus size={12} /> Crear nuevo
+        </Link>
+      </div>
+      <SearchableSelect
+        value={directoryId}
+        onChange={setDirectoryId}
+        options={directoriesData}
+        placeholder="Buscar lista..."
+        required
+        ariaLabel="Lista destino"
+      />
+    </div>
+  );
+}
 
 export function SearchPage(): JSX.Element {
   const navigate = useNavigate();
@@ -39,7 +179,6 @@ export function SearchPage(): JSX.Element {
     queryFn: () => listDirectories(),
   });
 
-  // Si cambia el query param (ej. volver de crear directorio), respetarlo.
   useEffect(() => {
     if (preselectedDirectoryId) {
       setDirectoryId(preselectedDirectoryId);
@@ -50,7 +189,7 @@ export function SearchPage(): JSX.Element {
     if (exaCategoryUi === "people") {
       return "ginecólogos en San Pedro Sula";
     }
-    return "Aseguradoras de Tegucigalpa";
+    return "Aseguradoras de Tegucigalpa o Car Wash en Tegucigalpa";
   }, [exaCategoryUi]);
 
   const navigateToJob = (jobId: string): void => {
@@ -115,8 +254,52 @@ export function SearchPage(): JSX.Element {
     });
   };
 
+  const dirOptions = (directoriesQuery.data?.items ?? []).map((d) => ({ id: d.id, name: d.name }));
+
+  const submitBtnStyle: React.CSSProperties = {
+    width: "100%",
+    background: PRIMARY,
+    color: "white",
+    border: "none",
+    borderRadius: 12,
+    padding: "16px 24px",
+    fontWeight: 500,
+    fontSize: 15,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    boxShadow: "0 4px 14px rgba(0,0,255,0.25)",
+    fontFamily: "inherit",
+    transition: "background 0.15s",
+  };
+
+  const modeTabStyle = (active: boolean): React.CSSProperties => ({
+    flex: 1,
+    padding: "12px 16px",
+    borderRadius: 8,
+    fontWeight: 500,
+    fontSize: 14,
+    border: "none",
+    background: active ? "white" : "transparent",
+    color: active ? PRIMARY : TEXT_MUTED,
+    boxShadow: active ? "0 1px 3px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.05)" : "none",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    transition: "all 0.2s",
+    fontFamily: "inherit",
+  });
+
   return (
-    <section className="search-page-v2">
+    <section
+      className="search-page-v2"
+      style={{ position: "relative", width: "100%", minHeight: "100%" }}
+    >
+      {/* Modals */}
       {showDirectoryModal ? (
         <div className="search-clarify-overlay" role="presentation">
           <div
@@ -126,26 +309,23 @@ export function SearchPage(): JSX.Element {
             aria-labelledby="directory-modal-title"
           >
             <h3 id="directory-modal-title" className="search-clarify-title">
-              Crear directorio destino
+              Crear lista destino
             </h3>
             <p className="search-clarify-question muted-text">
-              Debes crear o elegir un directorio destino antes de lanzar la búsqueda. Un directorio organiza tus prospectos en etapas personalizadas.
+              Debes crear o elegir una lista destino antes de lanzar la búsqueda. Una lista organiza tus prospectos en etapas personalizadas.
             </p>
             <div className="search-clarify-actions">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setShowDirectoryModal(false)}
-              >
+              <Button type="button" variant="ghost" onClick={() => setShowDirectoryModal(false)}>
                 Cancelar
               </Button>
-              <Link to="/directories/new?returnTo=/search" className="link-button">
-                + Crear directorio
+              <Link to="/lists/new?returnTo=/search" className="link-button">
+                + Crear lista
               </Link>
             </div>
           </div>
         </div>
       ) : null}
+
       {clarifyContext ? (
         <div className="search-clarify-overlay" role="presentation">
           <div
@@ -195,10 +375,7 @@ export function SearchPage(): JSX.Element {
                 className="search-command-submit"
                 disabled={clarifyMutation.isPending || clarifyReply.trim().length < 1}
                 onClick={() => {
-                  clarifyMutation.mutate({
-                    jobId: clarifyContext.jobId,
-                    reply: clarifyReply.trim(),
-                  });
+                  clarifyMutation.mutate({ jobId: clarifyContext.jobId, reply: clarifyReply.trim() });
                 }}
               >
                 {clarifyMutation.isPending ? (
@@ -214,109 +391,191 @@ export function SearchPage(): JSX.Element {
           </div>
         </div>
       ) : null}
-      <div className="search-page-v2-content">
-        <section className="search-command-center">
-          <div className="search-command-title">
-            <h2>¿Qué estás buscando?</h2>
+
+      {/* Gradient overlay */}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: "40%",
+          background: "linear-gradient(to bottom, white, transparent)",
+          pointerEvents: "none",
+          zIndex: 0,
+        }}
+      />
+
+      {/* Main content */}
+      <div
+        style={{
+          position: "relative",
+          zIndex: 10,
+          maxWidth: 700,
+          margin: "0 auto",
+          padding: "72px 24px 80px",
+        }}
+      >
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: 48 }}>
+          <h1
+            style={{
+              fontSize: "2.25rem",
+              fontWeight: 700,
+              color: TEXT_MAIN,
+              margin: "0 0 16px",
+              letterSpacing: "-0.02em",
+              lineHeight: 1.15,
+            }}
+          >
+            Nueva Búsqueda de Leads
+          </h1>
+          <p style={{ color: TEXT_MUTED, fontSize: "1.05rem", margin: 0 }}>
+            Define tu objetivo ideal o importa datos externos para comenzar a prospectar.
+          </p>
+        </div>
+
+        {/* Card */}
+        <div style={cardStyle}>
+          {/* Mode tabs */}
+          <div
+            style={{
+              display: "flex",
+              padding: 4,
+              background: BG_LIGHT,
+              borderRadius: 12,
+              margin: "24px 0 32px",
+            }}
+          >
+            <button type="button" style={modeTabStyle(activeMode === "search")} onClick={() => setActiveMode("search")}>
+              <Zap size={15} aria-hidden /> Búsqueda EXA
+            </button>
+            <button type="button" style={modeTabStyle(activeMode === "import")} onClick={() => setActiveMode("import")}>
+              <LinkIcon size={15} aria-hidden /> Importar URL
+            </button>
           </div>
 
-          <Card className="search-command-card panel">
-            <CardContent>
-          <div className="search-mode-tabs" role="group" aria-label="Modo de búsqueda">
-            <button
-              type="button"
-              className={`search-command-tab${activeMode === "search" ? " is-active" : ""}`}
-              onClick={() => setActiveMode("search")}
-            >
-              <Search size={15} aria-hidden />
-              <span>Búsqueda EXA</span>
-            </button>
-            <button
-              type="button"
-              className={`search-command-tab${activeMode === "import" ? " is-active" : ""}`}
-              onClick={() => setActiveMode("import")}
-            >
-              <LinkIcon size={15} aria-hidden />
-              <span>Importar URL</span>
-            </button>
-          </div>
-
+          {/* EXA search tab */}
           {activeMode === "search" ? (
-            <form className="search-command-form" onSubmit={onSubmit}>
-              <div className="search-command-tabs" role="group" aria-label="Categoría Exa">
-                {EXA_CATEGORY_OPTIONS.map((opt) => {
-                  const selected = exaCategoryUi === opt.value;
-                  const icon =
-                    opt.value === "people" ? (
-                      <Users size={15} aria-hidden />
-                    ) : (
-                      <Building2 size={15} aria-hidden />
-                    );
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      className={`search-command-tab${selected ? " is-active" : ""}`}
-                      onClick={() => setExaCategoryUi(opt.value)}
-                    >
-                      {icon}
-                      <span>{opt.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="search-command-directory-row">
-                <div className="search-command-directory-select-wrapper">
-                  <label className="search-command-directory-label">
-                    <Folder size={14} aria-hidden />
-                    <span>Directorio destino</span>
-                  </label>
-                  <SearchableSelect
-                    value={directoryId}
-                    onChange={setDirectoryId}
-                    options={(directoriesQuery.data?.items ?? []).map((d) => ({
-                      id: d.id,
-                      name: d.name,
-                    }))}
-                    placeholder="Buscar directorio..."
-                    required
-                    ariaLabel="Directorio destino"
+            <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+              {/* Type selector */}
+              <div>
+                <label style={labelStyle}>¿Qué estás buscando?</label>
+                <div style={{ display: "flex", gap: 16 }}>
+                  <TypeCard
+                    selected={exaCategoryUi === "people"}
+                    onClick={() => setExaCategoryUi("people")}
+                    icon={<UserRound size={18} />}
+                    label="Personas"
+                  />
+                  <TypeCard
+                    selected={exaCategoryUi === "company"}
+                    onClick={() => setExaCategoryUi("company")}
+                    icon={<Building2 size={18} />}
+                    label="Empresas"
                   />
                 </div>
-                <Link to="/directories/new?returnTo=/search" className="link-button">
-                  + Crear directorio
-                </Link>
               </div>
 
-              <div className="search-command-input-row">
-                <Search className="search-command-search-icon" aria-hidden />
-                <Input
-                  className="search-command-input"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder={queryPlaceholder}
-                  required
-                  minLength={3}
-                  maxLength={500}
-                  aria-label="Consulta de búsqueda"
-                />
-                <Button
-                  className="search-command-submit"
-                  type="submit"
-                  disabled={createJobMutation.isPending}
+              {/* Social network quick search — not yet functional */}
+              <div>
+                <label style={{ ...labelStyle, marginBottom: 8 }}>Buscar en red específica</label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {[
+                    { icon: <Instagram size={14} />, label: "Instagram", color: "#E1306C", bg: "#FDF2F8" },
+                    { icon: <Facebook size={14} />, label: "Facebook", color: "#1877F2", bg: "#EFF6FF" },
+                    { icon: <Linkedin size={14} />, label: "LinkedIn", color: "#0A66C2", bg: "#EFF6FF" },
+                    { icon: <Twitter size={14} />, label: "Twitter / X", color: "#000000", bg: "#F3F4F6" },
+                    { icon: <Youtube size={14} />, label: "YouTube", color: "#FF0000", bg: "#FEF2F2" },
+                    { icon: <Map size={14} />, label: "Google Maps", color: "#059669", bg: "#F0FDF4" },
+                  ].map(({ icon, label, color, bg }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      disabled
+                      title="Próximamente"
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        padding: "6px 12px", borderRadius: 8,
+                        border: `1px solid ${color}30`,
+                        background: bg, color,
+                        fontSize: 12, fontWeight: 500,
+                        fontFamily: "inherit",
+                        cursor: "not-allowed", opacity: 0.65,
+                      }}
+                    >
+                      {icon} {label}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 6 }}>
+                  Próximamente disponibles — por ahora usa la búsqueda general.
+                </p>
+              </div>
+
+              {/* Directory */}
+              <DirectoryRow
+                directoryId={directoryId}
+                setDirectoryId={setDirectoryId}
+                directoriesData={dirOptions}
+              />
+
+              {/* Query */}
+              <div>
+                <label style={labelStyle}>Consulta de búsqueda (IA)</label>
+                <div style={{ position: "relative" }}>
+                  <Search
+                    size={18}
+                    aria-hidden
+                    style={{
+                      position: "absolute",
+                      left: 16,
+                      top: 14,
+                      color: PRIMARY,
+                      pointerEvents: "none",
+                    }}
+                  />
+                  <textarea
+                    rows={3}
+                    style={{
+                      ...inputBaseStyle,
+                      padding: "13px 16px 13px 48px",
+                      resize: "none",
+                    }}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={`Ej: ${queryPlaceholder}...`}
+                    required
+                    minLength={3}
+                    maxLength={500}
+                    aria-label="Consulta de búsqueda"
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = PRIMARY;
+                      e.currentTarget.style.boxShadow = `0 0 0 3px rgba(0,0,255,0.08)`;
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = BORDER;
+                      e.currentTarget.style.boxShadow = "none";
+                    }}
+                  />
+                </div>
+                <p
+                  style={{
+                    fontSize: 12,
+                    color: TEXT_MUTED,
+                    marginTop: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
                 >
-                  {createJobMutation.isPending ? (
-                    <>
-                      <Loader2 className="search-submit-icon spin" aria-hidden />
-                      <span>Buscando…</span>
-                    </>
-                  ) : (
-                    <span>Ejecutar búsqueda</span>
-                  )}
-                </Button>
+                  <Sparkles size={12} style={{ color: PRIMARY }} aria-hidden />
+                  Describe en lenguaje natural el perfil exacto que buscas.
+                </p>
               </div>
 
+              {/* Error */}
               {createJobMutation.isError ? (
                 <p className="error-text" role="alert">
                   {createJobMutation.error instanceof Error
@@ -324,10 +583,36 @@ export function SearchPage(): JSX.Element {
                     : "No se pudo crear el trabajo de búsqueda."}
                 </p>
               ) : null}
+
+              {/* Submit */}
+              <div style={{ paddingTop: 16, borderTop: "1px solid #F3F4F6" }}>
+                <button
+                  type="submit"
+                  disabled={createJobMutation.isPending}
+                  style={{
+                    ...submitBtnStyle,
+                    opacity: createJobMutation.isPending ? 0.7 : 1,
+                    cursor: createJobMutation.isPending ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {createJobMutation.isPending ? (
+                    <>
+                      <Loader2 size={16} className="spin" aria-hidden />
+                      <span>Buscando…</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Ejecutar búsqueda</span>
+                      <ArrowRight size={16} aria-hidden />
+                    </>
+                  )}
+                </button>
+              </div>
             </form>
           ) : (
+            /* URL import tab */
             <form
-              className="search-command-form"
+              style={{ display: "flex", flexDirection: "column", gap: 28 }}
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!directoryId) {
@@ -337,49 +622,73 @@ export function SearchPage(): JSX.Element {
                 urlScrapeMutation.mutate();
               }}
             >
-              <div className="search-command-directory-row">
-                <div className="search-command-directory-select-wrapper">
-                  <label className="search-command-directory-label">
-                    <Folder size={14} aria-hidden />
-                    <span>Directorio destino</span>
-                  </label>
-                  <SearchableSelect
-                    value={directoryId}
-                    onChange={setDirectoryId}
-                    options={(directoriesQuery.data?.items ?? []).map((d) => ({
-                      id: d.id,
-                      name: d.name,
-                    }))}
-                    placeholder="Buscar directorio..."
+              {/* Directory */}
+              <DirectoryRow
+                directoryId={directoryId}
+                setDirectoryId={setDirectoryId}
+                directoriesData={dirOptions}
+              />
+
+              {/* URL */}
+              <div>
+                <label style={labelStyle}>URL Fuente</label>
+                <div style={{ position: "relative" }}>
+                  <Globe
+                    size={16}
+                    aria-hidden
+                    style={{
+                      position: "absolute",
+                      left: 16,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      color: TEXT_MUTED,
+                      pointerEvents: "none",
+                    }}
+                  />
+                  <input
+                    type="url"
+                    style={{ ...inputBaseStyle, padding: "13px 16px 13px 44px" }}
+                    value={targetUrl}
+                    onChange={(e) => setTargetUrl(e.target.value)}
+                    placeholder="https://ejemplo.com/lista..."
                     required
-                    ariaLabel="Directorio destino"
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = PRIMARY;
+                      e.currentTarget.style.boxShadow = `0 0 0 3px rgba(0,0,255,0.08)`;
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = BORDER;
+                      e.currentTarget.style.boxShadow = "none";
+                    }}
                   />
                 </div>
-                <Link to="/directories/new?returnTo=/search" className="link-button">
-                  + Crear directorio
-                </Link>
               </div>
 
-              <label className="url-scraper-label">URL de la página</label>
-              <Input
-                className="ui-input"
-                type="url"
-                value={targetUrl}
-                onChange={(e) => setTargetUrl(e.target.value)}
-                placeholder="https://ejemplo.com/directorio-medicos"
-                required
-              />
+              {/* Instructions */}
+              <div>
+                <label style={labelStyle}>Instrucciones de extracción (IA)</label>
+                <textarea
+                  rows={5}
+                  style={{ ...inputBaseStyle, padding: "13px 16px", resize: "none" }}
+                  value={userPrompt}
+                  onChange={(e) => setUserPrompt(e.target.value)}
+                  placeholder="Ej: Extrae el nombre de la empresa, el correo de contacto y el teléfono de cada tarjeta en la página. Ignora los anuncios..."
+                  required
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor = PRIMARY;
+                    e.currentTarget.style.boxShadow = `0 0 0 3px rgba(0,0,255,0.08)`;
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor = BORDER;
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                />
+                <p style={{ fontSize: 12, color: TEXT_MUTED, marginTop: 8 }}>
+                  Indícale a la IA qué datos específicos debe buscar y estructurar desde esta URL.
+                </p>
+              </div>
 
-              <label className="url-scraper-label">¿Qué quieres extraer?</label>
-              <textarea
-                className="ui-input"
-                value={userPrompt}
-                onChange={(e) => setUserPrompt(e.target.value)}
-                placeholder="Extrae todos los médicos con su nombre, teléfono y ciudad"
-                rows={4}
-                required
-              />
-
+              {/* Error */}
               {urlScrapeMutation.isError ? (
                 <p className="error-text" role="alert">
                   {urlScrapeMutation.error instanceof Error
@@ -388,25 +697,43 @@ export function SearchPage(): JSX.Element {
                 </p>
               ) : null}
 
-              <Button
-                type="submit"
-                disabled={urlScrapeMutation.isPending}
-                className="search-command-submit"
-              >
-                {urlScrapeMutation.isPending ? (
-                  <>
-                    <Loader2 className="search-submit-icon spin" aria-hidden />
-                    <span>Iniciando extracción…</span>
-                  </>
-                ) : (
-                  <span>Extraer entradas</span>
-                )}
-              </Button>
+              {/* Submit */}
+              <div style={{ paddingTop: 16, borderTop: "1px solid #F3F4F6" }}>
+                <button
+                  type="submit"
+                  disabled={urlScrapeMutation.isPending}
+                  style={{
+                    ...submitBtnStyle,
+                    opacity: urlScrapeMutation.isPending ? 0.7 : 1,
+                    cursor: urlScrapeMutation.isPending ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {urlScrapeMutation.isPending ? (
+                    <>
+                      <Loader2 size={16} className="spin" aria-hidden />
+                      <span>Iniciando extracción…</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Extraer entradas</span>
+                      <CloudDownload size={16} aria-hidden />
+                    </>
+                  )}
+                </button>
+              </div>
             </form>
           )}
-            </CardContent>
-          </Card>
-        </section>
+        </div>
+
+        {/* Footer */}
+        <div style={{ marginTop: 32, textAlign: "center", fontSize: 14, color: TEXT_MUTED }}>
+          <p style={{ margin: 0 }}>
+            ¿Necesitas ayuda con tus búsquedas?{" "}
+            <a href="#" style={{ color: PRIMARY, textDecoration: "none" }}>
+              Consulta la documentación
+            </a>
+          </p>
+        </div>
       </div>
     </section>
   );

@@ -68,7 +68,25 @@ export function SourceReferenceList({ directoryId, onScrapeJobCreated, onOpenUrl
   const activeSources = sources.filter((s) => s.status !== "discarded");
 
   if (sourcesQuery.isLoading) {
-    return <div style={{ padding: 16, textAlign: "center" }}><Loader2 className="spin" size={20} /></div>;
+    return (
+      <div className="source-skeleton-grid" style={{ padding: "4px 0" }}>
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="source-skeleton-card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                <span className="skel" style={{ height: 10, width: "40%" }} />
+                <span className="skel" style={{ height: 13, width: "85%" }} />
+              </div>
+              <span className="skel" style={{ width: 24, height: 24, borderRadius: 6, flexShrink: 0 }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span className="skel" style={{ height: 20, width: 70, borderRadius: 999 }} />
+              <span className="skel" style={{ height: 28, width: 90, borderRadius: 6 }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
   }
 
   if (activeSources.length === 0) {

@@ -40,6 +40,7 @@ def _coerce_raw_plan(raw: dict[str, Any], contact_channels: list[str]) -> dict[s
         "negative_constraints": str(raw.get("negative_constraints", "")).strip(),
         "clarifying_question": cq,
         "exa_category": raw.get("exa_category"),
+        "use_places": bool(raw.get("use_places", False)),
     }
 
 

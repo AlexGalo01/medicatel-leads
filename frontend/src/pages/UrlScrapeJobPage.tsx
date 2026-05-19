@@ -1,7 +1,29 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, ExternalLink, MapPin, Phone, Mail } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, Globe, MapPin, Phone, Mail } from "lucide-react";
+
+const SCRAPE_TABLE_COLS = "48px minmax(200px,1fr) 140px";
+
+const AVATAR_PALETTE = [
+  { bg: "#DBEAFE", color: "#1D4ED8" },
+  { bg: "#FEF3C7", color: "#D97706" },
+  { bg: "#D1FAE5", color: "#059669" },
+  { bg: "#EDE9FE", color: "#7C3AED" },
+  { bg: "#FCE7F3", color: "#DB2777" },
+  { bg: "#FEE2E2", color: "#DC2626" },
+];
+
+function getAvatarStyle(text: string) {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) - h + text.charCodeAt(i)) | 0;
+  return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length];
+}
+
+function initial(text: string): string {
+  const t = text.trim();
+  return t ? t.charAt(0).toUpperCase() : "?";
+}
 
 import { cancelUrlScrapeJob, getDirectory, getUrlScrapeJobStatus, pushScrapeEntriesToDirectory } from "../api";
 import { Button } from "../components/ui/button";
@@ -48,7 +70,7 @@ export function UrlScrapeJobPage(): JSX.Element {
     onSuccess: (result) => {
       setPushed(true);
       void queryClient.invalidateQueries({ queryKey: ["directory-items", directoryId] });
-      setTimeout(() => navigate(`/directories/${directoryId}`), 1500);
+      setTimeout(() => navigate(`/lists/${directoryId}`), 1500);
     },
   });
 
@@ -84,19 +106,19 @@ export function UrlScrapeJobPage(): JSX.Element {
     setSelectedIndices(next);
   };
 
-  const dirName = directoryQuery.data?.name ?? "Directorio";
+  const dirName = directoryQuery.data?.name ?? "Lista";
 
   return (
     <div className="url-scrape-job-page">
       {/* Breadcrumb */}
       <nav className="url-scrape-job-breadcrumb">
         {directoryId ? (
-          <Link to={`/directories/${directoryId}`} className="url-scrape-job-back">
+          <Link to={`/lists/${directoryId}`} className="url-scrape-job-back">
             <ChevronLeft size={15} aria-hidden /> {dirName}
           </Link>
         ) : (
-          <Link to="/directories" className="url-scrape-job-back">
-            <ChevronLeft size={15} aria-hidden /> Directorios
+          <Link to="/lists" className="url-scrape-job-back">
+            <ChevronLeft size={15} aria-hidden /> Listas
           </Link>
         )}
         <span className="url-scrape-job-breadcrumb-sep">/</span>
@@ -107,7 +129,13 @@ export function UrlScrapeJobPage(): JSX.Element {
       <header className="url-scrape-job-header">
         <div>
           <h1 className="url-scrape-job-title">
-            {isRunning ? "Extrayendo…" : isError ? "Error en extracción" : `${preview.length} entradas encontradas`}
+            {isError
+              ? "Error en extracción"
+              : isRunning && preview.length === 0
+                ? "Extrayendo…"
+                : isRunning
+                  ? `${preview.length} entradas hasta ahora…`
+                  : `${preview.length} entradas encontradas`}
           </h1>
           <p className="url-scrape-job-url muted-text">
             <a href={job?.target_url} target="_blank" rel="noreferrer" className="url-scrape-job-source-link">
@@ -129,21 +157,72 @@ export function UrlScrapeJobPage(): JSX.Element {
             >
               {pushMutation.isPending
                 ? "Agregando…"
-                : `Agregar ${selectedIndices.size > 0 ? selectedIndices.size : preview.length} al directorio`}
+                : `Agregar ${selectedIndices.size > 0 ? selectedIndices.size : preview.length} al lista`}
             </Button>
           </div>
         )}
       </header>
 
-      {/* Progress bar while running */}
-      {isRunning && (
+      {/* Loading card while running with no results yet */}
+      {isRunning && preview.length === 0 && (
+        <div style={{ display: "flex", justifyContent: "center", padding: "32px 0" }}>
+          <div className="loading-card">
+            <div className="loading-card__glow" />
+            <div className="loading-card__radar">
+              <div className="loading-card__ring loading-card__ring--1" />
+              <div className="loading-card__ring loading-card__ring--2" />
+              <div className="loading-card__ring loading-card__ring--3" />
+              <div className="loading-card__node">
+                <Globe size={28} className="loading-card__node-icon" aria-hidden />
+              </div>
+              <div className="loading-card__orbit">
+                <div className="loading-card__orbit-dot" />
+              </div>
+              <div className="loading-card__orbit loading-card__orbit--slow">
+                <div className="loading-card__orbit-dot loading-card__orbit-dot--gray" />
+              </div>
+            </div>
+            <div className="loading-card__status-wrap">
+              <p className="loading-card__status">
+                {(job?.progress ?? 0) <= 10
+                  ? "Navegando la URL…"
+                  : job?.pages_scraped != null && job?.pages_total != null
+                    ? `Procesando página ${job.pages_scraped} de ${job.pages_total}…`
+                    : "Procesando con IA…"}
+              </p>
+            </div>
+            <div className="loading-card__bar-track">
+              <div
+                className="loading-card__bar-fill--real"
+                style={{ width: `${job?.progress ?? 0}%` }}
+              />
+            </div>
+            <span className="loading-card__percent">{job?.progress ?? 0}%</span>
+            <button
+              type="button"
+              className="loading-card__cancel"
+              disabled={cancelMutation.isPending}
+              onClick={() => cancelMutation.mutate()}
+            >
+              {cancelMutation.isPending ? "Cancelando…" : "Cancelar"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Compact progress bar while running with partial results */}
+      {isRunning && preview.length > 0 && (
         <div className="url-scrape-job-progress-wrap">
           <div
             className="url-scrape-job-progress-bar"
             style={{ width: `${job?.progress ?? 0}%` }}
           />
           <p className="muted-text url-scrape-job-progress-label">
-            {job?.progress === 10 ? "Navegando la URL…" : "Procesando con IA…"} {job?.progress}%
+            {job?.progress != null && job.progress <= 10
+              ? "Navegando la URL…"
+              : job?.pages_scraped != null && job?.pages_total != null
+                ? `Procesando página ${job.pages_scraped} de ${job.pages_total}…`
+                : "Procesando con IA…"} {job?.progress}%
           </p>
           <Button
             type="button"
@@ -162,8 +241,8 @@ export function UrlScrapeJobPage(): JSX.Element {
         <div className="url-scrape-job-error">
           <p className="muted-text">Búsqueda cancelada.</p>
           {directoryId && (
-            <Button type="button" onClick={() => navigate(`/directories/${directoryId}`)}>
-              Volver al directorio
+            <Button type="button" onClick={() => navigate(`/lists/${directoryId}`)}>
+              Volver al lista
             </Button>
           )}
         </div>
@@ -174,8 +253,8 @@ export function UrlScrapeJobPage(): JSX.Element {
         <div className="url-scrape-job-error">
           <p className="error-text">{job?.error_message ?? "Ocurrió un error durante la extracción."}</p>
           {directoryId && (
-            <Button type="button" onClick={() => navigate(`/directories/${directoryId}`)}>
-              Volver al directorio
+            <Button type="button" onClick={() => navigate(`/lists/${directoryId}`)}>
+              Volver al lista
             </Button>
           )}
         </div>
@@ -184,42 +263,162 @@ export function UrlScrapeJobPage(): JSX.Element {
       {/* Success banner */}
       {pushed && (
         <div className="url-scrape-job-success">
-          Entradas agregadas al directorio. Redirigiendo…
+          Entradas agregadas al lista. Redirigiendo…
         </div>
       )}
 
-      {/* Select all toggle and pagination */}
-      {isCompleted && preview.length > 0 && !pushed && (
-        <div className="url-scrape-job-select-bar">
-          <div className="url-scrape-job-select-bar-left">
-            <label className="url-scrape-job-check-all">
+      {/* Results table */}
+      {preview.length > 0 && (
+        <div style={{
+          background: "white", border: "1px solid #D3D3D3",
+          borderRadius: 12, overflow: "hidden",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+          margin: "16px 0",
+        }}>
+          {/* Table header */}
+          <div style={{
+            display: "grid", gridTemplateColumns: SCRAPE_TABLE_COLS, gap: "0 12px",
+            padding: "10px 16px", borderBottom: "1px solid #D3D3D3",
+            background: "#F8FAFC", fontSize: 11, fontWeight: 600,
+            color: "#808080", textTransform: "uppercase", letterSpacing: "0.05em",
+            alignItems: "center",
+          }}>
+            <div style={{ display: "flex", justifyContent: "center" }}>
               <input
                 type="checkbox"
-                checked={paginatedItems.length > 0 && paginatedItems.every((item) =>
-                  selectedIndices.has(item.index)
-                )}
+                style={{ width: 15, height: 15, cursor: "pointer" }}
+                checked={paginatedItems.length > 0 && paginatedItems.every((item) => selectedIndices.has(item.index))}
                 onChange={togglePageItems}
               />
-              Seleccionar página
-            </label>
+            </div>
+            <div>Perfil</div>
+            <div>Contacto</div>
           </div>
+
+          {/* Data rows */}
+          {paginatedItems.map((item) => {
+            const avStyle = getAvatarStyle(item.title || "?");
+            let hostname = "";
+            try { hostname = new URL(item.url).hostname.replace(/^www\./, ""); } catch { hostname = item.url; }
+
+            return (
+              <div
+                key={item.index}
+                className="ws-result-row"
+                style={{
+                  display: "grid", gridTemplateColumns: SCRAPE_TABLE_COLS, gap: "0 12px",
+                  padding: "12px 16px", borderBottom: "1px solid #F3F4F6",
+                  alignItems: "center",
+                }}
+              >
+                {/* Checkbox */}
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <input
+                    type="checkbox"
+                    style={{ width: 15, height: 15, cursor: "pointer" }}
+                    checked={selectedIndices.has(item.index)}
+                    onChange={(e) => {
+                      const next = new Set(selectedIndices);
+                      if (e.target.checked) next.add(item.index);
+                      else next.delete(item.index);
+                      setSelectedIndices(next);
+                    }}
+                  />
+                </div>
+
+                {/* Profile */}
+                <div style={{ display: "flex", alignItems: "center", gap: 12, overflow: "hidden" }}>
+                  <div style={{
+                    width: 38, height: 38, borderRadius: "50%", flexShrink: 0,
+                    background: avStyle.bg, color: avStyle.color,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontWeight: 700, fontSize: 13,
+                    border: `1px solid ${avStyle.color}30`,
+                  }}>
+                    {initial(item.title || "?")}
+                  </div>
+                  <div style={{ overflow: "hidden" }}>
+                    <p style={{
+                      fontWeight: 600, fontSize: 13, color: "#0F172A",
+                      margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>
+                      {item.title || <span style={{ color: "#9CA3AF" }}>(sin título)</span>}
+                    </p>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+                      {item.city && (
+                        <span style={{ fontSize: 11, color: "#808080", display: "flex", alignItems: "center", gap: 3 }}>
+                          <MapPin size={10} aria-hidden /> {item.city}
+                        </span>
+                      )}
+                      {item.url && (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ fontSize: 11, color: "#9CA3AF", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 2 }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {hostname} <ExternalLink size={9} aria-hidden />
+                        </a>
+                      )}
+                    </div>
+                    {item.snippet && (
+                      <p style={{ fontSize: 11, color: "#9CA3AF", margin: "3px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.snippet.slice(0, 120)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Contact icons */}
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  {item.emails[0] && (
+                    <a
+                      href={`mailto:${item.emails[0]}`}
+                      className="ws-contact-btn"
+                      title={item.emails[0]}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Mail size={12} />
+                    </a>
+                  )}
+                  {item.phones[0] && (
+                    <a
+                      href={`tel:${item.phones[0]}`}
+                      className="ws-contact-btn"
+                      title={item.phones[0]}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Phone size={12} />
+                    </a>
+                  )}
+                  {!item.emails[0] && !item.phones[0] && (
+                    <span style={{ fontSize: 11, color: "#D1D5DB" }}>—</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Pagination inside table */}
           {totalPages > 1 && (
-            <div className="url-scrape-job-pagination">
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8,
+              padding: "10px 16px", borderTop: "1px solid #F3F4F6", background: "#FAFAFA",
+            }}>
               <Button
-                type="button"
-                variant="ghost"
+                type="button" variant="ghost"
                 disabled={currentPage === 1}
                 onClick={() => setCurrentPage(currentPage - 1)}
                 className="url-scrape-job-pagination-btn"
               >
                 <ChevronLeft size={16} aria-hidden /> Anterior
               </Button>
-              <span className="url-scrape-job-pagination-info">
+              <span style={{ fontSize: 12, color: "#6B7280" }}>
                 Página {currentPage} de {totalPages}
               </span>
               <Button
-                type="button"
-                variant="ghost"
+                type="button" variant="ghost"
                 disabled={currentPage === totalPages}
                 onClick={() => setCurrentPage(currentPage + 1)}
                 className="url-scrape-job-pagination-btn"
@@ -231,69 +430,6 @@ export function UrlScrapeJobPage(): JSX.Element {
         </div>
       )}
 
-      {/* Results grid */}
-      {preview.length > 0 && (
-        <ul className="url-scrape-job-results">
-          {paginatedItems.map((item) => (
-            <li key={item.index} className="url-scrape-job-card">
-              <label className="url-scrape-job-card-inner">
-                <input
-                  type="checkbox"
-                  className="url-scrape-job-card-check"
-                  checked={selectedIndices.has(item.index)}
-                  onChange={(e) => {
-                    const next = new Set(selectedIndices);
-                    if (e.target.checked) next.add(item.index);
-                    else next.delete(item.index);
-                    setSelectedIndices(next);
-                  }}
-                />
-                <div className="url-scrape-job-card-body">
-                  <p className="url-scrape-job-card-title">
-                    {item.title || <span className="muted-text">(sin título)</span>}
-                  </p>
-
-                  {item.url && (
-                    <a
-                      href={item.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="url-scrape-job-card-link muted-text"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {item.url.length > 60 ? item.url.slice(0, 60) + "…" : item.url}
-                      <ExternalLink size={10} aria-hidden />
-                    </a>
-                  )}
-
-                  {item.snippet && (
-                    <p className="url-scrape-job-card-snippet muted-text">{item.snippet.slice(0, 140)}</p>
-                  )}
-
-                  <div className="url-scrape-job-card-meta">
-                    {item.city && (
-                      <span className="url-scrape-job-card-tag">
-                        <MapPin size={11} aria-hidden /> {item.city}
-                      </span>
-                    )}
-                    {item.phones[0] && (
-                      <span className="url-scrape-job-card-tag">
-                        <Phone size={11} aria-hidden /> {item.phones[0]}
-                      </span>
-                    )}
-                    {item.emails[0] && (
-                      <span className="url-scrape-job-card-tag">
-                        <Mail size={11} aria-hidden /> {item.emails[0]}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </label>
-            </li>
-          ))}
-        </ul>
-      )}
-
       {/* Empty state when completed but no entries */}
       {isCompleted && preview.length === 0 && (
         <div className="url-scrape-job-empty">
@@ -302,8 +438,8 @@ export function UrlScrapeJobPage(): JSX.Element {
             Intenta con un prompt más específico o verifica que la URL contenga un listado visible.
           </p>
           {directoryId && (
-            <Button type="button" onClick={() => navigate(`/directories/${directoryId}`)}>
-              Volver al directorio
+            <Button type="button" onClick={() => navigate(`/lists/${directoryId}`)}>
+              Volver al lista
             </Button>
           )}
         </div>

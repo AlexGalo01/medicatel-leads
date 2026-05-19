@@ -160,17 +160,92 @@ async def _discover_pages_via_brave(
         return []
 
 
+_API_KEYWORDS = ("doctor", "medic", "physician", "staff", "directory", "provider",
+                  "specialist", "especialist", "personal", "empleado", "people")
+
+
 async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
-    """Load URL with a fresh Playwright browser, return (body_text, next_page_url)."""
+    """Load URL with a fresh Playwright browser, return (body_text, next_page_url).
+
+    Estrategia multicapa:
+    1. Intercepta respuestas JSON de APIs internas (SPAs que cargan datos vía XHR/fetch).
+    2. Múltiples scrolls para activar infinite scroll / lazy loading.
+    3. Extrae JSON embebido en <script> tags (Next.js, SSR, etc.).
+    4. Combina todo: API data + DOM text para máxima cobertura.
+    """
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=_BROWSER_ARGS)
         try:
             page = await browser.new_page()
-            await page.goto(url, wait_until="networkidle", timeout=30_000)
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(1_500)
 
+            # — Interceptar respuestas JSON de la API —
+            captured_api_chunks: list[str] = []
+
+            async def _on_response(response: Any) -> None:
+                try:
+                    content_type = response.headers.get("content-type", "")
+                    if response.status != 200 or "json" not in content_type:
+                        return
+                    resp_url = response.url.lower()
+                    # Filtrar solo URLs que parecen datos de directorio/personas
+                    if not any(kw in resp_url for kw in _API_KEYWORDS):
+                        # También capturar rutas tipo /api/* con respuesta de lista
+                        if "/api/" not in resp_url and "/graphql" not in resp_url:
+                            return
+                    body = await response.body()
+                    if len(body) < 50:
+                        return
+                    snippet = body[:20_000].decode("utf-8", errors="replace")
+                    captured_api_chunks.append(f"[API:{response.url}]\n{snippet}")
+                    logger.debug("Captured API response: %s (%d bytes)", response.url, len(body))
+                except Exception:
+                    pass
+
+            page.on("response", _on_response)
+
+            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+
+            # — Espera inicial + múltiples scrolls para infinite scroll —
+            await page.wait_for_timeout(2_500)
+            prev_height = -1
+            for _ in range(5):
+                height: int = await page.evaluate("document.body.scrollHeight")
+                if height == prev_height:
+                    break
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(2_000)
+                prev_height = height
+
+            # — Extraer JSON embebido en <script> (Next.js __NEXT_DATA__, Nuxt, etc.) —
+            embedded_json: list[str] = await page.evaluate("""() => {
+                const results = [];
+                const scripts = document.querySelectorAll(
+                    'script[type="application/json"], script#__NEXT_DATA__, script[id*="data"]'
+                );
+                for (const s of scripts) {
+                    const t = (s.textContent || '').trim();
+                    if (t.length > 100 && t.length < 200000) results.push(t.slice(0, 15000));
+                }
+                return results;
+            }""")
+
+            # — DOM text —
             text = await page.inner_text("body")
+
+            # — Combinar todas las fuentes —
+            parts: list[str] = []
+            if captured_api_chunks:
+                parts.append(
+                    "=== DATOS API (JSON interceptado) ===\n"
+                    + "\n---\n".join(captured_api_chunks[:5])
+                )
+            if embedded_json:
+                parts.append(
+                    "=== JSON EMBEBIDO EN PÁGINA ===\n"
+                    + "\n---\n".join(embedded_json[:3])
+                )
+            parts.append("=== TEXTO DOM ===\n" + text)
+            combined = "\n\n".join(parts)
 
             # Detect next page URL using common pagination patterns
             next_url: str | None = await page.evaluate("""() => {
@@ -187,6 +262,8 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
                         let el = current.nextElementSibling;
                         while (el) {
                             if (el.tagName === 'A' && el.href) return el.href;
+                            const a = el.querySelector && el.querySelector('a[href]');
+                            if (a && a.href) return a.href;
                             el = el.nextElementSibling;
                         }
                     }
@@ -204,7 +281,7 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
                 return null;
             }""")
 
-            return text, next_url
+            return combined, next_url
         finally:
             await browser.close()
 
@@ -215,7 +292,7 @@ async def _scrape_url_text(url: str) -> str:
         browser = await p.chromium.launch(headless=True, args=_BROWSER_ARGS)
         try:
             page = await browser.new_page()
-            await page.goto(url, wait_until="networkidle", timeout=30_000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await page.wait_for_timeout(1_500)
             return await page.inner_text("body")
@@ -277,22 +354,57 @@ async def _capture_page_structure(page: Any) -> str:
 async def _plan_page_navigation(
     page_snapshot: str, user_prompt: str, settings: Any
 ) -> dict[str, Any]:
-    """Use LLM to decide navigation strategy based on page structure and user prompt."""
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
-    response = await client.chat.completions.create(
-        model=settings.openai_model,
-        messages=[
-            {"role": "system", "content": _NAV_PLAN_PROMPT},
-            {"role": "user", "content": f"Instrucción: {user_prompt}\n\nEstructura de la página:\n{page_snapshot}"},
-        ],
-        temperature=0,
-        response_format={"type": "json_object"},
-    )
-    raw = response.choices[0].message.content or "{}"
-    try:
-        return json.loads(raw)
-    except Exception:
-        return {"strategy": "scrape_directly", "reasoning": "parse error"}
+    """Use LLM to decide navigation strategy. Gemini primary, OpenAI fallback."""
+    import httpx
+
+    user_content = f"Instrucción: {user_prompt}\n\nEstructura de la página:\n{page_snapshot}"
+    full_prompt = _NAV_PLAN_PROMPT + "\n\n" + user_content
+
+    def _parse(raw: str) -> dict[str, Any]:
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1]
+            if "```" in text:
+                text = text[: text.rfind("```")]
+        try:
+            return json.loads(text)
+        except Exception:
+            return {"strategy": "scrape_directly", "reasoning": "parse error"}
+
+    # Gemini primero
+    if settings.google_api_key:
+        try:
+            body = {"contents": [{"parts": [{"text": full_prompt}]}]}
+            gemini_url = (
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{settings.google_model}:generateContent?key={settings.google_api_key}"
+            )
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.post(gemini_url, json=body, headers={"Content-Type": "application/json"})
+                r.raise_for_status()
+                raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            return _parse(raw)
+        except Exception as exc:
+            logger.warning("Gemini nav plan falló: %r", exc)
+
+    # Fallback: OpenAI
+    if settings.openai_api_key:
+        try:
+            oai = AsyncOpenAI(api_key=settings.openai_api_key)
+            response = await oai.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {"role": "system", "content": _NAV_PLAN_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0,
+                response_format={"type": "json_object"},
+            )
+            return _parse(response.choices[0].message.content or "{}")
+        except Exception as exc:
+            logger.warning("OpenAI nav plan falló: %r", exc)
+
+    return {"strategy": "scrape_directly", "reasoning": "sin LLM disponible"}
 
 
 async def _navigate_and_scrape(
@@ -307,18 +419,28 @@ async def _navigate_and_scrape(
         browser = await p.chromium.launch(headless=True, args=_BROWSER_ARGS)
         try:
             page = await browser.new_page()
-            await page.goto(target_url, wait_until="networkidle", timeout=30_000)
+            await page.goto(target_url, wait_until="domcontentloaded", timeout=30_000)
             await page.wait_for_timeout(1_500)
 
             # 1. Capture page structure
             snapshot = await _capture_page_structure(page)
             logger.info("Page snapshot captured, %d chars job_id=%s", len(snapshot), job_id)
 
-            # 2. LLM decides navigation strategy
-            plan = await _plan_page_navigation(snapshot, user_prompt, settings)
-            strategy = plan.get("strategy", "scrape_directly")
-            logger.info("Nav plan: strategy=%s reasoning=%r job_id=%s",
-                        strategy, plan.get("reasoning"), job_id)
+            # 2. Si la página ya tiene contenido sustancial, no navegar — evita que el LLM
+            #    navegue a una URL sin query params (ej. /medicos sin ?all=true) perdiendo resultados.
+            current_body_len: int = await page.evaluate("document.body.innerText.length")
+            if current_body_len > 2_000:
+                strategy = "scrape_directly"
+                logger.info(
+                    "Page already has content (%d chars), skipping LLM nav job_id=%s",
+                    current_body_len, job_id,
+                )
+            else:
+                # LLM decides navigation strategy only when page seems empty / form-only
+                plan = await _plan_page_navigation(snapshot, user_prompt, settings)
+                strategy = plan.get("strategy", "scrape_directly")
+                logger.info("Nav plan: strategy=%s reasoning=%r job_id=%s",
+                            strategy, plan.get("reasoning"), job_id)
 
             # 3. Execute strategy
             if strategy == "nav_link":
@@ -348,9 +470,9 @@ async def _navigate_and_scrape(
 
                     if clicked or href:
                         if not clicked:
-                            await page.goto(href, wait_until="networkidle", timeout=30_000)
+                            await page.goto(href, wait_until="domcontentloaded", timeout=30_000)
                         try:
-                            await page.wait_for_load_state("networkidle", timeout=10_000)
+                            await page.wait_for_load_state("load", timeout=10_000)
                         except Exception:
                             pass
                         await page.wait_for_timeout(2_000)
@@ -377,7 +499,7 @@ async def _navigate_and_scrape(
                         if not submitted:
                             await search_input.press("Enter")
                         try:
-                            await page.wait_for_load_state("networkidle", timeout=15_000)
+                            await page.wait_for_load_state("load", timeout=15_000)
                         except Exception:
                             pass
                         await page.wait_for_timeout(3_000)
@@ -399,7 +521,12 @@ async def _navigate_and_scrape(
                         const cur = document.querySelector(sel);
                         if (cur) {
                             let el = cur.nextElementSibling;
-                            while (el) { if (el.tagName === 'A' && el.href) return el.href; el = el.nextElementSibling; }
+                            while (el) {
+                                if (el.tagName === 'A' && el.href) return el.href;
+                                const a = el.querySelector && el.querySelector('a[href]');
+                                if (a && a.href) return a.href;
+                                el = el.nextElementSibling;
+                            }
                         }
                     }
                     const nextSelectors = ['a.next', 'a[rel="next"]', '.page-numbers.next',
@@ -413,21 +540,63 @@ async def _navigate_and_scrape(
 
                 if not next_url or next_url == current_url:
                     break
-                await page.goto(next_url, wait_until="networkidle", timeout=30_000)
+                await page.goto(next_url, wait_until="domcontentloaded", timeout=30_000)
                 await page.wait_for_timeout(1_500)
         finally:
             await browser.close()
     return results
 
 
-async def _extract_entries_with_llm(
+def _parse_llm_json(raw: str) -> list[_ScrapedEntry]:
+    """Parsea la respuesta JSON del LLM y retorna lista de entradas."""
+    # Limpiar markdown fences si el LLM los añade
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1]
+        if text.endswith("```"):
+            text = text[: text.rfind("```")]
+    try:
+        parsed = json.loads(text)
+        items: list = parsed.get("entries", []) if isinstance(parsed, dict) else []
+        return [_ScrapedEntry(**e) for e in items if isinstance(e, dict)]
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("LLM parse error: %s | raw=%s", exc, raw[:300])
+        return []
+
+
+async def _extract_with_gemini(
     page_text: str, user_prompt: str, settings: Any
 ) -> list[_ScrapedEntry]:
-    """Send page text to OpenAI and return parsed entries."""
+    """Extrae entradas usando Gemini vía REST (mismo patrón que GeminiClient)."""
+    import httpx
+
+    prompt = (
+        f"{_EXTRACT_SYSTEM_PROMPT}\n\n"
+        f"Instrucción adicional: {user_prompt}\n\n"
+        f"Texto de la página:\n---\n{page_text[:35_000]}\n---"
+    )
+    body = {"contents": [{"parts": [{"text": prompt}]}]}
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{settings.google_model}:generateContent?key={settings.google_api_key}"
+    )
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(url, json=body, headers={"Content-Type": "application/json"})
+        response.raise_for_status()
+        payload = response.json()
+
+    raw = payload["candidates"][0]["content"]["parts"][0]["text"]
+    return _parse_llm_json(raw)
+
+
+async def _extract_with_openai(
+    page_text: str, user_prompt: str, settings: Any
+) -> list[_ScrapedEntry]:
+    """Extrae entradas usando OpenAI."""
     client = AsyncOpenAI(api_key=settings.openai_api_key)
     user_message = (
         f"Instrucción adicional: {user_prompt}\n\n"
-        f"Texto de la página:\n---\n{page_text[:60_000]}\n---"
+        f"Texto de la página:\n---\n{page_text[:35_000]}\n---"
     )
     response = await client.chat.completions.create(
         model=settings.openai_model,
@@ -439,13 +608,25 @@ async def _extract_entries_with_llm(
         response_format={"type": "json_object"},
     )
     raw = response.choices[0].message.content or ""
-    try:
-        parsed = json.loads(raw)
-        items: list = parsed.get("entries", []) if isinstance(parsed, dict) else []
-        return [_ScrapedEntry(**e) for e in items if isinstance(e, dict)]
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
-        logger.warning("LLM parse error: %s | raw=%s", exc, raw[:300])
-        return []
+    return _parse_llm_json(raw)
+
+
+async def _extract_entries_with_llm(
+    page_text: str, user_prompt: str, settings: Any
+) -> list[_ScrapedEntry]:
+    """Extrae entradas usando Gemini (primario) con fallback a OpenAI."""
+    # Gemini primero — es el LLM principal configurado y ya funcional
+    if settings.google_api_key:
+        try:
+            return await _extract_with_gemini(page_text, user_prompt, settings)
+        except Exception as exc:
+            logger.warning("Gemini extraction falló, intentando OpenAI: %r", exc)
+
+    # Fallback: OpenAI
+    if settings.openai_api_key:
+        return await _extract_with_openai(page_text, user_prompt, settings)
+
+    raise RuntimeError("Sin proveedor LLM configurado para extracción URL")
 
 
 def _build_preview(entries: list[_ScrapedEntry]) -> list[dict[str, Any]]:
@@ -558,64 +739,71 @@ async def run_url_scrape_pipeline(job_id: UUID) -> None:
             return
         await repo.update_status(job_id, "running", 45)
 
-    if pages_loaded:
+    # --- Extracción secuencial: página a página, guardando resultados progresivamente ---
+    page_texts = [(text, url) for text, url in pages_loaded[:_MAX_PAGES]]
+    total_pages = len(page_texts)
+
+    for idx, (text, _) in enumerate(page_texts):
+        # Cancelación
+        async with async_session_factory() as session:
+            repo = UrlScrapeJobsRepository(session)
+            current_job = await repo.get_by_id(job_id)
+            if current_job and current_job.status == "cancelled":
+                logger.info("Job cancelled during LLM extraction job_id=%s", job_id)
+                return
+
         try:
-            page_texts = [text for text, _ in pages_loaded]
-            extractions = await asyncio.gather(*[
-                asyncio.wait_for(
-                    _extract_entries_with_llm(text, job.user_prompt, settings),
-                    timeout=120,
-                )
-                for text in page_texts[:_MAX_PAGES]
-            ], return_exceptions=True)
-
-            for idx, extraction in enumerate(extractions):
-                if isinstance(extraction, list):
-                    all_entries.extend(extraction)
-                    logger.info(
-                        "Page %d: %d entries extracted (total=%d) job_id=%s",
-                        idx + 1, len(extraction), len(all_entries), job_id,
-                    )
-                elif isinstance(extraction, Exception):
-                    logger.error("Page %d LLM failed job_id=%s: %s", idx + 1, job_id, extraction)
-                    if idx == 0:
-                        async with async_session_factory() as session:
-                            repo = UrlScrapeJobsRepository(session)
-                            await repo.update_status(
-                                job_id, "error", 45,
-                                metadata_json={"error": str(extraction), "stage": "llm_extract"},
-                            )
-                        return
+            entries = await asyncio.wait_for(
+                _extract_entries_with_llm(text, job.user_prompt, settings),
+                timeout=150,
+            )
         except Exception as exc:
-            logger.error("LLM extraction batch failed job_id=%s: %s", job_id, exc)
-            async with async_session_factory() as session:
-                repo = UrlScrapeJobsRepository(session)
-                await repo.update_status(
-                    job_id, "error", 45,
-                    metadata_json={"error": str(exc), "stage": "llm_batch_extract"},
-                )
-            return
+            logger.error("Page %d LLM failed job_id=%s: %r", idx + 1, job_id, exc)
+            if idx == 0 and not all_entries:
+                async with async_session_factory() as session:
+                    repo = UrlScrapeJobsRepository(session)
+                    await repo.update_status(
+                        job_id, "error", 45,
+                        metadata_json={"error": str(exc), "stage": "llm_extract"},
+                    )
+                return
+            # Para páginas 2+, continuar con las siguientes aunque falle una
+            continue
 
-    # --- Check if cancelled before final save ---
-    async with async_session_factory() as session:
-        repo = UrlScrapeJobsRepository(session)
-        current_job = await repo.get_by_id(job_id)
-        if current_job and current_job.status == "cancelled":
-            logger.info("Job cancelled before final save job_id=%s", job_id)
-            return
+        all_entries.extend(entries)
+        logger.info(
+            "Page %d/%d: %d entries extracted (total=%d) job_id=%s",
+            idx + 1, total_pages, len(entries), len(all_entries), job_id,
+        )
 
-    # --- Save final results ---
-    async with async_session_factory() as session:
-        repo = UrlScrapeJobsRepository(session)
+        # Guardar progreso parcial después de cada página
+        progress = 45 + int((idx + 1) / total_pages * 50)
         preview = _build_preview(all_entries)
+        async with async_session_factory() as session:
+            repo = UrlScrapeJobsRepository(session)
+            await repo.update_status(
+                job_id, "running", progress,
+                metadata_json={
+                    "scrape_results_preview": preview,
+                    "entries_count": len(preview),
+                    "pages_scraped": idx + 1,
+                    "pages_total": total_pages,
+                    "stage": "extracting",
+                },
+            )
+
+    # --- Guardar resultado final ---
+    preview = _build_preview(all_entries)
+    async with async_session_factory() as session:
+        repo = UrlScrapeJobsRepository(session)
         await repo.update_status(
             job_id, "completed", 100,
             metadata_json={
                 "scrape_results_preview": preview,
                 "entries_count": len(preview),
-                "pages_scraped": len(pages_loaded),
+                "pages_scraped": total_pages,
                 "stage": "done",
             },
         )
 
-    logger.info("URL scrape done job_id=%s pages=%d entries=%d", job_id, len(pages_loaded), len(all_entries))
+    logger.info("URL scrape done job_id=%s pages=%d entries=%d", job_id, total_pages, len(all_entries))

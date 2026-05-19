@@ -254,6 +254,10 @@ class GeminiClient:
             "Usa null para: especialidades de nicho, técnicos, o países pequeños de LATAM (Honduras, Guatemala, El Salvador, Nicaragua, Bolivia, Paraguay). "
             "Usa \"company\" cuando se buscan negocios/organizaciones (clínicas, hospitales como institución, franquicias, empresas). "
             "null permite encontrar directorios, páginas web y perfiles sin restricción de tipo (recomendado para LATAM salvo MX/CO/AR/CL en especialidades altas).\n"
+            "use_places: devuelve true si la consulta busca un negocio FÍSICO LOCAL "
+            "(car wash, restaurante, farmacia, clínica, taller, tienda, peluquería, hotel, gasolinera, ferretería, supermercado, bar, gym, salón de belleza) "
+            "O usa frases como 'cerca de', 'en [ciudad]', 'en [zona]'. "
+            "Devuelve false para: empresas corporativas, aseguradoras, bancos, distribuidores, marcas nacionales, búsquedas de personas profesionales.\n"
             "PATRÓN ESPECIAL - Búsqueda de empleados de empresa: "
             "Si la consulta busca empleados, personal, equipo, trabajadores o staff de una empresa concreta "
             "(ej. 'empleados de Empresa1', 'trabajadores de Clínica X'), devuelve company_anchor con: "
@@ -269,6 +273,7 @@ class GeminiClient:
             '"negative_constraints": "texto opcional", '
             '"clarifying_question": null, '
             '"exa_category": null, '
+            '"use_places": false, '
             '"company_anchor": null}\n'
             "required_channels debe reflejar los canales deseados (subconjunto de los solicitados)."
         )

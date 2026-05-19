@@ -6,7 +6,6 @@ import { DirectoriesListPage } from "./features/directories/pages/DirectoriesLis
 import { DirectoryCreatePage } from "./features/directories/pages/DirectoryCreatePage";
 import { DirectoryBoardPage } from "./features/directories/pages/DirectoryBoardPage";
 import { DirectoryEditPage } from "./features/directories/pages/DirectoryEditPage";
-import { OpportunitiesListPage } from "./features/opportunities/pages/OpportunitiesListPage";
 import { OpportunityCreatePage } from "./features/opportunities/pages/OpportunityCreatePage";
 import { OpportunityDetailPage } from "./features/opportunities/pages/OpportunityDetailPage";
 import { AdminCreateUserPage } from "./pages/AdminCreateUserPage";
@@ -38,11 +37,10 @@ export const appRouter = createBrowserRouter([
       { path: "url-scrape-jobs/:jobId", element: <UrlScrapeJobPage /> },
       { path: "jobs/:jobId/leads", element: <Navigate to=".." relative="path" replace /> },
       { path: "leads/:leadId", element: <LeadDetailPage /> },
-      { path: "directories", element: <DirectoriesListPage /> },
-      { path: "directories/new", element: <DirectoryCreatePage /> },
-      { path: "directories/:directoryId", element: <DirectoryBoardPage /> },
-      { path: "directories/:directoryId/edit", element: <DirectoryEditPage /> },
-      { path: "opportunities", element: <OpportunitiesListPage /> },
+      { path: "lists", element: <DirectoriesListPage /> },
+      { path: "lists/new", element: <DirectoryCreatePage /> },
+      { path: "lists/:directoryId", element: <DirectoryBoardPage /> },
+      { path: "lists/:directoryId/edit", element: <DirectoryEditPage /> },
       { path: "opportunities/new", element: <OpportunityCreatePage /> },
       { path: "opportunities/:opportunityId", element: <OpportunityDetailPage /> },
       { path: "admin/users", element: <AdminUsersPage /> },

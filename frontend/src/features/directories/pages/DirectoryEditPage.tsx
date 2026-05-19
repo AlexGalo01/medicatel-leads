@@ -102,7 +102,7 @@ export function DirectoryEditPage(): JSX.Element {
 
       await queryClient.invalidateQueries({ queryKey: ["directory", directoryId] });
       await queryClient.invalidateQueries({ queryKey: ["directories"] });
-      navigate(`/directories/${directoryId}`);
+      navigate(`/lists/${directoryId}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Error al guardar");
       setSaving(false);
@@ -110,14 +110,14 @@ export function DirectoryEditPage(): JSX.Element {
   };
 
   if (query.isLoading) {
-    return <section className="panel muted-text">Cargando directorio…</section>;
+    return <section className="panel muted-text">Cargando lista…</section>;
   }
 
   if (query.isError || !data) {
     return (
       <section className="panel error-text">
-        No se encontró el directorio.{" "}
-        <Link to="/directories" className="link-button">
+        No se encontró el lista.{" "}
+        <Link to="/lists" className="link-button">
           Volver
         </Link>
       </section>
@@ -129,13 +129,13 @@ export function DirectoryEditPage(): JSX.Element {
   return (
     <section className="directory-create-page">
       <nav className="directory-create-nav" aria-label="Navegación">
-        <Link to={`/directories/${directoryId}`} className="link-button">
+        <Link to={`/lists/${directoryId}`} className="link-button">
           <ChevronLeft size={14} aria-hidden /> {data.name}
         </Link>
       </nav>
 
       <header className="directory-create-head">
-        <h1>Editar directorio</h1>
+        <h1>Editar lista</h1>
         <p className="muted-text">Modifica nombre, descripción y el flow de pasos.</p>
       </header>
 
@@ -180,7 +180,7 @@ export function DirectoryEditPage(): JSX.Element {
         {error ? <p className="error-text">{error}</p> : null}
 
         <footer className="directory-create-actions">
-          <Link to={`/directories/${directoryId}`} className="link-button">
+          <Link to={`/lists/${directoryId}`} className="link-button">
             Cancelar
           </Link>
           <Button type="submit" disabled={!canSave}>

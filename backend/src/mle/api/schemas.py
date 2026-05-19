@@ -18,7 +18,7 @@ class ApiErrorResponse(BaseModel):
 
 
 SearchFocusLiteral = Literal["general", "linkedin", "instagram"]
-ExaCategoryLiteral = Literal["people", "company"]
+ExaCategoryLiteral = Literal["people", "company", "local_business"]
 
 
 class SearchJobCreateRequest(BaseModel):
@@ -97,6 +97,8 @@ class SearchJobStatusResponse(BaseModel):
     suggested_source_urls: list[dict[str, str]] = Field(default_factory=list)
     lpa_preview: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    directory_id: str | None = None
+    filter_stats: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProfileInterpretRequest(BaseModel):
@@ -432,6 +434,8 @@ class UrlScrapeJobStatusResponse(BaseModel):
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime
+    pages_scraped: int | None = None
+    pages_total: int | None = None
 
 
 class UrlScrapeJobListItemResponse(BaseModel):

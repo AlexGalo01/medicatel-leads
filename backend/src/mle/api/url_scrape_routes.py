@@ -104,6 +104,8 @@ async def get_url_scrape_job(
         error_message=str(error_msg) if error_msg else None,
         created_at=job.created_at,
         updated_at=job.updated_at,
+        pages_scraped=meta.get("pages_scraped"),
+        pages_total=meta.get("pages_total"),
     )
 
 

@@ -115,6 +115,14 @@ def _preview_item(raw: dict[str, Any], index: int) -> dict[str, Any]:
         out["linkedin_url"] = linkedin_url
     if "_prefetched_maps" in raw:
         out["_prefetched_maps"] = raw["_prefetched_maps"]
+
+    # Campos de negocio local (Google Places / Brave Local)
+    for biz_field in ("phone", "address", "website", "hours", "rating", "review_count",
+                       "place_id", "lat", "lng", "source_type", "email"):
+        val = raw.get(biz_field)
+        if val is not None and val != "":
+            out[biz_field] = val
+
     return out
 
 

@@ -1,12 +1,32 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Folder, FolderOpen, Plus, Search, LayoutGrid, List, Trash2, Pencil, Loader2 } from "lucide-react";
+import {
+  Activity,
+  FolderOpen,
+  LayoutGrid,
+  List,
+  Loader2,
+  Pencil,
+  Plus,
+  Search,
+  Target,
+  Trash2,
+  TrendingUp,
+} from "lucide-react";
 
 import { listDirectories, deleteDirectory, createDirectory } from "../../../api";
-import { Card } from "../../../components/ui/card";
 
 const PAGE_SIZE = 12;
+
+const CARD_PALETTE = [
+  { iconBg: "#DBEAFE", iconColor: "#1D4ED8" },
+  { iconBg: "#EDE9FE", iconColor: "#7C3AED" },
+  { iconBg: "#D1FAE5", iconColor: "#059669" },
+  { iconBg: "#FEF3C7", iconColor: "#D97706" },
+  { iconBg: "#FCE7F3", iconColor: "#DB2777" },
+  { iconBg: "#CFFAFE", iconColor: "#0891B2" },
+];
 
 export function DirectoriesListPage(): JSX.Element {
   const [viewMode, setViewMode] = useState<"card" | "table">(() => {
@@ -15,10 +35,8 @@ export function DirectoriesListPage(): JSX.Element {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  // "delete" = eliminar opps también | "reassign" = reasignar
   const [deleteMode, setDeleteMode] = useState<"delete" | "reassign">("reassign");
   const [reassignTargetId, setReassignTargetId] = useState<string>("");
-  // crear directorio nuevo inline
   const [creatingNew, setCreatingNew] = useState(false);
   const [newDirName, setNewDirName] = useState("");
 
@@ -46,7 +64,6 @@ export function DirectoriesListPage(): JSX.Element {
       }),
     onSuccess: (newDir) => {
       qc.invalidateQueries({ queryKey: ["directories"] });
-      // Usar el nuevo directorio como destino de reasignación
       if (confirmDeleteId) {
         deleteMut.mutate({ id: confirmDeleteId, reassignToDirectoryId: newDir.id });
       }
@@ -63,7 +80,6 @@ export function DirectoriesListPage(): JSX.Element {
 
   function handleDeleteConfirm() {
     if (!confirmDeleteId) return;
-    // Directorio vacío: eliminar directamente sin reasignar
     if (isEmpty) {
       deleteMut.mutate({ id: confirmDeleteId });
       return;
@@ -86,14 +102,11 @@ export function DirectoriesListPage(): JSX.Element {
     const q = search.trim().toLowerCase();
     if (!q) return query.data.items;
     return query.data.items.filter(
-      (d) =>
-        d.name.toLowerCase().includes(q) || (d.description ?? "").toLowerCase().includes(q)
+      (d) => d.name.toLowerCase().includes(q) || (d.description ?? "").toLowerCase().includes(q),
     );
   }, [query.data, search]);
 
-  useEffect(() => {
-    setPage(1);
-  }, [search]);
+  useEffect(() => { setPage(1); }, [search]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -118,196 +131,509 @@ export function DirectoriesListPage(): JSX.Element {
   const otherDirs = (query.data?.items ?? []).filter((d) => d.id !== confirmDeleteId);
   const isPending = deleteMut.isPending || createDirMut.isPending;
   const isEmpty = (confirmDir?.item_count ?? 0) === 0;
-  const canConfirm = isEmpty
-    || deleteMode === "delete"
-    || (deleteMode === "reassign" && creatingNew && newDirName.trim().length > 0)
-    || (deleteMode === "reassign" && !creatingNew && reassignTargetId !== "");
+  const canConfirm =
+    isEmpty ||
+    deleteMode === "delete" ||
+    (deleteMode === "reassign" && creatingNew && newDirName.trim().length > 0) ||
+    (deleteMode === "reassign" && !creatingNew && reassignTargetId !== "");
+
+  const totalDirs = query.data?.items.length ?? 0;
+  const totalOpps = (query.data?.items ?? []).reduce((acc, d) => acc + (d.item_count ?? 0), 0);
+
+  const viewBtnStyle = (active: boolean): React.CSSProperties => ({
+    width: 32, height: 32, borderRadius: 6,
+    display: "flex", alignItems: "center", justifyContent: "center",
+    background: active ? "white" : "transparent",
+    border: "none", cursor: "pointer",
+    color: active ? "#0000FF" : "#808080",
+    boxShadow: active ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+    transition: "all 0.15s",
+  });
 
   return (
-    <section className="directories-page">
-      <header className="directories-page-head">
-        <div>
-          <h1 className="directories-page-title">Directorios</h1>
-          <p className="muted-text directories-page-sub">
-            Cada directorio tiene su propio flow de steps. Las búsquedas se asignan a un directorio
-            y sus oportunidades progresan dentro de él.
-          </p>
-        </div>
-        <Link to="/directories/new" className="cta-button">
-          <Plus size={16} aria-hidden /> Crear directorio
-        </Link>
-      </header>
+    <section className="directories-v2">
 
-      {query.isLoading ? (
-        <p className="muted-text">Cargando directorios…</p>
-      ) : query.isError ? (
-        <p className="error-text">No se pudieron cargar los directorios.</p>
-      ) : query.data && query.data.items.length > 0 ? (
-        <>
-          <div className="directories-toolbar">
-            <div className="directories-search-wrap">
-              <Search size={16} aria-hidden />
-              <input
-                type="text"
-                placeholder="Buscar por nombre o descripción…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="directories-search-input"
-              />
-            </div>
-            <div className="directories-view-toggle">
-              <button
-                onClick={() => toggleViewMode("card")}
-                className={`directories-view-btn ${viewMode === "card" ? "is-active" : ""}`}
-                title="Vista en tarjetas"
-                type="button"
-              >
-                <LayoutGrid size={18} />
-              </button>
-              <button
-                onClick={() => toggleViewMode("table")}
-                className={`directories-view-btn ${viewMode === "table" ? "is-active" : ""}`}
-                title="Vista en tabla"
-                type="button"
-              >
-                <List size={18} />
-              </button>
-            </div>
+      {/* ── HEADER ── */}
+      <header style={{
+        height: 72, background: "white", borderBottom: "1px solid #D3D3D3",
+        padding: "0 32px", display: "flex", alignItems: "center",
+        justifyContent: "space-between", flexShrink: 0,
+      }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: "#0F172A", margin: 0 }}>
+          Listas
+        </h1>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {/* Search */}
+          <div style={{ position: "relative", width: 280 }}>
+            <Search size={15} aria-hidden style={{
+              position: "absolute", left: 14, top: "50%",
+              transform: "translateY(-50%)", color: "#808080", pointerEvents: "none",
+            }} />
+            <input
+              type="text"
+              placeholder="Buscar directorios..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                width: "100%", height: 38, paddingLeft: 40, paddingRight: 14,
+                borderRadius: 999, border: "1px solid #D3D3D3",
+                background: "#F8FAFC", fontSize: 13, outline: "none",
+                fontFamily: "inherit", color: "#0F172A", boxSizing: "border-box",
+                transition: "border-color 0.2s",
+              }}
+            />
           </div>
 
-          {viewMode === "card" ? (
-            <div className="directories-grid">
-              {paged.map((dir) => (
-                <Card
-                  key={dir.id}
-                  className="ui-card ui-card--interactive directory-card"
-                >
-                  <Link
-                    to={`/directories/${dir.id}/edit`}
-                    className="directory-card-delete"
-                    title="Editar directorio"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Pencil size={16} />
-                  </Link>
-                  <button
-                    onClick={(e) => handleDeleteClick(e, dir.id)}
-                    className="directory-card-delete"
-                    type="button"
-                    title="Eliminar directorio"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                  <Link to={`/directories/${dir.id}`} className="directory-card-body">
-                    <div className="directory-card-head">
-                      <Folder size={18} aria-hidden />
-                      <h3 className="directory-card-title">{dir.name}</h3>
-                    </div>
-                    {dir.description ? (
-                      <p className="muted-text directory-card-desc">{dir.description}</p>
-                    ) : null}
-                    <div className="directory-card-meta">
-                      <span className="ui-badge ui-badge--muted">
-                        {dir.item_count}{" "}
-                        {dir.item_count === 1 ? "oportunidad" : "oportunidades"}
-                      </span>
-                      <span className="ui-badge ui-badge--muted">
-                        {dir.steps.length} {dir.steps.length === 1 ? "step" : "steps"}
-                      </span>
-                    </div>
-                  </Link>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="directories-table-wrap">
-              <table className="directories-table">
-                <thead>
-                  <tr>
-                    <th>Nombre</th>
-                    <th>Descripción</th>
-                    <th>Steps</th>
-                    <th>Oportunidades</th>
-                    <th>Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paged.map((dir) => (
-                    <tr key={dir.id}>
-                      <td className="directories-table-name">{dir.name}</td>
-                      <td className="directories-table-desc">{dir.description ?? "—"}</td>
-                      <td>{dir.steps.length}</td>
-                      <td>{dir.item_count}</td>
-                      <td>
-                        <div className="directories-table-actions">
-                          <Link
-                            to={`/directories/${dir.id}`}
-                            className="directories-table-link"
-                            title="Abrir directorio"
-                          >
-                            <FolderOpen size={15} />
-                          </Link>
-                          <Link
-                            to={`/directories/${dir.id}/edit`}
-                            className="directories-table-link"
-                            title="Editar directorio"
-                          >
-                            <Pencil size={14} />
-                          </Link>
-                          <button
-                            onClick={(e) => handleDeleteClick(e, dir.id)}
-                            className="directories-table-delete"
-                            type="button"
-                            title="Eliminar directorio"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {/* View toggle */}
+          <div style={{
+            display: "flex", alignItems: "center",
+            background: "#F8FAFC", borderRadius: 8,
+            border: "1px solid #D3D3D3", padding: 4, gap: 2,
+          }}>
+            <button
+              type="button"
+              style={viewBtnStyle(viewMode === "card")}
+              onClick={() => toggleViewMode("card")}
+              title="Vista cuadrícula"
+            >
+              <LayoutGrid size={16} />
+            </button>
+            <button
+              type="button"
+              style={viewBtnStyle(viewMode === "table")}
+              onClick={() => toggleViewMode("table")}
+              title="Vista lista"
+            >
+              <List size={16} />
+            </button>
+          </div>
 
-          {totalPages > 1 && (
-            <div className="directories-pagination">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={safePage === 1}
-                className="directories-pagination-btn"
-                type="button"
-              >
-                ← Anterior
-              </button>
-              <span className="directories-pagination-info">
-                Página {safePage} de {totalPages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={safePage === totalPages}
-                className="directories-pagination-btn"
-                type="button"
-              >
-                Siguiente →
-              </button>
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="directories-empty">
-          <Folder size={32} aria-hidden />
-          <h3>Aún no hay directorios</h3>
-          <p className="muted-text">
-            Crea el primero para empezar a organizar tus búsquedas y oportunidades.
-          </p>
-          <Link to="/directories/new" className="cta-button">
-            <Plus size={16} aria-hidden /> Crear directorio
+          {/* CTA */}
+          <Link
+            to="/lists/new"
+            style={{
+              display: "flex", alignItems: "center", gap: 8,
+              background: "#0000FF", color: "white", textDecoration: "none",
+              height: 38, paddingLeft: 20, paddingRight: 20,
+              borderRadius: 999, fontSize: 13, fontWeight: 500,
+              boxShadow: "0 2px 8px rgba(0,0,255,0.2)",
+              transition: "background 0.15s",
+            }}
+          >
+            <Plus size={15} aria-hidden /> Crear lista
           </Link>
         </div>
-      )}
+      </header>
 
+      {/* ── SCROLLABLE CONTENT ── */}
+      <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
+
+        {/* STATS ROW — skeleton while loading, real values after */}
+        {query.isLoading ? (
+          <div className="dir-skeleton-stats">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="dir-skeleton-stat-card">
+                <span className={`skel skel--d${i + 1}`} style={{ width: 48, height: 48, borderRadius: "50%", flexShrink: 0 }} />
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+                  <span className={`skel skel--d${i + 1}`} style={{ height: 11, width: "65%" }} />
+                  <span className={`skel skel--d${i + 1}`} style={{ height: 22, width: "40%" }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+            gap: 20,
+            marginBottom: 32,
+          }}>
+            {[
+              { icon: <FolderOpen size={22} />, iconBg: "#DBEAFE", iconColor: "#1D4ED8", label: "Total Listas", value: totalDirs },
+              { icon: <Target size={22} />, iconBg: "#D1FAE5", iconColor: "#059669", label: "Oportunidades Activas", value: totalOpps },
+              { icon: <Activity size={22} />, iconBg: "#EDE9FE", iconColor: "#7C3AED", label: "Pasos Ejecutados", value: 0 },
+              { icon: <TrendingUp size={22} />, iconBg: "#FED7AA", iconColor: "#D97706", label: "Tasa de Conversión", value: "0%" },
+            ].map((stat, i) => (
+              <div key={i} style={{
+                background: "white", borderRadius: 14, border: "1px solid #E5E7EB",
+                padding: "18px 20px", display: "flex", alignItems: "center", gap: 16,
+                boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+              }}>
+                <div style={{
+                  width: 48, height: 48, borderRadius: "50%",
+                  background: stat.iconBg, color: stat.iconColor,
+                  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                }}>
+                  {stat.icon}
+                </div>
+                <div>
+                  <p style={{ fontSize: 12, color: "#808080", fontWeight: 500, margin: "0 0 4px" }}>{stat.label}</p>
+                  <p style={{ fontSize: 22, fontWeight: 700, color: "#0F172A", margin: 0 }}>{stat.value}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* LOADING / ERROR */}
+        {query.isLoading ? (
+          <div className="dir-skeleton-grid">
+            {Array.from({ length: 6 }).map((_, i) => {
+              const delay = `skel--d${(i % 4) + 1}`;
+              return (
+                <div key={i} className="dir-skeleton-card">
+                  <div className="dir-skeleton-card__body">
+                    <span className={`skel ${delay}`} style={{ width: 40, height: 40, borderRadius: 10 }} />
+                    <span className={`skel ${delay}`} style={{ height: 15, width: "72%", marginTop: 4 }} />
+                    <span className={`skel ${delay}`} style={{ height: 11, width: "92%" }} />
+                    <span className={`skel ${delay}`} style={{ height: 11, width: "65%" }} />
+                  </div>
+                  <div className="dir-skeleton-card__footer">
+                    <span className={`skel ${delay}`} style={{ flex: 1, height: 32, borderRadius: 8 }} />
+                    <span className={`skel ${delay}`} style={{ flex: 1, height: 32, borderRadius: 8 }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : query.isError ? (
+          <p className="error-text">No se pudieron cargar las listas.</p>
+        ) : (
+          <>
+            {/* ── GRID VIEW ── */}
+            {viewMode === "card" && (
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+                gap: 20,
+              }}>
+                {paged.map((dir, i) => {
+                  const pal = CARD_PALETTE[i % CARD_PALETTE.length];
+                  return (
+                    <div key={dir.id} className="dir-card">
+                      {/* Hover actions */}
+                      <div className="dir-card-actions">
+                        <Link
+                          to={`/lists/${dir.id}/edit`}
+                          className="dir-card-action-btn"
+                          title="Editar"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Pencil size={12} />
+                        </Link>
+                        <button
+                          type="button"
+                          className="dir-card-action-btn dir-card-action-btn--delete"
+                          title="Eliminar"
+                          onClick={(e) => handleDeleteClick(e, dir.id)}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+
+                      <Link to={`/lists/${dir.id}`} style={{ textDecoration: "none", display: "block" }}>
+                        {/* Icon */}
+                        <div style={{
+                          width: 40, height: 40, borderRadius: 10,
+                          background: pal.iconBg, color: pal.iconColor,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          marginBottom: 14,
+                        }}>
+                          <FolderOpen size={20} />
+                        </div>
+
+                        {/* Title */}
+                        <h3 style={{
+                          fontSize: 15, fontWeight: 700, color: "#0F172A",
+                          margin: "0 0 8px", paddingRight: 48,
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                          {dir.name}
+                        </h3>
+
+                        {/* Description */}
+                        <p style={{
+                          fontSize: 13, color: "#808080", margin: "0 0 16px",
+                          lineHeight: 1.5, height: "2.9em",
+                          overflow: "hidden",
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                        }}>
+                          {dir.description || "Sin descripción"}
+                        </p>
+
+                        {/* Progress bar */}
+                        <div style={{ paddingTop: 14, borderTop: "1px solid #F1F5F9" }}>
+                          <div style={{
+                            display: "flex", justifyContent: "space-between",
+                            alignItems: "center", marginBottom: 8,
+                          }}>
+                            <span style={{ fontSize: 11, color: "#808080", fontWeight: 500 }}>
+                              Progreso de campaña
+                            </span>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: pal.iconColor }}>0%</span>
+                          </div>
+                          <div style={{
+                            width: "100%", height: 5, background: "#F1F5F9",
+                            borderRadius: 999, overflow: "hidden",
+                          }}>
+                            <div style={{ height: "100%", background: pal.iconColor, width: "0%", borderRadius: 999 }} />
+                          </div>
+
+                          {/* Mini stats */}
+                          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                            <div style={{
+                              flex: 1, background: "#F8FAFC", border: "1px solid #E5E7EB",
+                              borderRadius: 8, padding: "7px 10px",
+                              display: "flex", alignItems: "center", gap: 6,
+                            }}>
+                              <Target size={11} style={{ color: "#059669" }} />
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "#0F172A" }}>
+                                {dir.item_count}{" "}
+                                <span style={{ fontWeight: 400, color: "#808080" }}>oport.</span>
+                              </span>
+                            </div>
+                            <div style={{
+                              flex: 1, background: "#F8FAFC", border: "1px solid #E5E7EB",
+                              borderRadius: 8, padding: "7px 10px",
+                              display: "flex", alignItems: "center", gap: 6,
+                            }}>
+                              <Activity size={11} style={{ color: "#0000FF" }} />
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "#0F172A" }}>
+                                {dir.steps.length}{" "}
+                                <span style={{ fontWeight: 400, color: "#808080" }}>pasos</span>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </Link>
+                    </div>
+                  );
+                })}
+
+                {/* Create new card */}
+                <Link
+                  to="/lists/new"
+                  className="dir-card dir-card--create"
+                  style={{ textDecoration: "none", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", minHeight: 220 }}
+                >
+                  <div style={{
+                    width: 48, height: 48, borderRadius: "50%",
+                    border: "2px dashed #0000FF", color: "#0000FF",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: "white", marginBottom: 12,
+                  }}>
+                    <Plus size={22} />
+                  </div>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, color: "#0F172A", margin: "0 0 6px" }}>
+                    Nuevo Lista
+                  </h3>
+                  <p style={{ fontSize: 12, color: "#808080", margin: 0 }}>
+                    Comienza a prospectar un nuevo segmento
+                  </p>
+                </Link>
+              </div>
+            )}
+
+            {/* ── LIST VIEW ── */}
+            {viewMode === "table" && filtered.length > 0 && (
+              <div className="dir-table-wrap">
+                <table className="dir-table">
+                  <thead>
+                    <tr>
+                      <th>Nombre del Lista</th>
+                      <th style={{ width: "38%" }}>Descripción</th>
+                      <th>Oportunidades</th>
+                      <th>Pasos</th>
+                      <th style={{ textAlign: "right" }}>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paged.map((dir, i) => {
+                      const pal = CARD_PALETTE[i % CARD_PALETTE.length];
+                      return (
+                        <tr key={dir.id} className="dir-table-row">
+                          <td>
+                            <Link to={`/lists/${dir.id}`} style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
+                              <div style={{
+                                width: 32, height: 32, borderRadius: 8,
+                                background: pal.iconBg, color: pal.iconColor,
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                flexShrink: 0,
+                              }}>
+                                <FolderOpen size={15} />
+                              </div>
+                              <span style={{ fontWeight: 700, color: "#0F172A", fontSize: 14 }}>
+                                {dir.name}
+                              </span>
+                            </Link>
+                          </td>
+                          <td style={{ fontSize: 13, color: "#808080", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 300 }}>
+                            {dir.description ?? "—"}
+                          </td>
+                          <td>
+                            <span style={{
+                              display: "inline-flex", alignItems: "center", gap: 5,
+                              background: "#D1FAE5", color: "#059669",
+                              padding: "3px 10px", borderRadius: 6,
+                              fontSize: 12, fontWeight: 600,
+                              border: "1px solid #A7F3D0",
+                            }}>
+                              <Target size={11} /> {dir.item_count}
+                            </span>
+                          </td>
+                          <td>
+                            <span style={{
+                              display: "inline-flex", alignItems: "center", gap: 5,
+                              background: "#DBEAFE", color: "#1D4ED8",
+                              padding: "3px 10px", borderRadius: 6,
+                              fontSize: 12, fontWeight: 600,
+                              border: "1px solid #BFDBFE",
+                            }}>
+                              <Activity size={11} /> {dir.steps.length}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="dir-table-row-actions">
+                              <Link
+                                to={`/lists/${dir.id}/edit`}
+                                className="dir-card-action-btn"
+                                title="Editar"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Pencil size={12} />
+                              </Link>
+                              <button
+                                type="button"
+                                className="dir-card-action-btn dir-card-action-btn--delete"
+                                title="Eliminar"
+                                onClick={(e) => handleDeleteClick(e, dir.id)}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                {/* Table pagination */}
+                {totalPages > 1 && (
+                  <div style={{
+                    padding: "14px 24px", borderTop: "1px solid #E5E7EB",
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    background: "#F8FAFC50",
+                  }}>
+                    <span style={{ fontSize: 13, color: "#808080" }}>
+                      Mostrando {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} de {filtered.length}
+                    </span>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setPage(p)}
+                          style={{
+                            width: 32, height: 32, borderRadius: 6,
+                            border: p === safePage ? "none" : "1px solid #D3D3D3",
+                            background: p === safePage ? "#0000FF" : "white",
+                            color: p === safePage ? "white" : "#374151",
+                            fontSize: 13, fontWeight: p === safePage ? 600 : 400,
+                            cursor: "pointer", fontFamily: "inherit",
+                          }}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── EMPTY STATE ── */}
+            {filtered.length === 0 && !query.isLoading && (
+              <div style={{
+                background: "white", borderRadius: 16,
+                border: "1px solid #E5E7EB",
+                padding: "64px 32px",
+                display: "flex", flexDirection: "column",
+                alignItems: "center", textAlign: "center",
+              }}>
+                <div style={{
+                  width: 64, height: 64, borderRadius: "50%",
+                  background: "#F1F5F9", display: "flex",
+                  alignItems: "center", justifyContent: "center",
+                  marginBottom: 20, color: "#94A3B8",
+                }}>
+                  <FolderOpen size={30} />
+                </div>
+                <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0F172A", margin: "0 0 10px" }}>
+                  {search ? "Sin coincidencias" : "No tienes directorios aún"}
+                </h2>
+                <p style={{ color: "#808080", maxWidth: 400, margin: "0 0 24px", lineHeight: 1.6 }}>
+                  {search
+                    ? `No hay directorios que coincidan con "${search}".`
+                    : "Comienza a organizar tus prospectos creando tu primer lista."}
+                </p>
+                {!search && (
+                  <Link
+                    to="/lists/new"
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 8,
+                      background: "#0000FF", color: "white", textDecoration: "none",
+                      padding: "10px 24px", borderRadius: 999,
+                      fontSize: 14, fontWeight: 600,
+                    }}
+                  >
+                    <Plus size={16} /> Crear tu primer lista
+                  </Link>
+                )}
+              </div>
+            )}
+
+            {/* Card-view pagination (only if more than one page and no create card visible) */}
+            {viewMode === "card" && totalPages > 1 && (
+              <div style={{ marginTop: 28, display: "flex", justifyContent: "center", alignItems: "center", gap: 8 }}>
+                <button
+                  type="button"
+                  disabled={safePage === 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  style={{
+                    padding: "6px 14px", borderRadius: 8, border: "1px solid #D3D3D3",
+                    background: "white", fontSize: 13, cursor: safePage === 1 ? "not-allowed" : "pointer",
+                    color: safePage === 1 ? "#9CA3AF" : "#374151", fontFamily: "inherit",
+                  }}
+                >
+                  ← Anterior
+                </button>
+                <span style={{ fontSize: 13, color: "#808080" }}>
+                  {safePage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={safePage === totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  style={{
+                    padding: "6px 14px", borderRadius: 8, border: "1px solid #D3D3D3",
+                    background: "white", fontSize: 13,
+                    cursor: safePage === totalPages ? "not-allowed" : "pointer",
+                    color: safePage === totalPages ? "#9CA3AF" : "#374151", fontFamily: "inherit",
+                  }}
+                >
+                  Siguiente →
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── DELETE MODAL ── */}
       {confirmDir && (
         <div
           className="dirs-confirm-overlay"
@@ -319,73 +645,45 @@ export function DirectoriesListPage(): JSX.Element {
             {confirmDir.item_count > 0 ? (
               <>
                 <p className="dirs-confirm-description">
-                  Este directorio tiene <strong>{confirmDir.item_count}</strong>{" "}
+                  Este lista tiene <strong>{confirmDir.item_count}</strong>{" "}
                   {confirmDir.item_count === 1 ? "oportunidad" : "oportunidades"}. ¿Qué deseas hacer con ellas?
                 </p>
-
                 <div className="dirs-confirm-options">
                   <label className="dirs-confirm-option">
-                    <input
-                      type="radio"
-                      name="delete-mode"
-                      value="reassign"
-                      checked={deleteMode === "reassign"}
-                      onChange={() => setDeleteMode("reassign")}
-                    />
-                    <span>Reasignar a otro directorio</span>
+                    <input type="radio" name="delete-mode" value="reassign"
+                      checked={deleteMode === "reassign"} onChange={() => setDeleteMode("reassign")} />
+                    <span>Reasignar a otro lista</span>
                   </label>
                   <label className="dirs-confirm-option">
-                    <input
-                      type="radio"
-                      name="delete-mode"
-                      value="delete"
-                      checked={deleteMode === "delete"}
-                      onChange={() => setDeleteMode("delete")}
-                    />
+                    <input type="radio" name="delete-mode" value="delete"
+                      checked={deleteMode === "delete"} onChange={() => setDeleteMode("delete")} />
                     <span>Eliminar las oportunidades también</span>
                   </label>
                 </div>
-
                 {deleteMode === "reassign" && (
                   <div className="dirs-confirm-reassign">
                     {!creatingNew ? (
                       <>
-                        <select
-                          value={reassignTargetId}
-                          onChange={(e) => setReassignTargetId(e.target.value)}
-                          className="dirs-confirm-select"
-                        >
-                          <option value="">Seleccionar directorio…</option>
-                          {otherDirs.map((d) => (
-                            <option key={d.id} value={d.id}>{d.name}</option>
-                          ))}
+                        <select value={reassignTargetId} onChange={(e) => setReassignTargetId(e.target.value)}
+                          className="dirs-confirm-select">
+                          <option value="">Seleccionar lista…</option>
+                          {otherDirs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                         </select>
-                        <button
-                          type="button"
-                          className="link-button"
+                        <button type="button" className="link-button"
                           style={{ fontSize: "0.85rem", marginTop: "6px" }}
-                          onClick={() => { setCreatingNew(true); setReassignTargetId(""); }}
-                        >
-                          + Crear nuevo directorio
+                          onClick={() => { setCreatingNew(true); setReassignTargetId(""); }}>
+                          + Crear nuevo lista
                         </button>
                       </>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                        <input
-                          type="text"
-                          className="dirs-confirm-input"
-                          placeholder="Nombre del nuevo directorio…"
-                          value={newDirName}
-                          onChange={(e) => setNewDirName(e.target.value)}
-                          autoFocus
-                          maxLength={160}
-                        />
-                        <button
-                          type="button"
-                          className="link-button"
+                        <input type="text" className="dirs-confirm-input"
+                          placeholder="Nombre del nuevo lista…"
+                          value={newDirName} onChange={(e) => setNewDirName(e.target.value)}
+                          autoFocus maxLength={160} />
+                        <button type="button" className="link-button"
                           style={{ fontSize: "0.85rem" }}
-                          onClick={() => { setCreatingNew(false); setNewDirName(""); }}
-                        >
+                          onClick={() => { setCreatingNew(false); setNewDirName(""); }}>
                           ← Elegir existente
                         </button>
                       </div>
@@ -395,7 +693,7 @@ export function DirectoriesListPage(): JSX.Element {
               </>
             ) : (
               <p className="dirs-confirm-description">
-                El directorio está vacío. Esta acción no se puede deshacer.
+                El lista está vacío. Esta acción no se puede deshacer.
               </p>
             )}
 
@@ -406,20 +704,12 @@ export function DirectoriesListPage(): JSX.Element {
             )}
 
             <div className="dirs-confirm-actions">
-              <button
-                onClick={closeDeleteModal}
-                className="dirs-confirm-btn dirs-confirm-btn--cancel"
-                type="button"
-                disabled={isPending}
-              >
+              <button onClick={closeDeleteModal} className="dirs-confirm-btn dirs-confirm-btn--cancel"
+                type="button" disabled={isPending}>
                 Cancelar
               </button>
-              <button
-                onClick={handleDeleteConfirm}
-                className="dirs-confirm-btn dirs-confirm-btn--delete"
-                type="button"
-                disabled={isPending || !canConfirm}
-              >
+              <button onClick={handleDeleteConfirm} className="dirs-confirm-btn dirs-confirm-btn--delete"
+                type="button" disabled={isPending || !canConfirm}>
                 {isPending ? <><Loader2 size={14} className="spin" /> Procesando…</> : "Confirmar"}
               </button>
             </div>

@@ -39,8 +39,8 @@ export function SearchableSelect({
     if (isOpen && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
       setMenuPosition({
-        top: rect.bottom + window.scrollY,
-        left: rect.left + window.scrollX,
+        top: rect.bottom,
+        left: rect.left,
         width: rect.width,
       });
     }
@@ -80,7 +80,7 @@ export function SearchableSelect({
           aria-expanded={isOpen}
         >
           <span className={selectedOption ? "" : "placeholder"}>
-            {selectedOption?.name || "— Elige un directorio —"}
+            {selectedOption?.name || "— Elige una lista —"}
           </span>
           <ChevronDown size={16} className={`chevron ${isOpen ? "open" : ""}`} aria-hidden />
         </button>
@@ -128,7 +128,7 @@ export function SearchableSelect({
                   </li>
                 ))
               ) : (
-                <li className="searchable-select-empty">No hay directorios que coincidan</li>
+                <li className="searchable-select-empty">No hay listas que coincidan</li>
               )}
             </ul>
           </div>,

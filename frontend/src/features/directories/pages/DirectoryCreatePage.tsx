@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronLeft } from "lucide-react";
+import { ArrowLeft, FolderPlus } from "lucide-react";
 
 import { createDirectory } from "../../../api";
 import { Button } from "../../../components/ui/button";
@@ -15,6 +15,31 @@ const DEFAULT_STEPS: EditableStep[] = [
   { key: "s5", name: "Cerrada (perdida)", is_terminal: true, is_won: false },
 ];
 
+const labelStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+};
+
+const labelTextStyle: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 500,
+  color: "#0A0A0A",
+};
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "10px 14px",
+  border: "1px solid #E8E8EC",
+  borderRadius: 8,
+  fontSize: 14,
+  color: "#0A0A0A",
+  background: "white",
+  outline: "none",
+  transition: "border-color 0.15s",
+  boxSizing: "border-box",
+};
+
 export function DirectoryCreatePage(): JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -24,6 +49,8 @@ export function DirectoryCreatePage(): JSX.Element {
   const [description, setDescription] = useState("");
   const [steps, setSteps] = useState<EditableStep[]>(DEFAULT_STEPS);
   const [error, setError] = useState<string | null>(null);
+  const [nameFocused, setNameFocused] = useState(false);
+  const [descFocused, setDescFocused] = useState(false);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -41,7 +68,7 @@ export function DirectoryCreatePage(): JSX.Element {
       if (returnTo) {
         navigate(`${returnTo}?directory_id=${dir.id}`);
       } else {
-        navigate(`/directories/${dir.id}`);
+        navigate(`/lists/${dir.id}`);
       }
     },
     onError: (e: Error) => setError(e.message),
@@ -54,78 +81,165 @@ export function DirectoryCreatePage(): JSX.Element {
     !hasEmptyStepName;
 
   return (
-    <section className="directory-create-page">
-      <nav className="directory-create-nav" aria-label="Navegación">
-        <Link to="/directories" className="link-button">
-          <ChevronLeft size={14} aria-hidden /> Directorios
+    <section className="dir-create-v2">
+      {/* Header */}
+      <div className="dir-create-v2-header">
+        <Link
+          to="/lists"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            color: "#6B6B6B",
+            textDecoration: "none",
+            fontSize: 14,
+            fontWeight: 500,
+            padding: "6px 10px",
+            borderRadius: 8,
+            border: "1px solid #E8E8EC",
+            background: "white",
+            transition: "color 0.15s, border-color 0.15s",
+          }}
+        >
+          <ArrowLeft size={15} />
+          Listas
         </Link>
-      </nav>
-
-      <header className="directory-create-head">
-        <h1>Crear directorio</h1>
-        <p className="muted-text">
-          Define nombre y el flow de pasos por los que progresarán las oportunidades.
-        </p>
-      </header>
-
-      <form
-        className="directory-create-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!canSubmit) return;
-          setError(null);
-          mutation.mutate();
-        }}
-      >
-        <div className="directory-create-fields">
-          <label className="directory-create-field">
-            <span className="directory-create-field-label">Nombre</span>
-            <input
-              type="text"
-              className="directory-create-input"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ej. Cardiólogos Tegucigalpa"
-              maxLength={160}
-              required
-            />
-          </label>
-          <label className="directory-create-field">
-            <span className="directory-create-field-label">
-              Descripción <span className="directory-create-optional">(opcional)</span>
-            </span>
-            <textarea
-              className="directory-create-input directory-create-textarea"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={2}
-              maxLength={1000}
-              placeholder="Para qué se usa este directorio"
-            />
-          </label>
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              background: "#EEF2FF",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <FolderPlus size={16} color="#6366F1" />
+          </div>
+          <span style={{ fontSize: 15, fontWeight: 600, color: "#0A0A0A" }}>
+            Nuevo lista
+          </span>
         </div>
+      </div>
 
-        <hr className="directory-create-divider" />
+      {/* Body */}
+      <div className="dir-create-v2-body">
+        <form
+          className="dir-create-v2-card"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!canSubmit) return;
+            setError(null);
+            mutation.mutate();
+          }}
+        >
+          {/* Title section */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#0A0A0A" }}>
+              Configurar lista
+            </h2>
+            <p style={{ margin: 0, fontSize: 14, color: "#6B6B6B" }}>
+              Define nombre y el flujo de pasos por los que progresarán las oportunidades.
+            </p>
+          </div>
 
-        <StepsEditor steps={steps} onChange={setSteps} />
+          <hr style={{ border: "none", borderTop: "1px solid #F0F0F4", margin: 0 }} />
 
-        {steps.length === 0 && (
-          <p className="error-text" style={{ fontSize: "0.85rem" }}>Agrega al menos un paso al flujo.</p>
-        )}
-        {hasEmptyStepName && (
-          <p className="error-text" style={{ fontSize: "0.85rem" }}>Todos los pasos deben tener un nombre.</p>
-        )}
-        {error ? <p className="error-text">{error}</p> : null}
+          {/* Fields */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <label style={labelStyle}>
+              <span style={labelTextStyle}>Nombre del lista</span>
+              <input
+                type="text"
+                style={{
+                  ...inputStyle,
+                  borderColor: nameFocused ? "#6366F1" : "#E8E8EC",
+                  boxShadow: nameFocused ? "0 0 0 3px rgba(99,102,241,0.1)" : "none",
+                }}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onFocus={() => setNameFocused(true)}
+                onBlur={() => setNameFocused(false)}
+                placeholder="Ej. Cardiólogos Tegucigalpa"
+                maxLength={160}
+                required
+              />
+            </label>
+            <label style={labelStyle}>
+              <span style={labelTextStyle}>
+                Descripción{" "}
+                <span style={{ fontWeight: 400, color: "#9B9BA8", fontSize: 12 }}>(opcional)</span>
+              </span>
+              <textarea
+                style={{
+                  ...inputStyle,
+                  resize: "vertical",
+                  minHeight: 72,
+                  borderColor: descFocused ? "#6366F1" : "#E8E8EC",
+                  boxShadow: descFocused ? "0 0 0 3px rgba(99,102,241,0.1)" : "none",
+                }}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                onFocus={() => setDescFocused(true)}
+                onBlur={() => setDescFocused(false)}
+                rows={2}
+                maxLength={1000}
+                placeholder="Para qué se usa este lista"
+              />
+            </label>
+          </div>
 
-        <footer className="directory-create-actions">
-          <Link to="/directories" className="link-button">
-            Cancelar
-          </Link>
-          <Button type="submit" className="cta-button" disabled={!canSubmit || mutation.isPending}>
-            {mutation.isPending ? "Creando…" : "Crear directorio"}
-          </Button>
-        </footer>
-      </form>
+          <hr style={{ border: "none", borderTop: "1px solid #F0F0F4", margin: 0 }} />
+
+          {/* Steps editor */}
+          <StepsEditor steps={steps} onChange={setSteps} />
+
+          {/* Validation messages */}
+          {steps.length === 0 && (
+            <p style={{ margin: 0, fontSize: 13, color: "#EF4444" }}>
+              Agrega al menos un paso al flujo.
+            </p>
+          )}
+          {hasEmptyStepName && (
+            <p style={{ margin: 0, fontSize: 13, color: "#EF4444" }}>
+              Todos los pasos deben tener un nombre.
+            </p>
+          )}
+          {error && (
+            <p style={{ margin: 0, fontSize: 13, color: "#EF4444" }}>{error}</p>
+          )}
+
+          {/* Footer actions */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, paddingTop: 8 }}>
+            <Link
+              to="/lists"
+              style={{
+                fontSize: 14,
+                fontWeight: 500,
+                color: "#6B6B6B",
+                textDecoration: "none",
+                padding: "8px 16px",
+                borderRadius: 8,
+                border: "1px solid #E8E8EC",
+                background: "white",
+              }}
+            >
+              Cancelar
+            </Link>
+            <Button
+              type="submit"
+              className="cta-button"
+              disabled={!canSubmit || mutation.isPending}
+              style={{ padding: "8px 20px", fontSize: 14 }}
+            >
+              {mutation.isPending ? "Creando…" : "Crear lista"}
+            </Button>
+          </div>
+        </form>
+      </div>
     </section>
   );
 }

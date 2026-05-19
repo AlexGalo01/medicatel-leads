@@ -52,7 +52,14 @@ async def persist_pipeline_progress(job_id: UUID, state: LeadSearchGraphState) -
                 logger.error("Pipeline errors para job_id=%s: %s", job_id, state.errors)
 
             meta_from_state = state.langsmith_metadata or {}
-            for key in ("exa_results_preview", "pipeline_mode", "exa_accumulated_raw", "exa_more_rounds", "suggested_source_urls", "warnings"):
+            for key in (
+                "exa_results_preview", "pipeline_mode", "exa_accumulated_raw", "exa_more_rounds",
+                "suggested_source_urls", "warnings",
+                "relevance_filter_kept", "relevance_filter_dropped",
+                "relevance_filter_heuristic_drops", "relevance_filter_mode",
+                "relevance_filter_discarded_sample", "relevance_filter_error",
+                "lpa_preview", "lpa_count",
+            ):
                 if key in meta_from_state:
                     base_meta[key] = meta_from_state[key]
 

@@ -38,6 +38,7 @@ from mle.api.schemas import (
     LeadsListResponse,
     LoginRequest,
     LoginResponse,
+    RegisterRequest,
     OpportunityBitacoraRequest,
     OpportunityContactsReplaceRequest,
     OpportunityCreateFromPreviewRequest,
@@ -253,7 +254,7 @@ async def create_search_job(
         notes=combined_notes,
     )
     plan_dict: dict[str, object] = dict(search_plan) if isinstance(search_plan, dict) else {}
-    if payload.exa_category in ("people", "company"):
+    if payload.exa_category in ("people", "company", "local_business"):
         plan_dict["exa_category"] = payload.exa_category
 
     job_metadata: dict[str, object] = {
@@ -264,7 +265,7 @@ async def create_search_job(
     }
     if payload.exa_criteria and payload.exa_criteria.strip():
         job_metadata["exa_criteria"] = payload.exa_criteria.strip()
-    if payload.exa_category in ("people", "company"):
+    if payload.exa_category in ("people", "company", "local_business"):
         job_metadata["exa_category_client"] = payload.exa_category
 
     cq_raw = plan_dict.get("clarifying_question")
@@ -369,7 +370,7 @@ async def clarify_search_job(
         )
         plan_dict: dict[str, object] = dict(search_plan) if isinstance(search_plan, dict) else {}
         exa_cat_client = meta.get("exa_category_client")
-        if exa_cat_client in ("people", "company"):
+        if exa_cat_client in ("people", "company", "local_business"):
             plan_dict["exa_category"] = exa_cat_client
 
         new_meta: dict[str, object] = {
@@ -548,8 +549,11 @@ async def get_search_job_status(
     exa_cat: str | None = None
     if isinstance(sp, dict):
         raw_cat = sp.get("exa_category")
-        if raw_cat in ("people", "company"):
+        if raw_cat in ("people", "company", "local_business"):
             exa_cat = str(raw_cat)
+        # Flujo unificado: company + use_places → reportar como local_business al frontend
+        if exa_cat == "company" and sp.get("use_places"):
+            exa_cat = "local_business"
     exa_crit_raw = job.metadata_json.get("exa_criteria")
     exa_crit = str(exa_crit_raw).strip() if exa_crit_raw else None
     query_text = str(job.metadata_json.get("user_query") or job.metadata_json.get("query_text") or job.specialty or "").strip() or None
@@ -573,6 +577,13 @@ async def get_search_job_status(
     lpa_preview_raw = job.metadata_json.get("lpa_preview")
     lpa_preview: list[dict[str, Any]] = lpa_preview_raw if isinstance(lpa_preview_raw, list) else []
 
+    filter_stats: dict[str, Any] = {}
+    for key in ("relevance_filter_kept", "relevance_filter_dropped",
+                "relevance_filter_heuristic_drops", "relevance_filter_mode",
+                "relevance_filter_discarded_sample", "relevance_filter_error"):
+        if key in job.metadata_json:
+            filter_stats[key] = job.metadata_json[key]
+
     return SearchJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
@@ -594,6 +605,8 @@ async def get_search_job_status(
         suggested_source_urls=suggested_source_urls,
         lpa_preview=lpa_preview,
         warnings=warnings,
+        directory_id=str(job.directory_id) if job.directory_id else None,
+        filter_stats=filter_stats,
     )
 
 

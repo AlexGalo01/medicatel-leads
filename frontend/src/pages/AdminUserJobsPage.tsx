@@ -36,7 +36,7 @@ export function AdminUserJobsPage(): JSX.Element {
   if (user?.role !== "admin") {
     return (
       <section className="panel error-text" style={{ padding: "2rem" }}>
-        No autorizado. <Link to="/directories">Volver</Link>
+        No autorizado. <Link to="/lists">Volver</Link>
       </section>
     );
   }

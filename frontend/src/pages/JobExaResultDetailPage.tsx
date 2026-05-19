@@ -571,7 +571,7 @@ export function JobExaResultDetailPage(): JSX.Element {
               </div>
               <h2 className="lead-detail-section-title">Fuente</h2>
               <p className="muted-text lead-detail-opportunity-copy">
-                Guarda esta URL como fuente de un directorio para explorarla más adelante.
+                Guarda esta URL como fuente de un lista para explorarla más adelante.
               </p>
               {savedAsSource ? (
                 <p className="muted-text" style={{ fontSize: 13 }}>✓ Guardado como fuente</p>
@@ -593,7 +593,7 @@ export function JobExaResultDetailPage(): JSX.Element {
                     value={sourceDirId}
                     onChange={(e) => setSourceDirId(e.target.value)}
                   >
-                    <option value="">Elegir directorio…</option>
+                    <option value="">Elegir lista…</option>
                     {(directoriesQuery.data?.items ?? []).map((d) => (
                       <option key={d.id} value={d.id}>{d.name}</option>
                     ))}

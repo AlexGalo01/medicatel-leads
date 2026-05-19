@@ -10,6 +10,7 @@ from mle.observability.langsmith_setup import (
     trace_outputs_graph_state,
 )
 from mle.nodes.agentic_search_node import agentic_search_node
+from mle.nodes.local_business_search_node import local_business_search_node
 from mle.nodes.relevance_filter_node import relevance_filter_node
 from mle.nodes.search_finalize_node import search_finalize_node
 from mle.services.job_progress_sink import persist_pipeline_progress
@@ -55,6 +56,12 @@ async def run_lead_pipeline(initial_state: LeadSearchGraphState) -> LeadSearchGr
     job_id = initial_state.job_id
     try:
         logger.info("Pipeline iniciado: job_id=%s", job_id)
+
+        # Branch: local_business explícito (jobs antiguos) o company con use_places (nuevo flujo unificado)
+        exa_category = initial_state.search_plan.get("exa_category")
+        use_places = bool(initial_state.search_plan.get("use_places", False))
+        if exa_category == "local_business" or (exa_category == "company" and use_places):
+            return await _run_local_business_pipeline(initial_state)
 
         state_current = initial_state
 
@@ -113,4 +120,45 @@ async def run_lead_pipeline(initial_state: LeadSearchGraphState) -> LeadSearchGr
         return final_state
     except Exception as exc:
         logger.exception("Pipeline exception no capturada: job_id=%s, error=%s", job_id, exc)
+        raise
+
+
+async def _run_local_business_pipeline(initial_state: LeadSearchGraphState) -> LeadSearchGraphState:
+    """Pipeline para búsqueda de negocios locales (Google Places + Brave Local).
+
+    Flujo simplificado: local_business_search → search_finalize (sin relevance_filter ni auto_enrich).
+    """
+    job_id = initial_state.job_id
+    try:
+        logger.info("Local business pipeline iniciado: job_id=%s", job_id)
+
+        # 1. Búsqueda en Google Places + Brave Local
+        search_patch = await local_business_search_node(initial_state)
+        state_after_search = _apply_patch(initial_state, search_patch)
+        await persist_pipeline_progress(job_id, state_after_search)
+
+        if state_after_search.status == "error":
+            logger.error("Local business search falló: job_id=%s, errors=%s", job_id, state_after_search.errors)
+            return state_after_search
+
+        logger.info(
+            "Local business search resultados: job_id=%s, count=%d",
+            job_id, len(state_after_search.exa_raw_results),
+        )
+
+        # 2. Finalize — construye preview items (reutiliza el nodo existente)
+        finalize_patch = await search_finalize_node(state_after_search)
+        state_after_finalize = _apply_patch(state_after_search, finalize_patch)
+        await persist_pipeline_progress(job_id, state_after_finalize)
+
+        if state_after_finalize.status == "error":
+            logger.error("Finalize falló: job_id=%s, errors=%s", job_id, state_after_finalize.errors)
+            return state_after_finalize
+
+        logger.info("Local business pipeline completado: job_id=%s", job_id)
+        await persist_pipeline_progress(job_id, state_after_finalize)
+        return state_after_finalize
+
+    except Exception as exc:
+        logger.exception("Local business pipeline exception: job_id=%s, error=%s", job_id, exc)
         raise

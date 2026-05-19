@@ -16,7 +16,7 @@ from mle.state.graph_state import LeadSearchGraphState
 logger = logging.getLogger(__name__)
 
 MAX_DIRECTORY_EXA_CALLS = 8
-MIN_RESULTS_PER_QUERY = 35
+MIN_RESULTS_PER_QUERY = 50
 MAX_EXA_RESULTS_PER_CALL = 100
 _DEEP_SEARCH_TYPES = ("deep-reasoning",)
 

@@ -203,7 +203,7 @@ export function AdminUsersPage(): JSX.Element {
   if (user?.role !== "admin") {
     return (
       <section className="panel error-text" style={{ padding: "2rem" }}>
-        No autorizado. <Link to="/directories">Volver</Link>
+        No autorizado. <Link to="/lists">Volver</Link>
       </section>
     );
   }
@@ -211,7 +211,7 @@ export function AdminUsersPage(): JSX.Element {
   return (
     <div className="admin-page">
       <nav className="admin-page-nav">
-        <Link to="/directories" className="link-button">
+        <Link to="/lists" className="link-button">
           <ChevronLeft size={14} aria-hidden />
           Volver
         </Link>

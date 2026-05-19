@@ -51,7 +51,7 @@ export interface AdminUserJobsResponse {
 
 export type SearchFocus = "general" | "linkedin" | "instagram";
 
-export type ExaCategoryChoice = "people" | "company";
+export type ExaCategoryChoice = "people" | "company" | "local_business";
 
 export type LeadsContactFilter =
   | "all"
@@ -138,6 +138,15 @@ export interface ExaResultPreviewItem {
   enrichment_message?: string | null;
   enriched_sources?: Record<string, unknown> | null;
   saved_source_urls?: string[] | null;
+  // Local business fields (Google Places)
+  source_type?: string | null;
+  website?: string | null;
+  hours?: string | null;
+  rating?: number | null;
+  review_count?: number | null;
+  place_id?: string | null;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface ExaMoreResultsResponse {
@@ -349,6 +358,14 @@ export interface SearchJobStatusResponse {
   suggested_source_urls?: Array<{ url: string; title: string }>;
   lpa_preview?: ExaResultPreviewItem[];
   warnings?: string[];
+  filter_stats?: {
+    relevance_filter_kept?: number;
+    relevance_filter_dropped?: number;
+    relevance_filter_heuristic_drops?: number;
+    relevance_filter_mode?: string;
+    relevance_filter_error?: string;
+    relevance_filter_discarded_sample?: Array<{ index: number; url: string; reason_es: string }>;
+  };
 }
 
 export interface LeadItem {
@@ -453,6 +470,8 @@ export interface UrlScrapeJobStatusResponse {
   error_message: string | null;
   created_at: string;
   updated_at: string;
+  pages_scraped?: number;
+  pages_total?: number;
 }
 
 export interface UrlScrapeJobListItem {
