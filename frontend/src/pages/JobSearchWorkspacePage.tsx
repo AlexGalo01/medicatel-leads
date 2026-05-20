@@ -161,6 +161,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
   const tablePageSize = 50;
   const prevJobIdRef = useRef<string>("");
   const [workspaceClarifyReply, setWorkspaceClarifyReply] = useState("");
+  const [activeTab, setActiveTab] = useState<"results" | "dropped">("results");
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [msgVisible, setMsgVisible] = useState(true);
   const [filterText, setFilterText] = useState("");
@@ -766,6 +767,36 @@ export function JobSearchWorkspacePage(): JSX.Element {
             </div>
           )}
 
+          {/* TAB SWITCHER */}
+          {filterStats?.relevance_filter_discarded_sample && filterStats.relevance_filter_discarded_sample.length > 0 && (
+            <div style={{ display: "flex", borderBottom: "1px solid #E5E7EB", background: "white", flexShrink: 0, paddingLeft: 24 }}>
+              <button
+                type="button"
+                onClick={() => setActiveTab("results")}
+                style={{
+                  padding: "10px 16px", fontSize: 13, fontWeight: 500,
+                  border: "none", background: "none", cursor: "pointer",
+                  borderBottom: activeTab === "results" ? "2px solid #4F46E5" : "2px solid transparent",
+                  color: activeTab === "results" ? "#4F46E5" : "#6B7280",
+                }}
+              >
+                Resultados ({totalRows})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("dropped")}
+                style={{
+                  padding: "10px 16px", fontSize: 13, fontWeight: 500,
+                  border: "none", background: "none", cursor: "pointer",
+                  borderBottom: activeTab === "dropped" ? "2px solid #EF4444" : "2px solid transparent",
+                  color: activeTab === "dropped" ? "#EF4444" : "#6B7280",
+                }}
+              >
+                Descartados ({filterStats.relevance_filter_discarded_sample.length})
+              </button>
+            </div>
+          )}
+
           {/* SCROLLABLE RESULTS AREA */}
           <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
 
@@ -810,7 +841,45 @@ export function JobSearchWorkspacePage(): JSX.Element {
             )}
 
             {/* MAIN CONTENT */}
-            {awaitingClarification ? (
+            {activeTab === "dropped" && filterStats?.relevance_filter_discarded_sample && filterStats.relevance_filter_discarded_sample.length > 0 ? (
+              <div style={{
+                background: "white", border: "1px solid #D3D3D3",
+                borderRadius: 12, overflow: "hidden",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+              }}>
+                <div style={{
+                  display: "grid", gridTemplateColumns: "1fr 220px",
+                  gap: "0 12px", padding: "10px 16px",
+                  borderBottom: "1px solid #D3D3D3", background: "#F8FAFC",
+                  fontSize: 11, fontWeight: 600, color: "#808080",
+                  textTransform: "uppercase", letterSpacing: "0.05em",
+                }}>
+                  <div>URL descartada</div>
+                  <div>Razón</div>
+                </div>
+                {filterStats.relevance_filter_discarded_sample.map((item, i) => (
+                  <div key={i} style={{
+                    display: "grid", gridTemplateColumns: "1fr 220px",
+                    gap: "0 12px", padding: "9px 16px",
+                    borderBottom: "1px solid #F3F4F6", alignItems: "center",
+                  }}>
+                    <a
+                      href={item.url.startsWith("http") ? item.url : `https://${item.url}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        fontSize: 12, color: "#4F46E5", textDecoration: "none",
+                        overflow: "hidden", textOverflow: "ellipsis",
+                        whiteSpace: "nowrap", display: "block",
+                      }}
+                    >
+                      {item.url}
+                    </a>
+                    <span style={{ fontSize: 12, color: "#6B7280" }}>{item.reason_es || "—"}</span>
+                  </div>
+                ))}
+              </div>
+            ) : awaitingClarification ? (
               <div style={{
                 background: "white", border: "1px solid #D3D3D3",
                 borderRadius: 12, padding: 24, maxWidth: 560,
