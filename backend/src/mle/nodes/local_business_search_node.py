@@ -215,14 +215,18 @@ async def local_business_search_node(state: LeadSearchGraphState) -> dict[str, o
                         _res.extend(r)
                 return _res, _err
 
-            # 2c. Intentar con primary key; si falla de configuración, reintentar con fallback
-            places_results, places_api_error = await _places_search(settings.google_api_key)
-            if places_api_error and fallback_api_key:
+            # 2c. OTHER_GOOGLE_API_KEY es la clave dedicada a Places (si está disponible);
+            #     GOOGLE_API_KEY se usa para Gemini — solo la usamos en Places como último recurso.
+            primary_places_key = fallback_api_key or settings.google_api_key
+            secondary_places_key = settings.google_api_key if fallback_api_key else None
+
+            places_results, places_api_error = await _places_search(primary_places_key)
+            if places_api_error and secondary_places_key:
                 logger.warning(
-                    "Primary Google key falló (job_id=%s): %s — reintentando con OTHER_GOOGLE_API_KEY",
+                    "Primary Places key falló (job_id=%s): %s — reintentando con GOOGLE_API_KEY",
                     state.job_id, places_api_error,
                 )
-                places_results, places_api_error = await _places_search(fallback_api_key)
+                places_results, places_api_error = await _places_search(secondary_places_key)
                 if not places_api_error:
                     logger.info("Fallback Google API key exitosa job_id=%s", state.job_id)
 
