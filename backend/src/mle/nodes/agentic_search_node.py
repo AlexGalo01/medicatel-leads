@@ -20,9 +20,13 @@ from mle.state.graph_state import LeadSearchGraphState
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 5
-MAX_ACCUMULATED_RESULTS = 120
-MAX_EXA_CALLS_PER_PIPELINE = 2
+MAX_ITERATIONS = 8
+MAX_ACCUMULATED_RESULTS = 200
+MAX_EXA_CALLS_PER_PIPELINE = 5
+
+# Restricción geográfica fija — mientras el producto opera exclusivamente en Honduras
+FORCED_COUNTRY_ISO2 = "HN"
+FORCED_COUNTRY_NAME = "Honduras"
 
 _TOOLS = [
     {
@@ -84,9 +88,6 @@ def _build_system_prompt(state: LeadSearchGraphState, planner_output: dict[str, 
     relevance = planner_output.get("relevance_criteria", {})
     company_anchor = planner_output.get("company_anchor")
 
-    country = relevance.get("country_text", "") or ""
-    city = relevance.get("city", "") or ""
-    location = ", ".join(p for p in (city, country) if p) or "no especificada"
     entity_hint = relevance.get("role_or_stack_hint", "") or ""
     exa_category = search_config.get("exa_category") or "general"
 
@@ -112,19 +113,23 @@ def _build_system_prompt(state: LeadSearchGraphState, planner_output: dict[str, 
         "Tienes acceso a la herramienta `web_search` que busca en múltiples motores (Exa + Brave).\n\n"
         "CONTEXTO DE BÚSQUEDA:\n"
         f"- Consulta del usuario: {state.query_text}\n"
-        f"- Ubicación: {location}\n"
+        f"- Ubicación FIJA: Honduras (TODAS las búsquedas son exclusivamente en Honduras)\n"
         f"- Tipo de entidad: {entity_hint or exa_category}\n"
         f"- Categoría Exa: {exa_category}\n"
         f"{anchor_block}{prior_block}\n\n"
+        "RESTRICCIÓN CRÍTICA — PAÍS:\n"
+        "⚠️  TODAS las queries DEBEN incluir 'Honduras'. Sin excepción.\n"
+        "   Ejemplos correctos: 'ginecólogos Honduras', 'clínicas dentales Tegucigalpa Honduras', 'abogados San Pedro Sula Honduras'\n"
+        "   NUNCA envíes una query sin 'Honduras' al final.\n\n"
         "INSTRUCCIONES:\n"
-        "1. Usa `web_search` con queries variadas para maximizar cobertura. Pide hasta 100 resultados por consulta para asegurar volumen.\n"
-        "2. Queries en español, específicas al sector y ubicación.\n"
+        "1. Usa `web_search` MÚLTIPLES veces con queries variadas. Pide 100 resultados por consulta.\n"
+        "2. Varía las queries: por ciudad (Tegucigalpa, San Pedro Sula, La Ceiba, Choluteca...), por sinónimos de la especialidad, por tipo de sitio (directorios, clínicas, LinkedIn).\n"
         "3. NUNCA uses palabras como 'email', 'whatsapp', 'contacto' en las queries — contaminan resultados.\n"
-        "4. Varía las queries: sinónimos, sitios específicos (site:linkedin.com/in), directorios del sector.\n"
-        "5. EVITA AGREGADORES: Si detectas que los resultados son listas ('Top 10...', 'Directorio de...'), refina la query para buscar perfiles individuales o sitios de clínicas específicas.\n"
-        "6. Cuando tengas suficientes resultados relevantes (mínimo 30-50 perfiles reales), usa `finalize_search`.\n"
-        "7. Si después de 3 intentos no encuentras resultados relevantes, finaliza igualmente.\n"
-        "8. Para países pequeños de LATAM, usa category='general' (no 'people') si 'people' devuelve poco, pero prueba 'people' primero para profesionales.\n"
+        "4. Usa category='people' para profesionales individuales, 'company' para empresas/clínicas, 'general' si los otros dan pocos resultados.\n"
+        "5. Prueba variaciones: 'médicos [especialidad] Honduras', '[especialidad] Tegucigalpa', 'directorio [especialidad] Honduras', 'clínica [especialidad] San Pedro Sula'.\n"
+        "6. EVITA AGREGADORES: Si ves listas ('Top 10...'), refina hacia perfiles individuales.\n"
+        "7. Finaliza con `finalize_search` solo cuando tengas 80+ resultados O hayas agotado variaciones útiles.\n"
+        "8. Si una query devuelve pocos resultados, intenta con otra ciudad o sinónimo ANTES de finalizar.\n"
     )
 
 
@@ -162,12 +167,16 @@ async def _execute_web_search(
     if not query:
         return [], "Error: query vacía."
 
+    # Forzar Honduras en la query si no está presente
+    if FORCED_COUNTRY_NAME.lower() not in query.lower():
+        query = f"{query} {FORCED_COUNTRY_NAME}"
+
     if category not in ("people", "company"):
         category = None  # type: ignore[assignment]
 
     search_config = planner_output.get("search_config", {})
-    relevance = planner_output.get("relevance_criteria", {})
-    iso = str(relevance.get("country_iso2") or "").strip().upper()
+    # Forzar siempre Honduras independientemente de lo que detectó el planner
+    iso = FORCED_COUNTRY_ISO2
 
     # Exa (solo si use_exa=True)
     exa_coro = None
