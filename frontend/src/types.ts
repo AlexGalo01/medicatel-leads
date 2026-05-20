@@ -366,6 +366,7 @@ export interface SearchJobStatusResponse {
     relevance_filter_error?: string;
     relevance_filter_discarded_sample?: Array<{ index: number; url: string; reason_es: string }>;
   };
+  activity_log?: Array<{ t: string; msg: string; found?: number; exa?: number; brave?: number }>;
 }
 
 export interface LeadItem {

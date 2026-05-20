@@ -99,6 +99,7 @@ class SearchJobStatusResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     directory_id: str | None = None
     filter_stats: dict[str, Any] = Field(default_factory=dict)
+    activity_log: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ProfileInterpretRequest(BaseModel):

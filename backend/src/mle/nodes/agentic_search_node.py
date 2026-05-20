@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from dataclasses import asdict
+from datetime import datetime
 from typing import Any
 
 from langsmith import traceable
@@ -16,6 +17,7 @@ from mle.clients.openai_client import OpenAIClient
 from mle.core.config import effective_exa_search_timeout_seconds, get_settings
 from mle.nodes.planner_node import _build_planner_output
 from mle.observability.langsmith_setup import compact_node_patch, trace_inputs_from_graph_state
+from mle.services.job_progress_sink import append_activity_entry
 from mle.state.graph_state import LeadSearchGraphState
 
 logger = logging.getLogger(__name__)
@@ -271,6 +273,17 @@ async def _execute_web_search(
         f"Nuevos (no duplicados): {len(new_items)}"
     )
     logger.info("Agentic web_search job_id=%s: %s", job_id, summary)
+
+    # Log activity entry para el frontend
+    exa_count = len([r for r in batch if r.get("source_type") != "brave_web"])
+    brave_count = len([r for r in batch if r.get("source_type") == "brave_web"])
+    asyncio.create_task(append_activity_entry(job_id, {
+        "t": datetime.utcnow().isoformat(timespec="seconds"),
+        "msg": f"Buscando: {query}",
+        "found": len(new_items),
+        "exa": exa_count,
+        "brave": brave_count,
+    }))
 
     return new_items, summary
 

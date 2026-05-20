@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from uuid import UUID
 
 from mle.db.base import async_session_factory
@@ -76,3 +77,27 @@ async def persist_pipeline_progress(job_id: UUID, state: LeadSearchGraphState) -
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning("No se pudo persistir progreso intermedio job_id=%s: %s", job_id, exc)
+
+
+async def append_activity_entry(job_id: UUID, entry: dict[str, object]) -> None:
+    """Añade una entrada al activity_log del job (máx 30 entradas). Fire-and-forget."""
+    try:
+        async with async_session_factory() as session:
+            jobs_repository = JobsRepository(session)
+            job = await jobs_repository.get_by_id(job_id)
+            if job is None:
+                return
+
+            meta: dict[str, object] = dict(job.metadata_json or {})
+            log: list[dict[str, object]] = list(meta.get("activity_log", []))  # type: ignore[arg-type]
+            log.append(entry)
+            meta["activity_log"] = log[-30:]  # mantener últimas 30
+
+            await jobs_repository.update_status(
+                job_id=job_id,
+                status=job.status,
+                progress=job.progress,
+                metadata_json=meta,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("append_activity_entry falló job_id=%s: %s", job_id, exc)

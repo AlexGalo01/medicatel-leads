@@ -959,6 +959,27 @@ export function JobSearchWorkspacePage(): JSX.Element {
                   <div className="loading-card__bar-track">
                     <div className="loading-card__bar-fill" />
                   </div>
+
+                  {/* ACTIVITY FEED */}
+                  {jobStatusQuery.data?.activity_log && jobStatusQuery.data.activity_log.length > 0 && (
+                    <div style={{
+                      marginTop: 16, background: "#F8FAFC", borderRadius: 8,
+                      border: "1px solid #E5E7EB", padding: "10px 14px",
+                      fontFamily: "monospace", fontSize: 11, color: "#6B7280",
+                      maxHeight: 130, overflowY: "auto", textAlign: "left",
+                    }}>
+                      {jobStatusQuery.data.activity_log.slice(-6).map((entry, i) => (
+                        <div key={i} style={{ marginBottom: 3 }}>
+                          <span style={{ color: "#9CA3AF" }}>{entry.t.slice(11, 19)}</span>
+                          {" "}{entry.msg}
+                          {entry.found !== undefined && (
+                            <span style={{ color: "#4F46E5" }}> → {entry.found} nuevos</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <button
                     type="button"
                     className="loading-card__cancel"

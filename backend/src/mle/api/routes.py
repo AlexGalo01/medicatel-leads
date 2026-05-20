@@ -584,6 +584,9 @@ async def get_search_job_status(
         if key in job.metadata_json:
             filter_stats[key] = job.metadata_json[key]
 
+    activity_log_raw = job.metadata_json.get("activity_log")
+    activity_log: list[dict[str, Any]] = activity_log_raw if isinstance(activity_log_raw, list) else []
+
     return SearchJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
@@ -607,6 +610,7 @@ async def get_search_job_status(
         warnings=warnings,
         directory_id=str(job.directory_id) if job.directory_id else None,
         filter_stats=filter_stats,
+        activity_log=activity_log,
     )
 
 
