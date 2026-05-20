@@ -1089,7 +1089,7 @@ async def filter_exa_raw_results_by_relevance(
         "relevance_filter_kept": len(kept),
         "relevance_filter_dropped": len(discarded_meta),
         "relevance_filter_heuristic_drops": len(heuristic_drop),
-        "relevance_filter_discarded_sample": discarded_meta[:40],
+        "relevance_filter_discarded_sample": discarded_meta,
         "relevance_filter_mode": "applied",
         "lpa_results": lpa_items,
         "lpa_count": len(lpa_items),
