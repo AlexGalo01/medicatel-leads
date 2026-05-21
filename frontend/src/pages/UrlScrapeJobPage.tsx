@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, ExternalLink, Globe, MapPin, Phone, Mail } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, Globe, Loader, MapPin, Phone, Mail, Sparkles } from "lucide-react";
 
 const SCRAPE_TABLE_COLS = "48px minmax(200px,1fr) 140px";
 
@@ -25,7 +25,7 @@ function initial(text: string): string {
   return t ? t.charAt(0).toUpperCase() : "?";
 }
 
-import { cancelUrlScrapeJob, getDirectory, getUrlScrapeJobStatus, pushScrapeEntriesToDirectory } from "../api";
+import { cancelUrlScrapeJob, enrichUrlScrapeProfiles, getDirectory, getUrlScrapeJobStatus, pushScrapeEntriesToDirectory } from "../api";
 import { Button } from "../components/ui/button";
 
 const ITEMS_PER_PAGE = 30;
@@ -39,6 +39,7 @@ export function UrlScrapeJobPage(): JSX.Element {
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [pushed, setPushed] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [enrichingRows, setEnrichingRows] = useState<Set<number>>(new Set());
 
   const jobQuery = useQuery({
     queryKey: ["url-scrape-job", jobId],
@@ -67,7 +68,7 @@ export function UrlScrapeJobPage(): JSX.Element {
         selectedIndices.size > 0 ? Array.from(selectedIndices) : [],
         stepIdFromUrl,
       ),
-    onSuccess: (result) => {
+    onSuccess: () => {
       setPushed(true);
       void queryClient.invalidateQueries({ queryKey: ["directory-items", directoryId] });
       setTimeout(() => navigate(`/lists/${directoryId}`), 1500);
@@ -81,11 +82,51 @@ export function UrlScrapeJobPage(): JSX.Element {
     },
   });
 
+  const enrichMutation = useMutation({
+    mutationFn: () =>
+      enrichUrlScrapeProfiles(jobId!, selectedIndices.size > 0 ? Array.from(selectedIndices) : undefined),
+    onSuccess: () => {
+      void jobQuery.refetch();
+    },
+  });
+
+  // Clear per-row enriching state when job returns to completed
+  useEffect(() => {
+    if (job?.status === "completed" && enrichingRows.size > 0) {
+      setEnrichingRows(new Set());
+    }
+  }, [job?.status, enrichingRows.size]);
+
+  const enrichRow = async (index: number) => {
+    if (enrichingRows.has(index) || job?.status !== "completed") return;
+    setEnrichingRows((prev) => new Set([...prev, index]));
+    try {
+      await enrichUrlScrapeProfiles(jobId!, [index]);
+      void jobQuery.refetch();
+    } catch {
+      setEnrichingRows((prev) => {
+        const next = new Set(prev);
+        next.delete(index);
+        return next;
+      });
+    }
+  };
+
   const preview = job?.scrape_results_preview ?? [];
   const isRunning = jobQuery.isLoading || job?.status === "running" || job?.status === "pending";
   const isCompleted = job?.status === "completed";
   const isError = job?.status === "error";
   const isCancelled = job?.status === "cancelled";
+
+  // Check if there are entries that need enrichment (have URL but no phones/emails)
+  const needsEnrichment = preview.some(
+    (item) =>
+      item.url &&
+      item.url.trim().length > 0 &&
+      (!item.phones || item.phones.length === 0) &&
+      (!item.emails || item.emails.length === 0),
+  );
+  const isEnriching = job?.status === "running" && job?.stage === "enriching";
 
   const totalPages = Math.ceil(preview.length / ITEMS_PER_PAGE);
   const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -149,6 +190,18 @@ export function UrlScrapeJobPage(): JSX.Element {
             <span className="muted-text url-scrape-job-sel-count">
               {selectedIndices.size > 0 ? `${selectedIndices.size} seleccionadas` : "Todas seleccionadas"}
             </span>
+            {needsEnrichment && (
+              <Button
+                type="button"
+                onClick={() => enrichMutation.mutate()}
+                disabled={enrichMutation.isPending || isEnriching}
+                variant="outline"
+              >
+                {enrichMutation.isPending || isEnriching
+                  ? "Enriqueciendo…"
+                  : "Enriquecer perfiles"}
+              </Button>
+            )}
             <Button
               type="button"
               onClick={() => pushMutation.mutate()}
@@ -159,6 +212,14 @@ export function UrlScrapeJobPage(): JSX.Element {
                 ? "Agregando…"
                 : `Agregar ${selectedIndices.size > 0 ? selectedIndices.size : preview.length} al lista`}
             </Button>
+          </div>
+        )}
+
+        {isEnriching && (
+          <div className="url-scrape-job-actions">
+            <span className="muted-text">
+              {job?.progress ?? 0}% — Enriqueciendo perfiles…
+            </span>
           </div>
         )}
       </header>
@@ -270,17 +331,17 @@ export function UrlScrapeJobPage(): JSX.Element {
       {/* Results table */}
       {preview.length > 0 && (
         <div style={{
-          background: "white", border: "1px solid #D3D3D3",
+          background: "var(--c-card-bg)", border: "1px solid var(--color-border)",
           borderRadius: 12, overflow: "hidden",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+          boxShadow: "var(--c-card-shadow)",
           margin: "16px 0",
         }}>
           {/* Table header */}
           <div style={{
             display: "grid", gridTemplateColumns: SCRAPE_TABLE_COLS, gap: "0 12px",
-            padding: "10px 16px", borderBottom: "1px solid #D3D3D3",
-            background: "#F8FAFC", fontSize: 11, fontWeight: 600,
-            color: "#808080", textTransform: "uppercase", letterSpacing: "0.05em",
+            padding: "10px 16px", borderBottom: "1px solid var(--color-border)",
+            background: "var(--color-surface-alt)", fontSize: 11, fontWeight: 600,
+            color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em",
             alignItems: "center",
           }}>
             <div style={{ display: "flex", justifyContent: "center" }}>
@@ -307,7 +368,7 @@ export function UrlScrapeJobPage(): JSX.Element {
                 className="ws-result-row"
                 style={{
                   display: "grid", gridTemplateColumns: SCRAPE_TABLE_COLS, gap: "0 12px",
-                  padding: "12px 16px", borderBottom: "1px solid #F3F4F6",
+                  padding: "12px 16px", borderBottom: "1px solid var(--color-border)",
                   alignItems: "center",
                 }}
               >
@@ -339,14 +400,14 @@ export function UrlScrapeJobPage(): JSX.Element {
                   </div>
                   <div style={{ overflow: "hidden" }}>
                     <p style={{
-                      fontWeight: 600, fontSize: 13, color: "#0F172A",
+                      fontWeight: 600, fontSize: 13, color: "var(--color-text)",
                       margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                     }}>
-                      {item.title || <span style={{ color: "#9CA3AF" }}>(sin título)</span>}
+                      {item.title || <span style={{ color: "var(--color-text-secondary)" }}>(sin título)</span>}
                     </p>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
                       {item.city && (
-                        <span style={{ fontSize: 11, color: "#808080", display: "flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "flex", alignItems: "center", gap: 3 }}>
                           <MapPin size={10} aria-hidden /> {item.city}
                         </span>
                       )}
@@ -355,7 +416,7 @@ export function UrlScrapeJobPage(): JSX.Element {
                           href={item.url}
                           target="_blank"
                           rel="noreferrer"
-                          style={{ fontSize: 11, color: "#9CA3AF", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 2 }}
+                          style={{ fontSize: 11, color: "var(--color-text-secondary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 2 }}
                           onClick={(e) => e.stopPropagation()}
                         >
                           {hostname} <ExternalLink size={9} aria-hidden />
@@ -363,7 +424,7 @@ export function UrlScrapeJobPage(): JSX.Element {
                       )}
                     </div>
                     {item.snippet && (
-                      <p style={{ fontSize: 11, color: "#9CA3AF", margin: "3px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: "3px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {item.snippet.slice(0, 120)}
                       </p>
                     )}
@@ -392,8 +453,20 @@ export function UrlScrapeJobPage(): JSX.Element {
                       <Phone size={12} />
                     </a>
                   )}
-                  {!item.emails[0] && !item.phones[0] && (
-                    <span style={{ fontSize: 11, color: "#D1D5DB" }}>—</span>
+                  {!item.emails[0] && !item.phones[0] && item.url && (
+                    <button
+                      className="ws-contact-btn"
+                      title="Enriquecer perfil"
+                      disabled={enrichingRows.has(item.index) || job?.status !== "completed"}
+                      onClick={(e) => { e.stopPropagation(); void enrichRow(item.index); }}
+                    >
+                      {enrichingRows.has(item.index)
+                        ? <Loader size={12} style={{ animation: "spin 1s linear infinite" }} />
+                        : <Sparkles size={12} />}
+                    </button>
+                  )}
+                  {!item.emails[0] && !item.phones[0] && !item.url && (
+                    <span style={{ fontSize: 11, color: "var(--color-neutral)" }}>—</span>
                   )}
                 </div>
               </div>
@@ -404,7 +477,7 @@ export function UrlScrapeJobPage(): JSX.Element {
           {totalPages > 1 && (
             <div style={{
               display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8,
-              padding: "10px 16px", borderTop: "1px solid #F3F4F6", background: "#FAFAFA",
+              padding: "10px 16px", borderTop: "1px solid var(--color-border)", background: "var(--color-surface-alt)",
             }}>
               <Button
                 type="button" variant="ghost"
@@ -414,7 +487,7 @@ export function UrlScrapeJobPage(): JSX.Element {
               >
                 <ChevronLeft size={16} aria-hidden /> Anterior
               </Button>
-              <span style={{ fontSize: 12, color: "#6B7280" }}>
+              <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
                 Página {currentPage} de {totalPages}
               </span>
               <Button
