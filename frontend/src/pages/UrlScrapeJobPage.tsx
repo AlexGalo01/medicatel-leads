@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, ExternalLink, Globe, Loader, MapPin, Phone, Mail, Sparkles } from "lucide-react";
 
-const SCRAPE_TABLE_COLS = "48px minmax(200px,1fr) 140px";
+const SCRAPE_TABLE_COLS = "48px minmax(150px,1fr) minmax(150px,1fr) 100px";
 
 const AVATAR_PALETTE = [
   { bg: "#DBEAFE", color: "#1D4ED8" },
@@ -353,6 +353,7 @@ export function UrlScrapeJobPage(): JSX.Element {
               />
             </div>
             <div>Perfil</div>
+            <div>URL</div>
             <div>Contacto</div>
           </div>
 
@@ -405,22 +406,11 @@ export function UrlScrapeJobPage(): JSX.Element {
                     }}>
                       {item.title || <span style={{ color: "var(--color-text-secondary)" }}>(sin título)</span>}
                     </p>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                       {item.city && (
                         <span style={{ fontSize: 11, color: "var(--color-text-secondary)", display: "flex", alignItems: "center", gap: 3 }}>
                           <MapPin size={10} aria-hidden /> {item.city}
                         </span>
-                      )}
-                      {item.url && (
-                        <a
-                          href={item.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{ fontSize: 11, color: "var(--color-text-secondary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 2 }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {hostname} <ExternalLink size={9} aria-hidden />
-                        </a>
                       )}
                     </div>
                     {item.snippet && (
@@ -429,6 +419,30 @@ export function UrlScrapeJobPage(): JSX.Element {
                       </p>
                     )}
                   </div>
+                </div>
+
+                {/* URL */}
+                <div style={{ overflow: "hidden" }}>
+                  {item.url ? (
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        fontSize: 12, color: "var(--color-primary)", textDecoration: "none",
+                        display: "inline-flex", alignItems: "center", gap: 4, overflow: "hidden",
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      title={item.url}
+                    >
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {hostname}
+                      </span>
+                      <ExternalLink size={11} aria-hidden style={{ flexShrink: 0 }} />
+                    </a>
+                  ) : (
+                    <span style={{ fontSize: 11, color: "var(--color-neutral)" }}>—</span>
+                  )}
                 </div>
 
                 {/* Contact icons */}
