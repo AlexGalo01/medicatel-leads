@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field as PydanticField
 from mle.clients.brave_client import BraveSearchClient
 from mle.db.base import async_session_factory
 from mle.repositories.url_scrape_jobs_repository import UrlScrapeJobsRepository
+from mle.repositories.scraping_sites_repository import ScrapingSitesRepository
 from mle.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -232,6 +233,27 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
             # — DOM text —
             text = await page.inner_text("body")
 
+            # — Extraer enlaces + teléfonos ocultos en atributos HTML —
+            # inner_text() no captura href ni onclick; los extraemos explícitamente.
+            link_data: list[dict] = await page.evaluate("""() => {
+                const items = [];
+                document.querySelectorAll('a[href]').forEach(a => {
+                    const href = a.getAttribute('href') || '';
+                    if (!href || href.startsWith('#') || href.startsWith('javascript')) return;
+                    const text = (a.innerText || '').trim().replace(/\\s+/g, ' ').substring(0, 200);
+                    // Buscar tel: en onclick de este elemento y sus hijos
+                    let phone = null;
+                    const candidates = [a, ...a.querySelectorAll('[onclick]')];
+                    for (const el of candidates) {
+                        const onclick = el.getAttribute('onclick') || '';
+                        const m = onclick.match(/tel:([+\\d\\s\\-().]+)/);
+                        if (m) { phone = m[1].trim(); break; }
+                    }
+                    items.push({ href, text, phone });
+                });
+                return items.slice(0, 600);
+            }""")
+
             # — Combinar todas las fuentes —
             parts: list[str] = []
             if captured_api_chunks:
@@ -244,6 +266,14 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
                     "=== JSON EMBEBIDO EN PÁGINA ===\n"
                     + "\n---\n".join(embedded_json[:3])
                 )
+            if link_data:
+                link_lines = []
+                for item in link_data:
+                    line = f"LINK href={item['href']} | text={item['text']}"
+                    if item.get("phone"):
+                        line += f" | phone={item['phone']}"
+                    link_lines.append(line)
+                parts.append("=== LINKS Y TELÉFONOS DEL DOM ===\n" + "\n".join(link_lines))
             parts.append("=== TEXTO DOM ===\n" + text)
             combined = "\n\n".join(parts)
 
@@ -558,7 +588,14 @@ def _parse_llm_json(raw: str) -> list[_ScrapedEntry]:
     try:
         parsed = json.loads(text)
         items: list = parsed.get("entries", []) if isinstance(parsed, dict) else []
-        return [_ScrapedEntry(**e) for e in items if isinstance(e, dict)]
+        # Normalize field names: some prompts (e.g., DDH) return "url" instead of "primary_url"
+        normalized = []
+        for e in items:
+            if isinstance(e, dict):
+                if "url" in e and "primary_url" not in e:
+                    e = {**e, "primary_url": e["url"]}
+                normalized.append(e)
+        return [_ScrapedEntry(**e) for e in normalized]
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         logger.warning("LLM parse error: %s | raw=%s", exc, raw[:300])
         return []
@@ -792,18 +829,225 @@ async def run_url_scrape_pipeline(job_id: UUID) -> None:
                 },
             )
 
-    # --- Guardar resultado final ---
+    # --- Guardar resultado nivel 1 ---
     preview = _build_preview(all_entries)
+
+    # Check if there are entries that need profile enrichment.
+    # Enrich if:
+    # 1. Any entry has URL but no contact (classic case), OR
+    # 2. Job came from a scraping_site with enrich_prompt (site knows how to extract contacts from profiles)
+    has_entries_with_url_no_contacts = any(
+        item.get("url") and not item.get("phones") and not item.get("emails")
+        for item in preview
+    )
+
+    # Load site to check for enrich_prompt
+    site_has_enrich_prompt = False
+    if job.scraping_site_id:
+        async with async_session_factory() as session:
+            sites_repo = ScrapingSitesRepository(session)
+            site = await sites_repo.get(job.scraping_site_id)
+            site_has_enrich_prompt = site is not None and bool(site.enrich_prompt)
+
+    needs_enrichment = has_entries_with_url_no_contacts or (site_has_enrich_prompt and preview)
+
+    if needs_enrichment:
+        # Save partial results and continue with profile enrichment
+        async with async_session_factory() as session:
+            repo = UrlScrapeJobsRepository(session)
+            await repo.update_status(
+                job_id, "running", 50,
+                metadata_json={
+                    "scrape_results_preview": preview,
+                    "entries_count": len(preview),
+                    "pages_scraped": total_pages,
+                    "stage": "enriching",
+                },
+            )
+        logger.info("URL scrape level 1 done job_id=%s entries=%d — starting profile enrichment", job_id, len(all_entries))
+        await run_url_scrape_enrichment(job_id)
+    else:
+        async with async_session_factory() as session:
+            repo = UrlScrapeJobsRepository(session)
+            await repo.update_status(
+                job_id, "completed", 100,
+                metadata_json={
+                    "scrape_results_preview": preview,
+                    "entries_count": len(preview),
+                    "pages_scraped": total_pages,
+                    "stage": "done",
+                },
+            )
+        logger.info("URL scrape done job_id=%s pages=%d entries=%d", job_id, total_pages, len(all_entries))
+
+
+async def run_url_scrape_enrichment(
+    job_id: UUID, entry_indices: list[int] | None = None
+) -> None:
+    """
+    Enrich URL scrape results by visiting individual profile URLs and extracting contact info.
+
+    - Visits each entry's URL (level 2 scraping)
+    - Extracts phones/emails from the profile page
+    - Updates metadata_json with enriched entries
+    - Changes stage to "enriched"
+    """
+    settings = get_settings()
+
+    # Load job data in short-lived session
     async with async_session_factory() as session:
         repo = UrlScrapeJobsRepository(session)
-        await repo.update_status(
-            job_id, "completed", 100,
-            metadata_json={
-                "scrape_results_preview": preview,
-                "entries_count": len(preview),
-                "pages_scraped": total_pages,
-                "stage": "done",
-            },
-        )
+        job = await repo.get(job_id)
+        if not job or job.status not in ("running", "completed"):
+            logger.warning("Enrichment job_id=%s not found or not in enriching state", job_id)
+            return
+        enrich_prompt = None
+        if job.scraping_site_id:
+            sites_repo = ScrapingSitesRepository(session)
+            site = await sites_repo.get(job.scraping_site_id)
+            if site and site.enrich_prompt:
+                enrich_prompt = site.enrich_prompt
+        preview = list(job.metadata_json.get("scrape_results_preview", []))
+        target_url = job.target_url
 
-    logger.info("URL scrape done job_id=%s pages=%d entries=%d", job_id, total_pages, len(all_entries))
+    if not preview:
+        logger.info("No results to enrich for job_id=%s", job_id)
+        return
+
+    # Determine which entries to enrich
+    target_indices = set(entry_indices) if entry_indices else set(
+        item["index"] for item in preview
+        if item.get("url") and not item.get("phones") and not item.get("emails")
+    )
+
+    if not target_indices:
+        logger.info("No entries need enrichment for job_id=%s", job_id)
+        async with async_session_factory() as session:
+            await UrlScrapeJobsRepository(session).update_metadata(job_id, {"stage": "done"})
+        return
+
+    enriched_count = 0
+    total_target = len(target_indices)
+    base_url_parts = urlparse(target_url)
+    base_domain = f"{base_url_parts.scheme}://{base_url_parts.netloc}"
+
+    contact_prompt = enrich_prompt or (
+        "Extract all phone numbers, email addresses, and contact information "
+        "for this professional. Return JSON with 'entries' array, each with "
+        "'phones' and 'emails' arrays."
+    )
+
+    try:
+        # Single browser instance for all profile pages
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True, args=_BROWSER_ARGS)
+            bpage = await browser.new_page()
+
+            for item in preview:
+                idx = item["index"]
+                if idx not in target_indices:
+                    continue
+
+                url = item.get("url", "").strip()
+                if not url:
+                    enriched_count += 1
+                    continue
+
+                # Resolve relative URLs
+                if url.startswith("/"):
+                    url = base_domain + url
+                elif not url.startswith(("http://", "https://")):
+                    url = base_domain + "/" + url
+
+                try:
+                    # Fast profile page load — no full pipeline, just DOM text + links
+                    await bpage.goto(url, wait_until="domcontentloaded", timeout=20_000)
+                    await bpage.wait_for_timeout(1_000)
+
+                    # Extract HTML links with phone + text (same structure as level 1)
+                    link_data: list[dict] = await bpage.evaluate("""() => {
+                        const items = [];
+                        document.querySelectorAll('a[href]').forEach(a => {
+                            const href = a.getAttribute('href') || '';
+                            const text = (a.innerText || '').trim().replace(/\\s+/g, ' ').substring(0, 200);
+                            let phone = null;
+                            const candidates = [a, ...a.querySelectorAll('[onclick]')];
+                            for (const el of candidates) {
+                                const onclick = el.getAttribute('onclick') || '';
+                                const m = onclick.match(/tel:([+\\d\\s\\-().]+)/);
+                                if (m) { phone = m[1].trim(); break; }
+                            }
+                            items.push({ href, text, phone });
+                        });
+                        // Also grab mailto: links
+                        document.querySelectorAll('a[href^="mailto:"]').forEach(a => {
+                            items.push({ href: a.getAttribute('href'), text: (a.innerText||'').trim(), phone: null });
+                        });
+                        return items.slice(0, 300);
+                    }""")
+
+                    page_text = await bpage.inner_text("body")
+
+                    # Build structured text for LLM
+                    link_lines = []
+                    for litem in link_data:
+                        if litem.get("phone") or (litem.get("href", "").startswith("mailto:")):
+                            line = f"LINK href={litem['href']} text={litem['text']}"
+                            if litem.get("phone"):
+                                line += f" phone={litem['phone']}"
+                            link_lines.append(line)
+
+                    combined = ""
+                    if link_lines:
+                        combined = "=== LINKS Y TELÉFONOS ===\n" + "\n".join(link_lines) + "\n\n"
+                    combined += "=== TEXTO ===\n" + page_text[:8_000]
+
+                    entries = await _extract_entries_with_llm(combined, contact_prompt, settings)
+
+                    if entries:
+                        first = entries[0]
+                        existing_phones = item.get("phones", []) or []
+                        new_phones = first.phones or []
+                        item["phones"] = list(dict.fromkeys(existing_phones + new_phones))
+                        item["emails"] = first.emails or []
+                        logger.info(
+                            "Enriched entry idx=%d url=%s phones=%d emails=%d",
+                            idx, url, len(item["phones"]), len(item["emails"])
+                        )
+
+                except Exception as e:
+                    logger.warning("Error enriching entry idx=%d url=%s: %s", idx, url, e)
+
+                enriched_count += 1
+                progress = 50 + int((enriched_count / total_target) * 45)
+
+                # Persist after EACH entry so frontend sees updates in real time
+                async with async_session_factory() as session:
+                    await UrlScrapeJobsRepository(session).update_metadata(
+                        job_id,
+                        {"scrape_results_preview": preview, "enriched_count": enriched_count, "stage": "enriching"},
+                        progress,
+                    )
+
+            await bpage.close()
+            await browser.close()
+
+        # Mark done
+        async with async_session_factory() as session:
+            await UrlScrapeJobsRepository(session).update_status(
+                job_id, "completed", 100,
+                metadata_json={
+                    "scrape_results_preview": preview,
+                    "enriched_count": enriched_count,
+                    "entries_count": len(preview),
+                    "stage": "done",
+                },
+            )
+        logger.info("Enrichment done job_id=%s enriched=%d", job_id, enriched_count)
+
+    except Exception as e:
+        logger.error("Enrichment pipeline error job_id=%s: %s", job_id, e)
+        async with async_session_factory() as session:
+            await UrlScrapeJobsRepository(session).update_status(
+                job_id, "error", 0, metadata_json={"error": str(e)}
+            )

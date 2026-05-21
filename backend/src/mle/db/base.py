@@ -253,6 +253,106 @@ async def init_db() -> None:
             )
         )
 
+        # 013: auto_push en url_scrape_jobs + scraping_site_ids en search_jobs
+        await connection.execute(
+            text(
+                "ALTER TABLE url_scrape_jobs ADD COLUMN IF NOT EXISTS "
+                "auto_push BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        await connection.execute(
+            text(
+                "ALTER TABLE search_jobs ADD COLUMN IF NOT EXISTS "
+                "scraping_site_ids JSONB NOT NULL DEFAULT '[]'::jsonb"
+            )
+        )
+        # scraping_sites FKs e índices (tabla creada por create_all)
+        await connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_scraping_sites_last_job "
+                "ON scraping_sites(last_scrape_job_id)"
+            )
+        )
+        await connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_scraping_sites_created_by "
+                "ON scraping_sites(created_by_user_id)"
+            )
+        )
+
+        # ALTER TABLE scraping_sites — ADD enrich_prompt column
+        await connection.execute(
+            text(
+                "ALTER TABLE scraping_sites ADD COLUMN IF NOT EXISTS "
+                "enrich_prompt TEXT"
+            )
+        )
+
+        # ALTER TABLE url_scrape_jobs — ADD scraping_site_id column
+        await connection.execute(
+            text(
+                "ALTER TABLE url_scrape_jobs ADD COLUMN IF NOT EXISTS "
+                "scraping_site_id UUID REFERENCES scraping_sites(id) ON DELETE SET NULL"
+            )
+        )
+        await connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_url_scrape_jobs_scraping_site "
+                "ON url_scrape_jobs(scraping_site_id)"
+            )
+        )
+
+        # Seed: doctoresdehonduras.com as a built-in scraping site.
+        # Insert only if no row with this URL exists yet (handles deleted + recreated cases).
+        _ddh_scrape_prompt = (
+            "Extrae cada médico que aparece en esta página. "
+            "MUY IMPORTANTE: Usa la sección '=== LINKS Y TELÉFONOS DEL DOM ===' que contiene los datos estructurados. "
+            "Cada línea LINK tiene: href (URL del perfil), text (nombre + especialidad), phone (teléfono directo). "
+            "Para cada médico extrae: "
+            "1. primary_url: toma el href de la línea LINK (ej: /Doctores/Detalles/NNN) "
+            "2. display_title: nombre completo del médico del campo text "
+            "3. city: si aparece en el text, extrae ubicación/ciudad; sino, deja en blanco "
+            "4. phones: extrae del campo phone de la línea LINK (ej: [\"2242-6565\"]); si no hay, lista vacía "
+            "5. snippet: especialidad del médico del text "
+            "Devuelve JSON con entries: [{\"primary_url\": \"/Doctores/Detalles/774\", \"display_title\": \"Dra. Kendy Portillo\", "
+            "\"snippet\": \"Neurología\", \"phones\": [\"2242-6565\"], \"emails\": []}]"
+        )
+        _ddh_enrich_prompt = (
+            "Esta es la página de perfil de un médico hondureño. "
+            "Busca la sección 'Información de Contacto' que aparece debajo del perfil. "
+            "Extrae SOLO email(s) y WhatsApp (los teléfonos ya fueron capturados del listado). "
+            "Mira patrones como: 'Email:', 'Correo:', 'WhatsApp:', 'Tel:', etc. "
+            "Devuelve JSON: {\"entries\": [{\"phones\": [], \"emails\": [\"...@...\"], \"whatsapp\": [\"...\"]}]} "
+            "Si no hay email ni WhatsApp, devuelve listas vacías."
+        )
+        await connection.execute(
+            text("""
+                INSERT INTO scraping_sites (id, url, title, scrape_prompt, enrich_prompt, created_at, updated_at)
+                SELECT
+                    '00000000-0000-0000-0000-000000000001',
+                    'https://www.doctoresdehonduras.com',
+                    'Doctores de Honduras',
+                    :scrape_prompt,
+                    :enrich_prompt,
+                    now(), now()
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM scraping_sites WHERE url LIKE '%doctoresdehonduras.com%'
+                )
+            """), {"scrape_prompt": _ddh_scrape_prompt, "enrich_prompt": _ddh_enrich_prompt}
+        )
+        # If a row already exists but has null prompts (e.g. manually created), fill them in.
+        await connection.execute(
+            text("""
+                UPDATE scraping_sites
+                SET
+                    scrape_prompt = COALESCE(scrape_prompt, :scrape_prompt),
+                    enrich_prompt = COALESCE(enrich_prompt, :enrich_prompt),
+                    updated_at    = now()
+                WHERE url LIKE '%doctoresdehonduras.com%'
+                  AND (scrape_prompt IS NULL OR enrich_prompt IS NULL)
+            """), {"scrape_prompt": _ddh_scrape_prompt, "enrich_prompt": _ddh_enrich_prompt}
+        )
+
         block = _pg_migration_sql_002()
         if not block:
             return
