@@ -28,6 +28,10 @@ class SearchJobCreateRequest(BaseModel):
     search_focus: SearchFocusLiteral | None = None
     exa_category: ExaCategoryLiteral | None = None
     exa_criteria: str | None = Field(default=None, max_length=1200)
+    scraping_site_ids: list[UUID] | None = Field(
+        default=None,
+        description="Optional list of scraping sites to include in this search",
+    )
     directory_id: UUID = Field(
         description="Directorio destino donde irán las oportunidades generadas por esta búsqueda."
     )
@@ -346,6 +350,7 @@ class OpportunityListItemResponse(BaseModel):
     response_outcome: str | None = None
     terminated_at: datetime | None = None
     terminated_outcome: str | None = None
+    import_source: str | None = None  # 'search', 'url_scrape', 'excel', 'manual'
     updated_at: datetime
     owner: OpportunityOwnerSnippet | None = None
 
@@ -422,6 +427,7 @@ class UrlScrapeResultPreviewItem(BaseModel):
     city: str
     phones: list[str] = Field(default_factory=list)
     emails: list[str] = Field(default_factory=list)
+    whatsapp: list[str] = Field(default_factory=list)
 
 
 class UrlScrapeJobStatusResponse(BaseModel):
@@ -437,6 +443,7 @@ class UrlScrapeJobStatusResponse(BaseModel):
     updated_at: datetime
     pages_scraped: int | None = None
     pages_total: int | None = None
+    stage: str | None = None
 
 
 class UrlScrapeJobListItemResponse(BaseModel):
@@ -492,4 +499,42 @@ class DirectorySourceItemResponse(BaseModel):
 
 class DirectorySourcesListResponse(BaseModel):
     items: list[DirectorySourceItemResponse] = Field(default_factory=list)
+
+
+class ScrapingSiteCreateRequest(BaseModel):
+    url: str = Field(min_length=5, max_length=2000)
+    title: str = Field(default="", max_length=500)
+    notes: str | None = Field(default=None)
+    scrape_prompt: str | None = Field(default=None)
+    enrich_prompt: str | None = Field(default=None)
+
+
+class ScrapingSiteUpdateRequest(BaseModel):
+    title: str | None = Field(default=None)
+    notes: str | None = Field(default=None)
+    scrape_prompt: str | None = Field(default=None)
+    enrich_prompt: str | None = Field(default=None)
+
+
+class ScrapingSiteResponse(BaseModel):
+    site_id: str
+    url: str
+    title: str
+    notes: str | None = None
+    scrape_prompt: str | None = None
+    enrich_prompt: str | None = None
+    last_scrape_job_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScrapingSitesListResponse(BaseModel):
+    items: list[ScrapingSiteResponse] = Field(default_factory=list)
+
+
+class UrlScrapeEnrichRequest(BaseModel):
+    entry_indices: list[int] | None = Field(
+        default=None,
+        description="Optional list of entry indices (1-based) to enrich. If None, enriches all entries with URLs but no phone/email.",
+    )
 

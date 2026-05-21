@@ -51,7 +51,8 @@ class DirectorySourcesRepository:
         limit: int = 100,
     ) -> list[DirectorySource]:
         query = select(DirectorySource).where(
-            DirectorySource.directory_id == directory_id
+            DirectorySource.directory_id == directory_id,
+            DirectorySource.deleted_at.is_(None),
         )
         if status:
             query = query.where(DirectorySource.status == status)
@@ -84,10 +85,14 @@ class DirectorySourcesRepository:
         await self.session.refresh(source)
         return source
 
-    async def delete(self, source_id: UUID) -> bool:
+    async def delete(self, source_id: UUID, *, deleted_by_user_id: UUID) -> bool:
         source = await self.get_by_id(source_id)
-        if source is None:
+        if source is None or source.deleted_at is not None:
             return False
-        await self.session.delete(source)
+        now = datetime.now(timezone.utc)
+        source.deleted_by = deleted_by_user_id
+        source.deleted_at = now
+        source.updated_at = now
+        self.session.add(source)
         await self.session.commit()
         return True

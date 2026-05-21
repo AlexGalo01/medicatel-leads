@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from uuid import UUID
 
@@ -9,6 +10,9 @@ from mle.db.base import async_session_factory
 from mle.observability.langsmith_setup import configure_langsmith_env, trace_inputs_job_id
 from mle.orchestration.pipeline import run_lead_pipeline
 from mle.repositories.jobs_repository import JobsRepository
+from mle.repositories.scraping_sites_repository import ScrapingSitesRepository
+from mle.repositories.url_scrape_jobs_repository import UrlScrapeJobsRepository
+from mle.services.url_scrape_service import run_url_scrape_pipeline
 from mle.state.graph_state import LeadSearchGraphState
 
 logger = logging.getLogger(__name__)
@@ -39,6 +43,33 @@ async def run_job_pipeline(job_id: UUID) -> None:
             progress=5,
             metadata_json={**job.metadata_json, "query_text": query_text},
         )
+
+        # Launch scraping sites in parallel if specified
+        scraping_jobs: list[UUID] = []
+        if job.scraping_site_ids:
+            sites_repo = ScrapingSitesRepository(session)
+            url_jobs_repo = UrlScrapeJobsRepository(session)
+            for site_id in job.scraping_site_ids:
+                site = await sites_repo.get(site_id)
+                if not site:
+                    logger.warning("Scraping site not found site_id=%s", site_id)
+                    continue
+                prompt = site.scrape_prompt or f"Extraer profesionales y entidades del directorio: {site.title or site.url}"
+                scrape_job = await url_jobs_repo.create(
+                    target_url=site.url,
+                    user_prompt=prompt,
+                    directory_id=job.directory_id,
+                )
+                # Mark as auto_push so results are pushed automatically
+                scrape_job.auto_push = True
+                session.add(scrape_job)
+                scraping_jobs.append(scrape_job.id)
+                logger.info("Created scraping job for site_id=%s scrape_job_id=%s", site_id, scrape_job.id)
+            if scraping_jobs:
+                await session.commit()
+                # Launch all scraping jobs concurrently (non-blocking)
+                for scrape_job_id in scraping_jobs:
+                    asyncio.create_task(run_url_scrape_pipeline(scrape_job_id))
 
     initial_state = LeadSearchGraphState(
         job_id=job_id,

@@ -111,7 +111,7 @@ function UserPanel({
       {/* Panel */}
       <aside style={{
         position: "fixed", top: 0, right: 0, height: "100%",
-        width: 380, background: "white", zIndex: 50,
+        width: 380, background: "var(--c-card-bg)", zIndex: 50,
         display: "flex", flexDirection: "column",
         borderLeft: "1px solid #E5E7EB",
         boxShadow: "-4px 0 15px -3px rgba(0,0,0,0.1)",
@@ -121,9 +121,9 @@ function UserPanel({
         <div style={{
           padding: "20px 24px", borderBottom: "1px solid #E5E7EB",
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          background: "#F8FAFC", flexShrink: 0,
+          background: "var(--color-surface-alt)", flexShrink: 0,
         }}>
-          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 600, color: "#111827" }}>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 600, color: "var(--color-text)" }}>
             {isEdit ? "Editar Usuario" : "Invitar Usuario"}
           </h2>
           <button
@@ -131,7 +131,7 @@ function UserPanel({
             onClick={onClose}
             style={{
               padding: "4px 6px", border: "none", background: "none",
-              cursor: "pointer", color: "#9CA3AF", borderRadius: 6,
+              cursor: "pointer", color: "var(--color-neutral)", borderRadius: 6,
             }}
           >
             <X size={18} />
@@ -142,7 +142,7 @@ function UserPanel({
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              <span style={{ fontSize: 13, fontWeight: 500, color: "#374151" }}>Nombre completo</span>
+              <span style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text)" }}>Nombre completo</span>
               <input
                 className="ui-input"
                 type="text"
@@ -153,7 +153,7 @@ function UserPanel({
             </label>
 
             <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              <span style={{ fontSize: 13, fontWeight: 500, color: "#374151" }}>Email</span>
+              <span style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text)" }}>Email</span>
               <input
                 className="ui-input"
                 type="email"
@@ -164,12 +164,12 @@ function UserPanel({
             </label>
 
             <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              <span style={{ fontSize: 13, fontWeight: 500, color: "#374151" }}>Rol</span>
+              <span style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text)" }}>Rol</span>
               <select
                 className="ui-input"
                 value={role}
                 onChange={(e) => setRole(e.target.value as UserRole)}
-                style={{ background: "white" }}
+                style={{ background: "var(--c-card-bg)" }}
               >
                 <option value="user">Usuario</option>
                 <option value="admin">Administrador</option>
@@ -177,11 +177,11 @@ function UserPanel({
             </label>
 
             <div style={{ opacity: isAdminRole ? 0.5 : 1 }}>
-              <p style={{ fontSize: 13, fontWeight: 500, color: "#374151", margin: "0 0 8px" }}>
+              <p style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text)", margin: "0 0 8px" }}>
                 Permisos específicos
               </p>
               <div style={{
-                background: "#F9FAFB", border: "1px solid #E5E7EB",
+                background: "var(--color-surface-alt)", border: "1px solid var(--color-border)",
                 borderRadius: 8, padding: "14px 16px",
                 display: "flex", flexDirection: "column", gap: 12,
               }}>
@@ -195,8 +195,8 @@ function UserPanel({
                       style={{ marginTop: 2, width: 15, height: 15, accentColor: "#4F46E5" }}
                     />
                     <div>
-                      <span style={{ display: "block", fontSize: 13, fontWeight: 500, color: "#111827" }}>{label}</span>
-                      <span style={{ display: "block", fontSize: 11, color: "#6B7280" }}>{desc}</span>
+                      <span style={{ display: "block", fontSize: 13, fontWeight: 500, color: "var(--color-text)" }}>{label}</span>
+                      <span style={{ display: "block", fontSize: 11, color: "var(--color-text-secondary)" }}>{desc}</span>
                     </div>
                   </label>
                 ))}
@@ -205,7 +205,7 @@ function UserPanel({
 
             <div style={{ borderTop: "1px solid #E5E7EB", paddingTop: 16 }}>
               <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                <span style={{ fontSize: 13, fontWeight: 500, color: "#374151" }}>
+                <span style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text)" }}>
                   {isEdit ? "Nueva contraseña (Opcional)" : "Contraseña"}
                 </span>
                 <input
@@ -225,7 +225,7 @@ function UserPanel({
         {/* Footer */}
         <div style={{
           padding: "16px 24px", borderTop: "1px solid #E5E7EB",
-          background: "#F9FAFB", display: "flex", justifyContent: "flex-end", gap: 10, flexShrink: 0,
+          background: "var(--color-surface-alt)", display: "flex", justifyContent: "flex-end", gap: 10, flexShrink: 0,
         }}>
           <button type="button" className="link-button" onClick={onClose}>Cancelar</button>
           <button
@@ -269,7 +269,7 @@ function DeleteModal({
       zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }}>
       <div style={{
-        background: "white", borderRadius: 12, padding: 24, maxWidth: 360, width: "100%",
+        background: "var(--c-card-bg)", borderRadius: 12, padding: 24, maxWidth: 360, width: "100%",
         textAlign: "center", boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1)",
       }}>
         <div style={{
@@ -280,10 +280,10 @@ function DeleteModal({
         }}>
           <AlertTriangle size={22} />
         </div>
-        <h3 style={{ margin: "0 0 8px", fontSize: 16, fontWeight: 700, color: "#111827" }}>
+        <h3 style={{ margin: "0 0 8px", fontSize: 16, fontWeight: 700, color: "var(--color-text)" }}>
           ¿Eliminar a {user.display_name}?
         </h3>
-        <p style={{ margin: "0 0 24px", fontSize: 13, color: "#6B7280", lineHeight: 1.5 }}>
+        <p style={{ margin: "0 0 24px", fontSize: 13, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
           Esta acción no se puede deshacer y el usuario perderá acceso inmediatamente.
         </p>
         {err && <p style={{ fontSize: 13, color: "#DC2626", marginBottom: 12 }}>{err}</p>}
@@ -363,7 +363,7 @@ function ToggleSwitch({
         position: "absolute", top: 2,
         left: checked ? 18 : 2,
         width: 16, height: 16, borderRadius: "50%",
-        background: "white",
+        background: "var(--c-card-bg)",
         boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
         transition: "left 0.2s",
       }} />
@@ -405,17 +405,17 @@ export function AdminUsersPage(): JSX.Element {
   const totalActive = users.filter((u) => u.is_active).length;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#F8FAFC" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "var(--color-surface-alt)" }}>
 
       {/* Header */}
       <header style={{
-        background: "white", borderBottom: "1px solid #E5E7EB",
+        background: "var(--c-card-bg)", borderBottom: "1px solid #E5E7EB",
         padding: "20px 32px", display: "flex", alignItems: "center",
         justifyContent: "space-between", flexShrink: 0,
       }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#111827" }}>Usuarios</h1>
-          <p style={{ margin: "4px 0 0", fontSize: 13, color: "#6B7280" }}>Gestiona los accesos al sistema</p>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "var(--color-text)" }}>Usuarios</h1>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--color-text-secondary)" }}>Gestiona los accesos al sistema</p>
         </div>
         <button
           type="button"
@@ -439,7 +439,7 @@ export function AdminUsersPage(): JSX.Element {
               { icon: <UserCheck size={20} />, label: "Usuarios activos", value: listQuery.isLoading ? "—" : totalActive, bg: "#F0FDF4", color: "#059669" },
             ].map(({ icon, label, value, bg, color }) => (
               <div key={label} style={{
-                background: "white", borderRadius: 12, border: "1px solid #E5E7EB",
+                background: "var(--c-card-bg)", borderRadius: 12, border: "1px solid var(--color-border)",
                 padding: "20px 24px", display: "flex", alignItems: "center", gap: 16,
                 boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
               }}>
@@ -451,8 +451,8 @@ export function AdminUsersPage(): JSX.Element {
                   {icon}
                 </div>
                 <div>
-                  <p style={{ margin: 0, fontSize: 13, color: "#6B7280", fontWeight: 500 }}>{label}</p>
-                  <p style={{ margin: "4px 0 0", fontSize: 24, fontWeight: 700, color: "#111827", lineHeight: 1 }}>
+                  <p style={{ margin: 0, fontSize: 13, color: "var(--color-text-secondary)", fontWeight: 500 }}>{label}</p>
+                  <p style={{ margin: "4px 0 0", fontSize: 24, fontWeight: 700, color: "var(--color-text)", lineHeight: 1 }}>
                     {value}
                   </p>
                 </div>
@@ -462,17 +462,17 @@ export function AdminUsersPage(): JSX.Element {
 
           {/* Table */}
           <div style={{
-            background: "white", borderRadius: 12, border: "1px solid #E5E7EB",
+            background: "var(--c-card-bg)", borderRadius: 12, border: "1px solid var(--color-border)",
             boxShadow: "0 1px 3px rgba(0,0,0,0.06)", overflow: "hidden",
           }}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
-                  <tr style={{ background: "#F8FAFC", borderBottom: "1px solid #E5E7EB" }}>
+                  <tr style={{ background: "var(--color-surface-alt)", borderBottom: "1px solid #E5E7EB" }}>
                     {["Usuario", "Rol", "Permisos", "Estado", "Última actividad", "Acciones"].map((h, i) => (
                       <th key={h} style={{
                         padding: "12px 24px", textAlign: i === 5 ? "right" : "left",
-                        fontSize: 11, fontWeight: 600, color: "#6B7280",
+                        fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)",
                         textTransform: "uppercase", letterSpacing: "0.06em",
                         whiteSpace: "nowrap",
                       }}>
@@ -492,7 +492,7 @@ export function AdminUsersPage(): JSX.Element {
                     </tr>
                   ) : users.length === 0 ? (
                     <tr>
-                      <td colSpan={6} style={{ padding: "40px 24px", textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>
+                      <td colSpan={6} style={{ padding: "40px 24px", textAlign: "center", color: "var(--color-neutral)", fontSize: 13 }}>
                         Sin usuarios registrados.
                       </td>
                     </tr>
@@ -518,8 +518,8 @@ export function AdminUsersPage(): JSX.Element {
                                 {initials(u.display_name)}
                               </div>
                               <div>
-                                <p style={{ margin: 0, fontWeight: 600, color: "#111827" }}>{u.display_name}</p>
-                                <p style={{ margin: 0, fontSize: 12, color: "#6B7280" }}>{u.email}</p>
+                                <p style={{ margin: 0, fontWeight: 600, color: "var(--color-text)" }}>{u.display_name}</p>
+                                <p style={{ margin: 0, fontSize: 12, color: "var(--color-text-secondary)" }}>{u.email}</p>
                               </div>
                             </div>
                           </td>
@@ -539,7 +539,7 @@ export function AdminUsersPage(): JSX.Element {
                           {/* Permisos */}
                           <td style={{ padding: "14px 24px" }}>
                             {u.role === "admin" ? (
-                              <span style={{ fontSize: 12, color: "#9CA3AF", fontStyle: "italic" }}>Acceso total</span>
+                              <span style={{ fontSize: 12, color: "var(--color-neutral)", fontStyle: "italic" }}>Acceso total</span>
                             ) : (
                               <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                                 {(u.permissions ?? []).map((p) => (
@@ -569,7 +569,7 @@ export function AdminUsersPage(): JSX.Element {
                           </td>
 
                           {/* Última actividad */}
-                          <td style={{ padding: "14px 24px", color: "#6B7280", fontSize: 13 }}>—</td>
+                          <td style={{ padding: "14px 24px", color: "var(--color-text-secondary)", fontSize: 13 }}>—</td>
 
                           {/* Acciones */}
                           <td style={{ padding: "14px 24px", textAlign: "right" }}>
@@ -580,7 +580,7 @@ export function AdminUsersPage(): JSX.Element {
                                 onClick={() => setPanel({ mode: "edit", user: u })}
                                 style={{
                                   padding: "6px 7px", border: "none", background: "none",
-                                  cursor: "pointer", color: "#9CA3AF", borderRadius: 6,
+                                  cursor: "pointer", color: "var(--color-neutral)", borderRadius: 6,
                                   transition: "color 0.15s, background 0.15s",
                                 }}
                                 onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#4F46E5"; (e.currentTarget as HTMLButtonElement).style.background = "#EEF2FF"; }}
@@ -595,7 +595,7 @@ export function AdminUsersPage(): JSX.Element {
                                   onClick={() => setDeleteTarget(u)}
                                   style={{
                                     padding: "6px 7px", border: "none", background: "none",
-                                    cursor: "pointer", color: "#9CA3AF", borderRadius: 6,
+                                    cursor: "pointer", color: "var(--color-neutral)", borderRadius: 6,
                                     transition: "color 0.15s, background 0.15s",
                                   }}
                                   onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#DC2626"; (e.currentTarget as HTMLButtonElement).style.background = "#FEE2E2"; }}

@@ -19,11 +19,13 @@ class UrlScrapeJobsRepository:
         target_url: str,
         user_prompt: str,
         directory_id: UUID | None = None,
+        scraping_site_id: UUID | None = None,
     ) -> UrlScrapeJob:
         job = UrlScrapeJob(
             target_url=target_url.strip(),
             user_prompt=user_prompt.strip(),
             directory_id=directory_id,
+            scraping_site_id=scraping_site_id,
             status="pending",
             progress=0,
         )
@@ -58,6 +60,28 @@ class UrlScrapeJobsRepository:
         await self.session.commit()
         await self.session.refresh(job)
         return job
+
+    async def update_metadata(
+        self,
+        job_id: UUID,
+        metadata_update: dict[str, Any],
+        progress: int | None = None,
+    ) -> UrlScrapeJob | None:
+        """Update only the metadata_json and optionally progress."""
+        job = await self.get_by_id(job_id)
+        if job is None:
+            return None
+        job.metadata_json.update(metadata_update)
+        if progress is not None:
+            job.progress = progress
+        job.updated_at = datetime.now(timezone.utc)
+        await self.session.commit()
+        await self.session.refresh(job)
+        return job
+
+    async def get(self, job_id: UUID) -> UrlScrapeJob | None:
+        """Alias for get_by_id for consistency with other repositories."""
+        return await self.get_by_id(job_id)
 
     async def list_by_directory(
         self,

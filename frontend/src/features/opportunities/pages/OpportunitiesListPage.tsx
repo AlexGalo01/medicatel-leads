@@ -154,7 +154,7 @@ export function OpportunitiesListPage(): JSX.Element {
               placeholder="Buscar oportunidades..."
               value={searchText}
               onChange={(e) => handleSearch(e.target.value)}
-              style={{ paddingLeft: 32, paddingRight: 12, paddingTop: 8, paddingBottom: 8, width: 240, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, fontSize: 13, color: "#0F172A", outline: "none" }}
+              style={{ paddingLeft: 32, paddingRight: 12, paddingTop: 8, paddingBottom: 8, width: 240, background: "var(--color-surface-alt)", border: "1px solid #E2E8F0", borderRadius: 8, fontSize: 13, color: "#0F172A", outline: "none" }}
             />
           </div>
 
@@ -164,7 +164,7 @@ export function OpportunitiesListPage(): JSX.Element {
             <select
               value={directoryFilter}
               onChange={(e) => handleDirectoryFilter(e.target.value)}
-              style={{ paddingLeft: 28, paddingRight: 28, paddingTop: 8, paddingBottom: 8, background: "white", border: "1px solid #E2E8F0", borderRadius: 8, fontSize: 13, color: "#374151", outline: "none", appearance: "none", cursor: "pointer" }}
+              style={{ paddingLeft: 28, paddingRight: 28, paddingTop: 8, paddingBottom: 8, background: "var(--c-card-bg)", border: "1px solid #E2E8F0", borderRadius: 8, fontSize: 13, color: "#374151", outline: "none", appearance: "none", cursor: "pointer" }}
             >
               <option value="">Todos los directorios</option>
               {(directoriesQuery.data?.items ?? []).map((d) => (
@@ -185,7 +185,7 @@ export function OpportunitiesListPage(): JSX.Element {
       </div>
 
       {/* ── Table card ── */}
-      <div style={{ background: "white", border: "1px solid #E2E8F0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+      <div style={{ background: "var(--c-card-bg)", border: "1px solid #E2E8F0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
 
         {/* Toolbar */}
         <div style={{ padding: "12px 20px", borderBottom: "1px solid #F1F5F9", background: "#FAFAFA", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -236,7 +236,7 @@ export function OpportunitiesListPage(): JSX.Element {
           <div style={{ overflowX: "auto" }}>
             <table className="opp-table-v2" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
-                <tr style={{ background: "#F8FAFC", borderBottom: "1px solid #E2E8F0" }}>
+                <tr style={{ background: "var(--color-surface-alt)", borderBottom: "1px solid #E2E8F0" }}>
                   {["Nombre", "Directorio", "Paso actual", "Ciudad", "Propietario", "Actualizado", ""].map((h) => (
                     <th key={h} style={{ padding: "10px 20px", textAlign: h === "" ? "right" : "left", fontSize: 11, fontWeight: 600, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
                       {h}
@@ -325,7 +325,7 @@ export function OpportunitiesListPage(): JSX.Element {
                         <Link
                           to={`/opportunities/${row.opportunity_id}`}
                           className="opp-row-action-btn"
-                          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 6, border: "1px solid #E2E8F0", background: "white", color: "#94A3B8", textDecoration: "none", opacity: 0, transition: "opacity 0.15s, color 0.15s" }}
+                          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 6, border: "1px solid #E2E8F0", background: "var(--c-card-bg)", color: "#94A3B8", textDecoration: "none", opacity: 0, transition: "opacity 0.15s, color 0.15s" }}
                           aria-label="Abrir oportunidad"
                         >
                           <ChevronRight size={14} />

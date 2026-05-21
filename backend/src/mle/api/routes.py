@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 import json
+from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +30,10 @@ from mle.api.schemas import (
     DirectorySourceItemResponse,
     DirectorySourcesListResponse,
     DirectorySourceUpdateRequest,
+    ScrapingSiteCreateRequest,
+    ScrapingSiteResponse,
+    ScrapingSiteUpdateRequest,
+    ScrapingSitesListResponse,
     ExaMoreResultsRequest,
     ExaMoreResultsResponse,
     LeadCrmUpdateRequest,
@@ -296,6 +302,7 @@ async def create_search_job(
             metadata_json=job_metadata,
             directory_id=payload.directory_id,
             user_id=current_user.id,
+            scraping_site_ids=payload.scraping_site_ids or [],
         )
 
     if not requires_clarification:
@@ -1250,6 +1257,116 @@ async def export_opportunity_xlsx(
     )
 
 
+@protected_router.get("/directories/{directory_id}/opportunities/export/xlsx")
+async def export_directory_opportunities_xlsx(
+    directory_id: UUID,
+    _u: User = Depends(require_permission("manage_opportunities")),
+) -> FileResponse:
+    """Exportar todas las oportunidades de un directorio a Excel."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from mle.services.export_service import _sanitize_filename, _strip_markdown
+
+    async with async_session_factory() as session:
+        # Fetch opportunities
+        opp_repo = OpportunitiesRepository(session)
+        opps = await opp_repo.list_opportunities(directory_id=directory_id, limit=5000)
+
+        # Fetch directory steps for mapping
+        dirs_repo = DirectoriesRepository(session)
+        steps = await dirs_repo.list_steps(directory_id)
+        steps_map = {s.id: s.name for s in steps}
+
+        # Fetch owners
+        owners = await _load_owners_map(session, opps)
+
+    # Create workbook
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Oportunidades"
+
+    # Header styling
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
+
+    # Column headers
+    headers = ["Nombre", "Especialidad", "Ciudad", "Teléfono", "Email", "Paso Actual", "Fuente", "Estado", "Propietario", "Actualizado"]
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Data rows
+    for row_idx, opp in enumerate(opps, start=2):
+        # Nombre
+        ws.cell(row=row_idx, column=1, value=opp.title or "—")
+        # Especialidad
+        ws.cell(row=row_idx, column=2, value=opp.specialty or "—")
+        # Ciudad
+        ws.cell(row=row_idx, column=3, value=opp.city or "—")
+        # Teléfono
+        phone = next((c.get("value") for c in (opp.contacts or []) if isinstance(c, dict) and c.get("kind") == "phone"), "—")
+        ws.cell(row=row_idx, column=4, value=phone)
+        # Email
+        email = next((c.get("value") for c in (opp.contacts or []) if isinstance(c, dict) and c.get("kind") == "email"), "—")
+        ws.cell(row=row_idx, column=5, value=email)
+        # Paso Actual
+        if opp.terminated_at:
+            paso = "Terminada"
+        else:
+            paso = steps_map.get(opp.current_step_id) if opp.current_step_id else "—"
+        ws.cell(row=row_idx, column=6, value=paso or "—")
+        # Fuente
+        source_label = {
+            "excel": "Excel",
+            "manual": "Manual",
+            "search": "Búsqueda",
+            "url_scrape": "Web",
+        }.get(opp.import_source or "", opp.import_source or "—")
+        ws.cell(row=row_idx, column=7, value=source_label)
+        # Estado
+        if opp.terminated_at:
+            estado = "Ganada" if opp.terminated_outcome == "won" else "Perdida"
+        else:
+            estado = "Activa"
+        ws.cell(row=row_idx, column=8, value=estado)
+        # Propietario
+        owner_name = owners.get(opp.owner_user_id).display_name if opp.owner_user_id and opp.owner_user_id in owners else "—"
+        ws.cell(row=row_idx, column=9, value=owner_name)
+        # Actualizado
+        ws.cell(row=row_idx, column=10, value=opp.updated_at.isoformat() if opp.updated_at else "—")
+
+    # Column widths
+    ws.column_dimensions["A"].width = 30  # Nombre
+    ws.column_dimensions["B"].width = 20  # Especialidad
+    ws.column_dimensions["C"].width = 20  # Ciudad
+    ws.column_dimensions["D"].width = 20  # Teléfono
+    ws.column_dimensions["E"].width = 25  # Email
+    ws.column_dimensions["F"].width = 18  # Paso
+    ws.column_dimensions["G"].width = 12  # Fuente
+    ws.column_dimensions["H"].width = 12  # Estado
+    ws.column_dimensions["I"].width = 18  # Propietario
+    ws.column_dimensions["J"].width = 20  # Actualizado
+
+    # Save file
+    settings = get_settings()
+    export_dir = Path(settings.export_dir)
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"Oportunidades_{directory_id.hex[:8]}.xlsx"
+    filename_safe = _sanitize_filename(filename)
+    export_file = export_dir / filename_safe
+
+    wb.save(export_file)
+
+    return FileResponse(
+        path=str(export_file),
+        filename=filename_safe,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 @protected_router.get("/directories/{directory_id}/entries/{entry_id}/export/xlsx")
 async def export_directory_entry_xlsx(
     directory_id: UUID,
@@ -1466,6 +1583,303 @@ async def create_opportunity_manual(
     return _opportunity_to_response(opp, owner=owner, created=True)
 
 
+def _normalize_col(s: str) -> str:
+    """Normaliza nombre de columna: minúsculas, sin acentos, sin espacios extra."""
+    normalized = unicodedata.normalize("NFKD", s.lower().strip())
+    normalized = normalized.encode("ascii", "ignore").decode("ascii")
+    return normalized
+
+
+def _find_column(headers: list[str], patterns: list[str]) -> int | None:
+    """Encuentra índice de columna por patrones aproximados."""
+    normalized_headers = [_normalize_col(h) for h in headers]
+    for pattern in patterns:
+        norm_pattern = _normalize_col(pattern)
+        for idx, norm_header in enumerate(normalized_headers):
+            if norm_pattern in norm_header or norm_header in norm_pattern:
+                return idx
+    return None
+
+
+_XLSX_STATUS_TO_STAGE: dict[str, str | None] = {
+    "primer contacto": "first_contact",
+    "presentacion": "presentation",
+    "presentación": "presentation",
+    "esperando respuesta": "response",
+    "en proceso": "response",
+    "en espera documentacion": "documents_wait",
+    "en espera documentación": "documents_wait",
+    "en espera de documentacion": "documents_wait",
+    "en espera de documentación": "documents_wait",
+    "reunion agendada": "presentation",
+    "reunión agendada": "presentation",
+    "unido a red": None,
+    "unido": None,
+    "no unido": None,
+    "no unidos": None,
+    "descartado": None,
+}
+
+_XLSX_STAGE_LABELS: dict[str, str] = {
+    "first_contact": "Primer Contacto",
+    "presentation": "Reunión Agendada",
+    "response": "Esperando Respuesta",
+    "documents_wait": "En espera Documentación",
+    "agreement_sign": "Firma de Acuerdo",
+    "medicatel_profile": "Perfil Medicatel",
+}
+
+_XLSX_TERMINATED_STATUS = {"unido a red", "unido", "no unido", "no unidos", "descartado"}
+
+
+def _parse_xlsx_file(contents: bytes) -> list[dict[str, Any]]:
+    """Parsea un archivo Excel y retorna filas mapeadas sin guardar en BD.
+
+    Cada fila tiene: row, title, specialty, city, phone, email, canal,
+    stage, stage_label, terminated_outcome, response_outcome, comments, valid, error.
+    """
+    from io import BytesIO
+    workbook = load_workbook(BytesIO(contents), data_only=True)
+    ws = workbook.active
+
+    # Detectar la fila de headers dinámicamente (puede haber títulos/subtítulos encima)
+    header_row_idx = None
+    headers = []
+    for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=15, values_only=True), start=1):
+        candidate = [str(c) if c is not None else "" for c in row]
+        # Si alguna celda contiene "nombre" normalizado, es la fila de headers
+        if any("nombre" in _normalize_col(c) for c in candidate):
+            headers = candidate
+            header_row_idx = row_idx
+            break
+
+    if not headers:
+        raise ValueError("No se encontró la fila de encabezados en las primeras 15 filas.")
+
+    col_nombre = _find_column(headers, ["nombre", "name", "contacto"])
+    if col_nombre is None:
+        raise ValueError("No se encontró columna 'Nombre' en el Excel.")
+
+    col_especialidad = _find_column(headers, ["especialidad", "specialty"])
+    col_ciudad = _find_column(headers, ["ciudad", "city", "departamento", "location"])
+    col_telefono = _find_column(headers, ["telefono", "phone", "celular", "movil"])
+    col_email = _find_column(headers, ["correo", "email", "mail"])
+    col_canal = _find_column(headers, ["canal", "channel"])
+    col_respondio = _find_column(headers, ["respondio", "respondió", "response", "respuesta"])
+    col_status = _find_column(headers, ["status", "estado", "state"])
+    col_comentarios = _find_column(headers, ["comentarios", "comments", "notas", "notes"])
+
+    def _cell(row: tuple, idx: int | None) -> str:
+        if idx is None or idx >= len(row):
+            return ""
+        val = row[idx]
+        s = str(val).strip() if val is not None else ""
+        return "" if s.lower() == "nan" else s
+
+    parsed: list[dict[str, Any]] = []
+    data_start_row = header_row_idx + 1
+    for row_num, row in enumerate(ws.iter_rows(min_row=data_start_row, values_only=True), start=data_start_row):
+        # Skip fully empty rows
+        if all(c is None or str(c).strip() == "" for c in row):
+            continue
+
+        nombre = _cell(row, col_nombre)
+        if not nombre:
+            parsed.append({"row": row_num, "valid": False, "error": "Nombre vacío.", "title": ""})
+            continue
+
+        especialidad = _cell(row, col_especialidad)
+        ciudad = _cell(row, col_ciudad)
+        telefono = _cell(row, col_telefono)
+        email = _cell(row, col_email)
+        canal = _cell(row, col_canal)
+        respondio = _cell(row, col_respondio)
+        status = _cell(row, col_status)
+        comentarios = _cell(row, col_comentarios)
+
+        # Stage mapping
+        stage = "first_contact"
+        terminated_outcome = None
+        if status:
+            status_lower = status.lower().strip()
+            if status_lower in _XLSX_TERMINATED_STATUS:
+                terminated_outcome = "won" if status_lower in ("unido a red", "unido") else "lost"
+            else:
+                mapped = _XLSX_STATUS_TO_STAGE.get(status_lower)
+                if mapped:
+                    stage = mapped
+
+        # Response outcome
+        response_outcome = None
+        if respondio:
+            r = respondio.lower()
+            if r in ("si", "sí", "yes", "true", "1"):
+                response_outcome = "positive"
+            elif r in ("no", "false", "0"):
+                response_outcome = "negative"
+
+        parsed.append({
+            "row": row_num,
+            "valid": True,
+            "error": None,
+            "title": nombre[:500],
+            "specialty": especialidad[:160],
+            "city": ciudad[:120],
+            "phone": telefono,
+            "email": email,
+            "canal": canal,
+            "stage": stage,
+            "stage_label": _XLSX_STAGE_LABELS.get(stage, stage),
+            "terminated_outcome": terminated_outcome,
+            "response_outcome": response_outcome,
+            "comments": comentarios,
+        })
+
+    return parsed
+
+
+@protected_router.post("/opportunities/import/xlsx/preview")
+async def preview_import_opportunities_xlsx(
+    file: UploadFile = File(...),
+    _current: User = Depends(require_permission("manage_opportunities")),
+):
+    """Parsea un archivo Excel y retorna las filas mapeadas sin guardar."""
+    try:
+        contents = await file.read()
+        rows = _parse_xlsx_file(contents)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"No se pudo leer el archivo Excel: {str(e)}")
+
+    return {"rows": rows, "total": len(rows)}
+
+
+@protected_router.post("/opportunities/import/xlsx")
+async def import_opportunities_xlsx(
+    file: UploadFile = File(...),
+    directory_id: str = Query(...),
+    target_step_id: str | None = Query(default=None),
+    current: User = Depends(require_permission("manage_opportunities")),
+):
+    """Importa oportunidades desde un archivo Excel."""
+    try:
+        dir_id = UUID(directory_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="directory_id no es un UUID válido.")
+
+    # Validate target_step_id if provided
+    resolved_step_id = None
+    if target_step_id:
+        try:
+            resolved_step_id = UUID(target_step_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="target_step_id no es un UUID válido.")
+
+    try:
+        contents = await file.read()
+        rows = _parse_xlsx_file(contents)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"No se pudo leer el archivo Excel: {str(e)}")
+
+    created_count = 0
+    skipped_count = 0
+    errors: list[dict[str, Any]] = []
+
+    async with async_session_factory() as session:
+        now = datetime.now(timezone.utc)
+
+        # Si no se proporciona target_step_id, usar el primer step del directorio
+        if not resolved_step_id:
+            first_step_result = await session.execute(
+                select(DirectoryStep)
+                .where(DirectoryStep.directory_id == dir_id, DirectoryStep.is_terminal == False)  # noqa: E712
+                .order_by(DirectoryStep.display_order)
+                .limit(1)
+            )
+            first_step = first_step_result.scalars().first()
+            if not first_step:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El directorio no tiene pasos no-terminales. Selecciona un estado para importar.",
+                )
+            resolved_step_id = first_step.id
+
+        logging.info(f"[IMPORT] directory_id={dir_id}, target_step_id={target_step_id}, resolved_step_id={resolved_step_id}, total_rows={len(rows)}")
+
+        for parsed_row in rows:
+            if not parsed_row["valid"]:
+                skipped_count += 1
+                errors.append({"row": parsed_row["row"], "reason": parsed_row["error"]})
+                continue
+
+            try:
+                contacts = []
+                if parsed_row.get("email"):
+                    contacts.append({"kind": "email", "value": parsed_row["email"], "is_primary": True})
+                if parsed_row.get("phone"):
+                    contacts.append({"kind": "phone", "value": parsed_row["phone"], "is_primary": not contacts})
+
+                # Si el usuario seleccionó target_step_id, ignorar terminated status del Excel
+                if target_step_id:
+                    terminated_at_val = None
+                    terminated_outcome_val = None
+                else:
+                    terminated_at_val = now if parsed_row["terminated_outcome"] else None
+                    terminated_outcome_val = parsed_row["terminated_outcome"]
+
+                activity_timeline: list[dict[str, Any]] = [{
+                    "at": now.isoformat(),
+                    "stage": parsed_row["stage"],
+                    "author": "sistema",
+                    "text": "Oportunidad importada desde Excel.",
+                }]
+                if parsed_row.get("canal"):
+                    activity_timeline[0]["canal"] = parsed_row["canal"]
+                if parsed_row.get("comments"):
+                    activity_timeline.append({
+                        "at": now.isoformat(),
+                        "stage": parsed_row["stage"],
+                        "author": "sistema",
+                        "text": f"Comentarios importados: {parsed_row['comments']}",
+                    })
+
+                opp = Opportunity(
+                    title=parsed_row["title"],
+                    specialty=parsed_row.get("specialty", ""),
+                    city=parsed_row.get("city", ""),
+                    stage=parsed_row["stage"],
+                    response_outcome=parsed_row["response_outcome"],
+                    terminated_outcome=terminated_outcome_val,
+                    terminated_at=terminated_at_val,
+                    contacts=contacts,
+                    activity_timeline=activity_timeline,
+                    directory_id=dir_id,
+                    current_step_id=resolved_step_id,
+                    owner_user_id=current.id,
+                    import_source="excel",
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(opp)
+                created_count += 1
+            except Exception as e:
+                skipped_count += 1
+                errors.append({"row": parsed_row["row"], "reason": f"Error: {str(e)[:100]}"})
+
+        try:
+            await session.commit()
+            logging.info(f"[IMPORT] Commit successful: created={created_count}, skipped={skipped_count}")
+        except Exception as e:
+            logging.error(f"[IMPORT] Commit failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error al guardar oportunidades: {str(e)}")
+
+    logging.info(f"[IMPORT] Response: created={created_count}, skipped={skipped_count}, errors={len(errors)}")
+    return {"created": created_count, "skipped": skipped_count, "errors": errors}
+
+
 @protected_router.get("/opportunities", response_model=OpportunityListResponse)
 async def list_opportunities(
     stage: str | None = Query(default=None, max_length=64),
@@ -1509,6 +1923,7 @@ async def list_opportunities(
             response_outcome=o.response_outcome,
             terminated_at=o.terminated_at,
             terminated_outcome=o.terminated_outcome,
+            import_source=o.import_source,
             updated_at=o.updated_at,
             owner=_owner_to_snippet(owners.get(o.owner_user_id) if o.owner_user_id else None),
         )
@@ -1983,7 +2398,7 @@ async def admin_delete_user(
         raise HTTPException(status_code=400, detail="No puedes eliminarte a ti mismo.")
     async with async_session_factory() as session:
         repo = UsersRepository(session)
-        deleted = await repo.delete(user_id)
+        deleted = await repo.delete(user_id, deleted_by_user_id=admin.id)
         if not deleted:
             _raise_not_found("Usuario")
     return Response(status_code=204)
@@ -1996,11 +2411,9 @@ async def delete_opportunity(
 ) -> Response:
     async with async_session_factory() as session:
         repo = OpportunitiesRepository(session)
-        opp = await repo.get_by_id(opportunity_id)
-        if opp is None:
+        deleted = await repo.delete(opportunity_id, deleted_by_user_id=_current.id)
+        if not deleted:
             _raise_not_found("Oportunidad")
-        await session.delete(opp)
-        await session.commit()
     return Response(status_code=204)
 
 
@@ -2242,7 +2655,7 @@ async def delete_directory_source(
         source = await repo.get_by_id(source_id)
         if source is None or source.directory_id != directory_id:
             _raise_not_found("Fuente")
-        ok = await repo.delete(source_id)
+        ok = await repo.delete(source_id, deleted_by_user_id=_u.id)
         if not ok:
             _raise_not_found("Fuente")
     return Response(status_code=204)
@@ -2383,7 +2796,7 @@ async def delete_step(
     async with async_session_factory() as session:
         repo = DirectoriesRepository(session)
         try:
-            ok = await repo.delete_step(step_id, move_items_to_step_id=payload.move_items_to_step_id)
+            ok = await repo.delete_step(step_id, move_items_to_step_id=payload.move_items_to_step_id, deleted_by_user_id=_u.id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         if not ok:
@@ -2453,6 +2866,152 @@ async def reopen_opportunity(
             _raise_not_found("Oportunidad")
         owner = await _load_owner_user(session, fresh)
         return _opportunity_to_response(fresh, owner=owner, created=False)
+
+
+# ─── Scraping Sites (Global) ──────────────────────────────────────────────────
+
+
+@protected_router.get("/scraping-sites", response_model=ScrapingSitesListResponse)
+async def list_scraping_sites(_u: User = Depends(require_permission("use_search"))) -> ScrapingSitesListResponse:
+    """List all scraping sites."""
+    from mle.repositories.scraping_sites_repository import ScrapingSitesRepository
+
+    async with async_session_factory() as session:
+        repo = ScrapingSitesRepository(session)
+        sites = await repo.list_all()
+        return ScrapingSitesListResponse(
+            items=[
+                ScrapingSiteResponse(
+                    site_id=str(s.id),
+                    url=s.url,
+                    title=s.title,
+                    notes=s.notes,
+                    scrape_prompt=s.scrape_prompt,
+                    enrich_prompt=s.enrich_prompt,
+                    last_scrape_job_id=str(s.last_scrape_job_id) if s.last_scrape_job_id else None,
+                    created_at=s.created_at,
+                    updated_at=s.updated_at,
+                )
+                for s in sites
+            ]
+        )
+
+
+@protected_router.post("/scraping-sites", response_model=ScrapingSiteResponse, status_code=201)
+async def create_scraping_site(
+    payload: ScrapingSiteCreateRequest,
+    current: User = Depends(require_permission("use_search")),
+) -> ScrapingSiteResponse:
+    """Create a new scraping site."""
+    from mle.repositories.scraping_sites_repository import ScrapingSitesRepository
+
+    async with async_session_factory() as session:
+        repo = ScrapingSitesRepository(session)
+        site = await repo.create(
+            url=payload.url,
+            title=payload.title,
+            notes=payload.notes,
+            scrape_prompt=payload.scrape_prompt,
+            enrich_prompt=payload.enrich_prompt,
+            created_by_user_id=current.id,
+        )
+        return ScrapingSiteResponse(
+            site_id=str(site.id),
+            url=site.url,
+            title=site.title,
+            notes=site.notes,
+            scrape_prompt=site.scrape_prompt,
+            enrich_prompt=site.enrich_prompt,
+            last_scrape_job_id=str(site.last_scrape_job_id) if site.last_scrape_job_id else None,
+            created_at=site.created_at,
+            updated_at=site.updated_at,
+        )
+
+
+@protected_router.patch("/scraping-sites/{site_id}", response_model=ScrapingSiteResponse)
+async def update_scraping_site(
+    site_id: UUID,
+    payload: ScrapingSiteUpdateRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> ScrapingSiteResponse:
+    """Update a scraping site."""
+    from mle.repositories.scraping_sites_repository import ScrapingSitesRepository
+
+    async with async_session_factory() as session:
+        repo = ScrapingSitesRepository(session)
+        site = await repo.update(
+            site_id,
+            title=payload.title,
+            notes=payload.notes,
+            scrape_prompt=payload.scrape_prompt,
+            enrich_prompt=payload.enrich_prompt,
+        )
+        if site is None:
+            _raise_not_found("Sitio de scraping")
+        return ScrapingSiteResponse(
+            site_id=str(site.id),
+            url=site.url,
+            title=site.title,
+            notes=site.notes,
+            scrape_prompt=site.scrape_prompt,
+            enrich_prompt=site.enrich_prompt,
+            last_scrape_job_id=str(site.last_scrape_job_id) if site.last_scrape_job_id else None,
+            created_at=site.created_at,
+            updated_at=site.updated_at,
+        )
+
+
+@protected_router.delete("/scraping-sites/{site_id}", status_code=204)
+async def delete_scraping_site(
+    site_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> None:
+    """Delete a scraping site."""
+    from mle.repositories.scraping_sites_repository import ScrapingSitesRepository
+
+    async with async_session_factory() as session:
+        repo = ScrapingSitesRepository(session)
+        deleted = await repo.delete(site_id)
+        if not deleted:
+            _raise_not_found("Sitio de scraping")
+
+
+@protected_router.post("/scraping-sites/{site_id}/scrape", status_code=202)
+async def scrape_scraping_site(
+    site_id: UUID,
+    _u: User = Depends(require_permission("use_search")),
+) -> dict[str, str]:
+    """Create a URL scrape job from a scraping site and return the job ID."""
+    from mle.repositories.scraping_sites_repository import ScrapingSitesRepository
+    from mle.services.url_scrape_service import run_url_scrape_pipeline
+
+    async with async_session_factory() as session:
+        sites_repo = ScrapingSitesRepository(session)
+        site = await sites_repo.get(site_id)
+        if site is None:
+            _raise_not_found("Sitio de scraping")
+
+        scrape_jobs_repo = UrlScrapeJobsRepository(session)
+        base_prompt = site.scrape_prompt or f"Extraer profesionales y entidades del directorio: {site.title or site.url}"
+        prompt = f"{base_prompt}\n\nNotas sobre la estructura de la página:\n{site.notes}" if site.notes else base_prompt
+        scrape_job = await scrape_jobs_repo.create(
+            target_url=site.url,
+            user_prompt=prompt,
+            directory_id=None,  # Global site, no directory initially
+            scraping_site_id=site_id,
+        )
+
+        await sites_repo.set_last_scrape_job(site_id, scrape_job.id)
+
+        job_id = scrape_job.id
+
+    asyncio.create_task(run_url_scrape_pipeline(job_id))
+
+    return {
+        "scrape_job_id": str(job_id),
+        "status": "created",
+        "site_id": str(site_id),
+    }
 
 
 # Incluir sub-routers al final: si no, FastAPI copia public/protected *vacíos* y /api/v1/* devuelve 404.

@@ -30,11 +30,11 @@ const labelTextStyle: React.CSSProperties = {
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "10px 14px",
-  border: "1px solid #E8E8EC",
+  border: "1px solid var(--color-border)",
   borderRadius: 8,
   fontSize: 14,
   color: "#0A0A0A",
-  background: "white",
+  background: "var(--c-card-bg)",
   outline: "none",
   transition: "border-color 0.15s",
   boxSizing: "border-box",
@@ -96,8 +96,8 @@ export function DirectoryCreatePage(): JSX.Element {
             fontWeight: 500,
             padding: "6px 10px",
             borderRadius: 8,
-            border: "1px solid #E8E8EC",
-            background: "white",
+            border: "1px solid var(--color-border)",
+            background: "var(--c-card-bg)",
             transition: "color 0.15s, border-color 0.15s",
           }}
         >
@@ -223,8 +223,8 @@ export function DirectoryCreatePage(): JSX.Element {
                 textDecoration: "none",
                 padding: "8px 16px",
                 borderRadius: 8,
-                border: "1px solid #E8E8EC",
-                background: "white",
+                border: "1px solid var(--color-border)",
+                background: "var(--c-card-bg)",
               }}
             >
               Cancelar

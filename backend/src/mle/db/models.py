@@ -26,6 +26,10 @@ class SearchJob(SQLModel, table=True):
         default_factory=list, sa_column=Column(JSON, nullable=False)
     )
     notes: str | None = Field(default=None, max_length=500)
+    scraping_site_ids: list[UUID] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False),
+        description="Optional list of scraping sites to include in this search"
+    )
     directory_id: UUID | None = Field(default=None, index=True, foreign_key="directories.id")
     user_id: UUID | None = Field(default=None, index=True, foreign_key="users.id")
     metadata_json: dict[str, Any] = Field(
@@ -53,6 +57,10 @@ class User(SQLModel, table=True):
         default_factory=list, sa_column=Column(JSON, nullable=False, server_default="[]")
     )
     is_active: bool = Field(default=True, index=True)
+    deleted_by: UUID | None = Field(default=None, index=True, foreign_key="users.id")
+    deleted_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     created_at: datetime = Field(
         default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
     )
@@ -90,6 +98,10 @@ class DirectoryStep(SQLModel, table=True):
     display_order: int = Field(index=True, default=0)
     is_terminal: bool = Field(default=False)
     is_won: bool = Field(default=False)
+    deleted_by: UUID | None = Field(default=None, index=True, foreign_key="users.id")
+    deleted_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     created_at: datetime = Field(
         default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
     )
@@ -127,6 +139,7 @@ class Opportunity(SQLModel, table=True):
         default_factory=dict, sa_column=Column(JSON, nullable=False)
     )
     contact_type: str | None = Field(default=None, max_length=32)
+    import_source: str | None = Field(default=None, max_length=32)  # 'search', 'url_scrape', 'excel', 'manual'
     owner_user_id: UUID | None = Field(default=None, index=True, foreign_key="users.id")
     deleted_by: UUID | None = Field(default=None, index=True, foreign_key="users.id")
     deleted_at: datetime | None = Field(
@@ -241,6 +254,10 @@ class DirectorySource(SQLModel, table=True):
     created_by_user_id: UUID | None = Field(
         default=None, index=True, foreign_key="users.id"
     )
+    deleted_by: UUID | None = Field(default=None, index=True, foreign_key="users.id")
+    deleted_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     created_at: datetime = Field(
         default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
     )
@@ -257,6 +274,7 @@ class UrlScrapeJob(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     target_url: str = Field(max_length=2000)
     user_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    scraping_site_id: UUID | None = Field(default=None, index=True, foreign_key="scraping_sites.id")
     directory_id: UUID | None = Field(
         default=None,
         sa_column=Column(
@@ -266,10 +284,43 @@ class UrlScrapeJob(SQLModel, table=True):
             index=True,
         ),
     )
+    auto_push: bool = Field(
+        default=False,
+        description="If True, automatically push results to directory when complete",
+    )
     status: str = Field(default="pending", index=True, max_length=32)
     progress: int = Field(default=0, ge=0, le=100)
     metadata_json: dict[str, Any] = Field(
         default_factory=dict, sa_column=Column(JSON, nullable=False)
+    )
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+
+
+class ScrapingSite(SQLModel, table=True):
+    """Global scraping source for iterative prompt refinement.
+
+    Independent of directories — used for testing/evaluating scraping strategies
+    for different URL structures before integrating into the primary search.
+    """
+
+    __tablename__ = "scraping_sites"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    url: str = Field(max_length=2000, index=True)
+    title: str = Field(default="", max_length=500)
+    notes: str | None = Field(default=None, description="Observaciones sobre estructura de la página")
+    scrape_prompt: str | None = Field(default=None, description="Prompt personalizado para el scraper (nivel 1: listado)")
+    enrich_prompt: str | None = Field(default=None, description="Prompt para enriquecimiento nivel 2 (perfil individual)")
+    last_scrape_job_id: UUID | None = Field(
+        default=None, index=True, foreign_key="url_scrape_jobs.id"
+    )
+    created_by_user_id: UUID | None = Field(
+        default=None, index=True, foreign_key="users.id"
     )
     created_at: datetime = Field(
         default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False)

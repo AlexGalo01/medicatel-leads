@@ -529,8 +529,8 @@ export function OpportunityDetailPage(): JSX.Element {
     width: 26,
     height: 26,
     borderRadius: 6,
-    border: "1px solid #E8E8EC",
-    background: "white",
+    border: "1px solid var(--color-border)",
+    background: "var(--c-card-bg)",
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
@@ -542,8 +542,8 @@ export function OpportunityDetailPage(): JSX.Element {
   const iconActionBtnStyle: React.CSSProperties = {
     padding: "3px 6px",
     borderRadius: 4,
-    border: "1px solid #E8E8EC",
-    background: "white",
+    border: "1px solid var(--color-border)",
+    background: "var(--c-card-bg)",
     cursor: "pointer",
     color: "#6B7280",
     display: "flex",
@@ -592,7 +592,7 @@ export function OpportunityDetailPage(): JSX.Element {
               </button>
               <button
                 type="button"
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", fontSize: 13, fontWeight: 600, borderRadius: 8, border: "1px solid #FECACA", background: "white", color: "#EF4444", cursor: "pointer" }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", fontSize: 13, fontWeight: 600, borderRadius: 8, border: "1px solid #FECACA", background: "var(--c-card-bg)", color: "#EF4444", cursor: "pointer" }}
                 onClick={() => setConfirmInvalid(true)}
               >
                 Marcar como Perdida
@@ -652,7 +652,7 @@ export function OpportunityDetailPage(): JSX.Element {
                       target="_blank"
                       rel="noopener noreferrer"
                       title="Ver fuente original"
-                      style={{ width: 30, height: 30, borderRadius: 7, border: "1px solid #E8E8EC", background: "white", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B6B6B", flexShrink: 0 }}
+                      style={{ width: 30, height: 30, borderRadius: 7, border: "1px solid var(--color-border)", background: "var(--c-card-bg)", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B6B6B", flexShrink: 0 }}
                     >
                       <ExternalLink size={14} />
                     </a>
@@ -753,7 +753,7 @@ export function OpportunityDetailPage(): JSX.Element {
                             type="button"
                             title="Copiar"
                             onClick={() => navigator.clipboard.writeText(c.value)}
-                            style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid #E8E8EC", background: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280" }}
+                            style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid var(--color-border)", background: "var(--c-card-bg)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B7280" }}
                           >
                             <Copy size={12} />
                           </button>
@@ -762,7 +762,7 @@ export function OpportunityDetailPage(): JSX.Element {
                           type="button"
                           onClick={() => removeContact(idx)}
                           title="Eliminar"
-                          style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid #FECACA", background: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#EF4444" }}
+                          style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid #FECACA", background: "var(--c-card-bg)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#EF4444" }}
                         >
                           <Trash2 size={12} />
                         </button>
@@ -839,7 +839,7 @@ export function OpportunityDetailPage(): JSX.Element {
                             readOnly={aboutFieldWaitingIa}
                             aria-busy={aboutFieldWaitingIa}
                             placeholder={aboutFieldWaitingIa ? "Generando resumen…" : "Añade descripción profesional..."}
-                            style={{ width: "100%", border: "1px solid #E8E8EC", borderRadius: 6, padding: "6px 8px", fontSize: 13, lineHeight: "1.6", color: "#374151", background: "white", resize: "none", boxSizing: "border-box", fontFamily: "inherit", outline: "none", overflow: "hidden" }}
+                            style={{ width: "100%", border: "1px solid var(--color-border)", borderRadius: 6, padding: "6px 8px", fontSize: 13, lineHeight: "1.6", color: "#374151", background: "var(--c-card-bg)", resize: "none", boxSizing: "border-box", fontFamily: "inherit", outline: "none", overflow: "hidden" }}
                           />
                           <div style={{ display: "flex", gap: 6, marginTop: 6, justifyContent: "flex-end" }}>
                             <button type="button" style={iconActionBtnStyle} onClick={() => setEditingSection(null)} title="Cancelar"><X size={13} /></button>
@@ -873,7 +873,7 @@ export function OpportunityDetailPage(): JSX.Element {
                           )}
                           {experiencesDraft.map((exp, i) =>
                             editingExpIndex === i ? (
-                              <div key={i} style={{ padding: "8px 10px", border: "1px solid #E8E8EC", borderRadius: 8, marginBottom: 6, background: "#FAFAFA" }}>
+                              <div key={i} style={{ padding: "8px 10px", border: "1px solid var(--color-border)", borderRadius: 8, marginBottom: 6, background: "#FAFAFA" }}>
                                 <input
                                   autoFocus
                                   value={exp.role}
@@ -1109,7 +1109,7 @@ export function OpportunityDetailPage(): JSX.Element {
                                   fontSize: 13,
                                   border: "1px solid #E2E8F0",
                                   borderRadius: 8,
-                                  background: "white",
+                                  background: "var(--c-card-bg)",
                                   color: stepDraft ? "#374151" : "#9CA3AF",
                                   cursor: "pointer",
                                   outline: "none",
@@ -1177,7 +1177,7 @@ export function OpportunityDetailPage(): JSX.Element {
                           onChange={(e) => setStageNote(e.target.value)}
                           placeholder="Nota (opcional)"
                           maxLength={500}
-                          style={{ width: "100%", padding: "6px 10px", border: "1px solid #E8E8EC", borderRadius: 7, fontSize: 13, color: "#374151", background: "white", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+                          style={{ width: "100%", padding: "6px 10px", border: "1px solid var(--color-border)", borderRadius: 7, fontSize: 13, color: "#374151", background: "var(--c-card-bg)", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
                         />
                         <Button type="button" className="cta-button" style={{ fontSize: 13 }} disabled={patchMut.isPending} onClick={onSaveStage}>
                           {patchMut.isPending ? <Loader2 className="spin" size={13} aria-hidden /> : null} Guardar fase
@@ -1234,7 +1234,7 @@ export function OpportunityDetailPage(): JSX.Element {
                   rows={2}
                   maxLength={4000}
                   placeholder="Registra una interacción o seguimiento…"
-                  style={{ width: "100%", border: "1px solid #E8E8EC", borderRadius: 8, padding: "8px 10px", fontSize: 13, color: "#374151", background: "white", resize: "vertical", boxSizing: "border-box", outline: "none", fontFamily: "inherit" }}
+                  style={{ width: "100%", border: "1px solid var(--color-border)", borderRadius: 8, padding: "8px 10px", fontSize: 13, color: "#374151", background: "var(--c-card-bg)", resize: "vertical", boxSizing: "border-box", outline: "none", fontFamily: "inherit" }}
                 />
                 <Button
                   type="button"

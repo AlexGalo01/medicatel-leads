@@ -12,6 +12,10 @@ import type {
   DirectorySourceUpdateRequest,
   DirectorySourcesListResponse,
   DirectoryStep,
+  ScrapingSite,
+  ScrapingSiteCreateRequest,
+  ScrapingSiteUpdateRequest,
+  ScrapingSitesListResponse,
   DirectoryStepCreate,
   DirectoryStepUpdate,
   DirectoryUpdateRequest,
@@ -410,6 +414,24 @@ export async function downloadOpportunityXlsx(opportunityId: string, name?: stri
     filename = `${cleanName}.xlsx`;
   }
   anchor.download = filename;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export async function downloadDirectoryOpportunitiesXlsx(directoryId: string): Promise<void> {
+  const response = await apiFetch(`${buildApiUrl(`/directories/${directoryId}/opportunities/export/xlsx`)}`);
+  if (!response.ok) {
+    const bodyText = await response.text();
+    throw new Error(`Error al descargar Excel (${response.status}): ${bodyText || "Sin detalle"}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = `Oportunidades_${directoryId.slice(0, 8)}.xlsx`;
   anchor.rel = "noopener";
   document.body.appendChild(anchor);
   anchor.click();
@@ -924,6 +946,20 @@ export async function cancelUrlScrapeJob(jobId: string): Promise<{ status: strin
   return parseJsonResponse<{ status: string; job_id: string }>(response);
 }
 
+export async function enrichUrlScrapeProfiles(
+  jobId: string,
+  entryIndices?: number[],
+): Promise<{ status: string }> {
+  const response = await apiFetch(
+    `${buildApiUrl(`/url-scrape-jobs/${jobId}/enrich-profiles`)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ entry_indices: entryIndices || null }),
+    },
+  );
+  return parseJsonResponse<{ status: string }>(response);
+}
+
 // ---- Directory Sources (referencias guardadas) ----
 
 export async function listDirectorySources(
@@ -990,4 +1026,126 @@ export async function scrapeDirectorySource(
     status: string;
     source_id: string;
   }>(response);
+}
+
+export async function previewImportOpportunitiesXlsx(
+  file: File,
+): Promise<{
+  rows: Array<{
+    row: number;
+    valid: boolean;
+    error?: string;
+    title?: string;
+    specialty?: string;
+    city?: string;
+    phone?: string;
+    email?: string;
+    canal?: string;
+    stage?: string;
+    stage_label?: string;
+    terminated_outcome?: string;
+    response_outcome?: string;
+    comments?: string;
+  }>;
+  total: number;
+}> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await apiFetch(`${buildApiUrl("/opportunities/import/xlsx/preview")}`, {
+    method: "POST",
+    body: formData,
+  });
+
+  return parseJsonResponse<{
+    rows: Array<{
+      row: number;
+      valid: boolean;
+      error?: string;
+      title?: string;
+      specialty?: string;
+      city?: string;
+      phone?: string;
+      email?: string;
+      canal?: string;
+      stage?: string;
+      stage_label?: string;
+      terminated_outcome?: string;
+      response_outcome?: string;
+      comments?: string;
+    }>;
+    total: number;
+  }>(response);
+}
+
+export async function importOpportunitiesXlsx(
+  file: File,
+  directoryId: string,
+  targetStepId?: string,
+): Promise<{ created: number; skipped: number; errors: Array<{ row: number; reason: string }> }> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const params = new URLSearchParams();
+  params.set("directory_id", directoryId);
+  if (targetStepId) {
+    params.set("target_step_id", targetStepId);
+  }
+
+  const response = await apiFetch(
+    `${buildApiUrl("/opportunities/import/xlsx")}?${params}`,
+    {
+      method: "POST",
+      body: formData,
+    },
+  );
+
+  return parseJsonResponse<{
+    created: number;
+    skipped: number;
+    errors: Array<{ row: number; reason: string }>;
+  }>(response);
+}
+
+// ===== Scraping Sites (Global) =====
+
+export async function listScrapingSites(): Promise<ScrapingSitesListResponse> {
+  const response = await apiFetch(buildApiUrl("/scraping-sites"));
+  return parseJsonResponse<ScrapingSitesListResponse>(response);
+}
+
+export async function createScrapingSite(
+  payload: ScrapingSiteCreateRequest,
+): Promise<ScrapingSite> {
+  const response = await apiFetch(buildApiUrl("/scraping-sites"), {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return parseJsonResponse<ScrapingSite>(response);
+}
+
+export async function updateScrapingSite(
+  siteId: string,
+  payload: ScrapingSiteUpdateRequest,
+): Promise<ScrapingSite> {
+  const response = await apiFetch(buildApiUrl(`/scraping-sites/${siteId}`), {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return parseJsonResponse<ScrapingSite>(response);
+}
+
+export async function deleteScrapingSite(siteId: string): Promise<void> {
+  await apiFetch(buildApiUrl(`/scraping-sites/${siteId}`), {
+    method: "DELETE",
+  });
+}
+
+export async function scrapeScrapingSite(
+  siteId: string,
+): Promise<{ scrape_job_id: string; status: string; site_id: string }> {
+  const response = await apiFetch(buildApiUrl(`/scraping-sites/${siteId}/scrape`), {
+    method: "POST",
+  });
+  return parseJsonResponse<{ scrape_job_id: string; status: string; site_id: string }>(response);
 }

@@ -29,9 +29,14 @@ import {
   List,
   Globe,
   LayoutGrid,
+  Upload,
+  Loader2,
+  Download,
 } from "lucide-react";
 
 import {
+  downloadOpportunityXlsx,
+  downloadDirectoryOpportunitiesXlsx,
   getDirectory,
   listOpportunities,
   listSearchJobs,
@@ -48,6 +53,7 @@ import type {
 } from "../../../types";
 import { UrlScraperModal } from "../components/UrlScraperModal";
 import { SourceReferenceList } from "../components/SourceReferenceList";
+import { ImportExcelModal } from "../components/ImportExcelModal";
 
 type ActiveTab = "board" | "searches" | "scrapes";
 
@@ -112,6 +118,15 @@ function getSourceBadge(
   opp: OpportunityListItem,
   jobInfo?: { query: string; exa_category: string | null | undefined }
 ): { label: string; bg: string; color: string; border: string } | null {
+  // Mostrar badge basado en import_source primero
+  if (opp.import_source === "excel") {
+    return { label: "Excel", bg: "#DBEAFE", color: "#0369A1", border: "#7DD3FC" };
+  }
+  if (opp.import_source === "manual") {
+    return { label: "Manual", bg: "#F3E8FF", color: "#7E22CE", border: "#E9D5FF" };
+  }
+
+  // Fallback a lógica existente
   if (jobInfo) {
     if (jobInfo.exa_category === "linkedin_profile") {
       return { label: "LI", bg: "#EDE9FE", color: "#7C3AED", border: "#C4B5FD" };
@@ -175,9 +190,13 @@ function SearchRow({ job, directoryName }: { job: SearchJobListItem; directoryNa
 function OpportunityCard({
   opp,
   jobInfo,
+  isSelected,
+  onToggleSelect,
 }: {
   opp: OpportunityListItem;
   jobInfo?: { query: string; exa_category: string | null | undefined };
+  isSelected: boolean;
+  onToggleSelect: (id: string) => void;
 }): JSX.Element {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `opp-${opp.opportunity_id}`,
@@ -194,13 +213,21 @@ function OpportunityCard({
   const firstChar = (opp.title || "?")[0].toUpperCase();
 
   return (
-    <div ref={setNodeRef} style={dragStyle} className="dboard-card">
+    <div ref={setNodeRef} style={dragStyle} className={`dboard-card${isSelected ? " dboard-card--selected" : ""}`}>
       <div className="dboard-card-top">
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => onToggleSelect(opp.opportunity_id)}
+          onClick={(e) => e.stopPropagation()}
+          style={{ cursor: "pointer", accentColor: "#6366F1", width: 16, height: 16 }}
+        />
         {sourceBadge ? (
           <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 4, background: sourceBadge.bg, color: sourceBadge.color, border: `1px solid ${sourceBadge.border}` }}>
             {sourceBadge.label}
           </span>
         ) : <span />}
+        <div style={{ flex: 1 }} />
         {!opp.terminated_at && (
           <div className="dboard-card-handle" {...attributes} {...listeners} aria-label="Arrastrar">
             <GripVertical size={13} />
@@ -233,14 +260,23 @@ function StepColumn({
   stepIndex,
   items,
   jobMap,
+  selectedIds,
+  onToggleSelect,
+  onSelectAll,
+  onDeselectAll,
 }: {
   step: DirectoryStep;
   stepIndex: number;
   items: OpportunityListItem[];
   jobMap: Map<string, { query: string; exa_category: string | null | undefined }>;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onSelectAll: (items: OpportunityListItem[]) => void;
+  onDeselectAll: (items: OpportunityListItem[]) => void;
 }): JSX.Element {
   const { setNodeRef, isOver } = useDroppable({ id: `step-${step.id}` });
   const dotColor = stepDotColor(step, stepIndex);
+  const allSelected = items.length > 0 && items.every((i) => selectedIds.has(i.opportunity_id));
 
   let colClass = "dboard-column";
   if (isOver) colClass += " dboard-column--over";
@@ -254,7 +290,18 @@ function StepColumn({
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, display: "inline-block", flexShrink: 0 }} />
           {step.name}
         </h3>
-        <span className="dboard-count">{items.length}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {items.length > 0 && (
+            <button
+              type="button"
+              onClick={() => (allSelected ? onDeselectAll(items) : onSelectAll(items))}
+              style={{ fontSize: 11, color: "#6366F1", background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontWeight: 500 }}
+            >
+              {allSelected ? "Desmarcar" : "Selec. todo"}
+            </button>
+          )}
+          <span className="dboard-count">{items.length}</span>
+        </div>
       </div>
       <ul className="dboard-column-list">
         {items.map((opp) => (
@@ -262,10 +309,188 @@ function StepColumn({
             <OpportunityCard
               opp={opp}
               jobInfo={opp.job_id ? jobMap.get(opp.job_id) : undefined}
+              isSelected={selectedIds.has(opp.opportunity_id)}
+              onToggleSelect={onToggleSelect}
             />
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// ─── OpportunitiesTable ───────────────────────────────────────────────────────
+
+function OpportunitiesTable({
+  items,
+  stepsOrdered,
+  jobMap,
+  directoryId,
+  onExport,
+}: {
+  items: OpportunityListItem[];
+  stepsOrdered: DirectoryStep[];
+  jobMap: Map<string, { query: string; exa_category: string | null | undefined }>;
+  directoryId: string;
+  onExport: () => void;
+}): JSX.Element {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Table header with export button */}
+      <div style={{
+        padding: "12px 20px",
+        background: "var(--c-card-bg)",
+        borderBottom: "1px solid #E8E8EC",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 13, color: "#6B6B6B", fontWeight: 500 }}>
+          {items.length} {items.length === 1 ? "oportunidad" : "oportunidades"}
+        </span>
+        <button
+          onClick={onExport}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 12,
+            fontWeight: 600,
+            padding: "6px 12px",
+            borderRadius: 6,
+            background: "#0EA5E9",
+            color: "white",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          <Download size={13} /> Exportar Excel
+        </button>
+      </div>
+
+      {/* Table wrapper */}
+      <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
+        {items.length === 0 ? (
+          <div style={{ padding: "48px 24px", textAlign: "center", color: "#9B9BA8", fontSize: 14 }}>
+            No hay oportunidades en este directorio.
+          </div>
+        ) : (
+          <table className="dboard-opp-table">
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Ciudad</th>
+                <th>Paso Actual</th>
+                <th>Fuente</th>
+                <th>Estado</th>
+                <th>Propietario</th>
+                <th>Actualizado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((opp) => {
+                const step = stepsOrdered.find((s) => s.id === opp.current_step_id);
+                const sourceBadge = getSourceBadge(opp, opp.job_id ? jobMap.get(opp.job_id) : undefined);
+                const av = getAvatarStyle(opp.title || opp.opportunity_id);
+                const firstChar = (opp.title || "?")[0].toUpperCase();
+
+                return (
+                  <tr key={opp.opportunity_id}>
+                    <td>
+                      <Link
+                        to={`/opportunities/${opp.opportunity_id}`}
+                        style={{
+                          color: "#0A0A0A",
+                          textDecoration: "none",
+                          fontWeight: 500,
+                          fontSize: 13,
+                        }}
+                      >
+                        {opp.title || "Sin título"}
+                      </Link>
+                    </td>
+                    <td style={{ fontSize: 13, color: "#6B6B6B" }}>
+                      {opp.city || "—"}
+                    </td>
+                    <td style={{ fontSize: 13, color: "#6B6B6B" }}>
+                      {step?.name || (opp.terminated_at ? "Terminada" : "—")}
+                    </td>
+                    <td>
+                      {sourceBadge ? (
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            fontSize: 11,
+                            fontWeight: 600,
+                            padding: "2px 7px",
+                            borderRadius: 4,
+                            background: sourceBadge.bg,
+                            color: sourceBadge.color,
+                            border: `1px solid ${sourceBadge.border}`,
+                          }}
+                        >
+                          {sourceBadge.label}
+                        </span>
+                      ) : (
+                        <span style={{ color: "#9B9BA8", fontSize: 12 }}>—</span>
+                      )}
+                    </td>
+                    <td>
+                      {opp.terminated_at ? (
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            fontSize: 11,
+                            fontWeight: 500,
+                            padding: "2px 8px",
+                            borderRadius: 20,
+                            background: opp.terminated_outcome === "won" ? "#F0FDF4" : "#FEF2F2",
+                            color: opp.terminated_outcome === "won" ? "#059669" : "#EF4444",
+                            border: `1px solid ${opp.terminated_outcome === "won" ? "#BBF7D0" : "#FECACA"}`,
+                          }}
+                        >
+                          {opp.terminated_outcome === "won" ? "Ganada" : opp.terminated_outcome === "lost" ? "Perdida" : "Sin respuesta"}
+                        </span>
+                      ) : (
+                        <span style={{ color: "#9B9BA8", fontSize: 12 }}>Activa</span>
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div
+                          style={{
+                            width: 24,
+                            height: 24,
+                            borderRadius: "50%",
+                            background: av.bg,
+                            color: av.color,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 10,
+                            fontWeight: 700,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {firstChar}
+                        </div>
+                        <span style={{ fontSize: 12, color: "#0A0A0A" }}>
+                          {opp.owner?.display_name || "—"}
+                        </span>
+                      </div>
+                    </td>
+                    <td style={{ fontSize: 12, color: "#6B6B6B", whiteSpace: "nowrap" }}>
+                      {formatRecent(opp.updated_at)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
@@ -287,6 +512,12 @@ export function DirectoryBoardPage(): JSX.Element {
   const [scraperOpen, setScraperOpen] = useState(false);
   const [scraperUrl, setScraperUrl] = useState<string | undefined>(undefined);
   const [scraperTitle, setScraperTitle] = useState<string | undefined>(undefined);
+  const [importExcelOpen, setImportExcelOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [moveSelectedOpen, setMoveSelectedOpen] = useState(false);
+  const [moveSelectedStep, setMoveSelectedStep] = useState<string>("");
+  const [moveSelectedLoading, setMoveSelectedLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<"kanban" | "table">("kanban");
 
   useEffect(() => {
     const state = location.state as
@@ -300,6 +531,33 @@ export function DirectoryBoardPage(): JSX.Element {
     }
   }, [location.state]);
 
+  // Handlers para selección
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllInStep = (items: OpportunityListItem[]) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      items.forEach((i) => next.add(i.opportunity_id));
+      return next;
+    });
+  };
+
+  const deselectAllInStep = (items: OpportunityListItem[]) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      items.forEach((i) => next.delete(i.opportunity_id));
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
   const directoryQuery = useQuery({
     queryKey: ["directory", directoryId],
     queryFn: () => getDirectory(directoryId),
@@ -308,7 +566,12 @@ export function DirectoryBoardPage(): JSX.Element {
 
   const itemsQuery = useQuery({
     queryKey: ["directory-items", directoryId],
-    queryFn: () => listOpportunities({ directory_id: directoryId }),
+    queryFn: async () => {
+      console.log("[DirectoryBoard] Fetching opportunities for directory:", directoryId);
+      const result = await listOpportunities({ directory_id: directoryId, limit: 500 });
+      console.log("[DirectoryBoard] Fetched opportunities:", result.items.length);
+      return result;
+    },
     enabled: Boolean(directoryId),
     refetchInterval: 5000,
   });
@@ -366,6 +629,40 @@ export function DirectoryBoardPage(): JSX.Element {
       void queryClient.invalidateQueries({ queryKey: ["directory-items", directoryId] });
     },
   });
+
+  // Exportar seleccionados
+  const handleExportSelected = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+
+    for (const id of ids) {
+      try {
+        await downloadOpportunityXlsx(id, `opportunity-${id}.xlsx`);
+      } catch {
+        console.error(`Error exporting ${id}`);
+      }
+    }
+    clearSelection();
+  };
+
+  // Mover seleccionados
+  const handleMoveSelected = async () => {
+    if (!moveSelectedStep || selectedIds.size === 0) return;
+    setMoveSelectedLoading(true);
+    try {
+      const ids = Array.from(selectedIds);
+      for (const id of ids) {
+        await moveMutation.mutateAsync({ opportunityId: id, targetStepId: moveSelectedStep });
+      }
+    } catch (e) {
+      console.error("Error moving opportunities:", e);
+    } finally {
+      setMoveSelectedLoading(false);
+      clearSelection();
+      setMoveSelectedOpen(false);
+      setMoveSelectedStep("");
+    }
+  };
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -457,9 +754,9 @@ export function DirectoryBoardPage(): JSX.Element {
             <div
               key={colIdx}
               style={{
-                minWidth: 230, width: 230, background: "#F8FAFC",
+                minWidth: 230, width: 230, background: "var(--color-surface-alt)",
                 borderRadius: 12, padding: "12px 10px",
-                border: "1px solid #E5E7EB", flexShrink: 0,
+                border: "1px solid var(--color-border)", flexShrink: 0,
               }}
             >
               {/* Column header */}
@@ -472,8 +769,8 @@ export function DirectoryBoardPage(): JSX.Element {
                 <div
                   key={cardIdx}
                   style={{
-                    background: "white", borderRadius: 8, padding: "10px 12px",
-                    marginBottom: 8, border: "1px solid #E5E7EB",
+                    background: "var(--c-card-bg)", borderRadius: 8, padding: "10px 12px",
+                    marginBottom: 8, border: "1px solid var(--color-border)",
                     boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
                   }}
                 >
@@ -519,6 +816,14 @@ export function DirectoryBoardPage(): JSX.Element {
             <Link to={`/lists/${directory.id}/edit`} className="dboard-btn">
               <Pencil size={13} /> Editar
             </Link>
+            <button
+              type="button"
+              className="dboard-btn"
+              onClick={() => setImportExcelOpen(true)}
+              title="Importar oportunidades desde Excel"
+            >
+              <Upload size={13} /> Importar Excel
+            </button>
             <button
               type="button"
               className="dboard-btn"
@@ -576,39 +881,83 @@ export function DirectoryBoardPage(): JSX.Element {
         {/* BOARD */}
         {activeTab === "board" && (
           <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-            {/* Board search bar */}
+            {/* Board search bar + view toggle */}
             <div style={{
-              padding: "10px 20px", background: "white",
+              padding: "10px 20px", background: "var(--c-card-bg)",
               borderBottom: "1px solid #E8E8EC", flexShrink: 0,
-              display: "flex", alignItems: "center", gap: 10,
+              display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between",
             }}>
-              <div style={{ position: "relative", width: 280 }}>
-                <Search size={14} aria-hidden style={{
-                  position: "absolute", left: 12, top: "50%",
-                  transform: "translateY(-50%)", color: "#9B9BA8", pointerEvents: "none",
-                }} />
-                <input
-                  type="text"
-                  placeholder="Buscar oportunidades…"
-                  value={boardSearch}
-                  onChange={(e) => setBoardSearch(e.target.value)}
-                  style={{
-                    width: "100%", height: 34, paddingLeft: 34, paddingRight: 12,
-                    borderRadius: 8, border: "1px solid #D3D3D3",
-                    background: "#F8FAFC", fontSize: 13, outline: "none",
-                    fontFamily: "inherit", color: "#0A0A0A", boxSizing: "border-box",
-                  }}
-                />
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
+                <div style={{ position: "relative", width: 280 }}>
+                  <Search size={14} aria-hidden style={{
+                    position: "absolute", left: 12, top: "50%",
+                    transform: "translateY(-50%)", color: "#9B9BA8", pointerEvents: "none",
+                  }} />
+                  <input
+                    type="text"
+                    placeholder="Buscar oportunidades…"
+                    value={boardSearch}
+                    onChange={(e) => setBoardSearch(e.target.value)}
+                    style={{
+                      width: "100%", height: 34, paddingLeft: 34, paddingRight: 12,
+                      borderRadius: 8, border: "1px solid #D3D3D3",
+                      background: "var(--color-surface-alt)", fontSize: 13, outline: "none",
+                      fontFamily: "inherit", color: "#0A0A0A", boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                {boardSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setBoardSearch("")}
+                    style={{ fontSize: 12, color: "#9B9BA8", background: "none", border: "none", cursor: "pointer", padding: "4px 8px", borderRadius: 6, fontFamily: "inherit" }}
+                  >
+                    Limpiar
+                  </button>
+                )}
               </div>
-              {boardSearch && (
+
+              {/* View toggle buttons */}
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                 <button
                   type="button"
-                  onClick={() => setBoardSearch("")}
-                  style={{ fontSize: 12, color: "#9B9BA8", background: "none", border: "none", cursor: "pointer", padding: "4px 8px", borderRadius: 6, fontFamily: "inherit" }}
+                  onClick={() => setViewMode("kanban")}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    background: viewMode === "kanban" ? "#4F46E5" : "#E2E8F0",
+                    color: viewMode === "kanban" ? "white" : "#64748B",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
                 >
-                  Limpiar
+                  <LayoutGrid size={13} /> Kanban
                 </button>
-              )}
+                <button
+                  type="button"
+                  onClick={() => setViewMode("table")}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    background: viewMode === "table" ? "#4F46E5" : "#E2E8F0",
+                    color: viewMode === "table" ? "white" : "#64748B",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
+                >
+                  <List size={13} /> Tabla
+                </button>
+              </div>
             </div>
 
             {moveError && (
@@ -616,62 +965,78 @@ export function DirectoryBoardPage(): JSX.Element {
                 {moveError}
               </div>
             )}
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <div className="dboard-kanban">
-                <div className="dboard-kanban-inner">
-                  {stepsOrdered.map((step, idx) => (
-                    <StepColumn
-                      key={step.id}
-                      step={step}
-                      stepIndex={idx}
-                      items={filteredItemsByStep.get(step.id) ?? []}
-                      jobMap={jobMap}
-                    />
-                  ))}
 
-                  {terminatedItems.length > 0 && (
-                    <div className="dboard-column">
-                      <div className="dboard-column-head">
-                        <h3>
-                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#9CA3AF", display: "inline-block", flexShrink: 0 }} />
-                          Terminadas
-                        </h3>
-                        <span className="dboard-count">{terminatedItems.length}</span>
-                      </div>
-                      <ul className="dboard-column-list">
-                        {terminatedItems.map((opp) => (
-                          <li key={opp.opportunity_id}>
-                            <div className={`dboard-card dboard-card--${opp.terminated_outcome}`}>
-                              <Link to={`/opportunities/${opp.opportunity_id}`} className="dboard-card-link">
-                                <strong className="dboard-card-title">{opp.title || "Sin título"}</strong>
-                              </Link>
-                              <div className="dboard-card-footer" style={{ marginTop: 8 }}>
-                                <span style={{
-                                  fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 20,
-                                  background: opp.terminated_outcome === "won" ? "#F0FDF4" : "#FEF2F2",
-                                  color: opp.terminated_outcome === "won" ? "#059669" : "#EF4444",
-                                  border: `1px solid ${opp.terminated_outcome === "won" ? "#BBF7D0" : "#FECACA"}`,
-                                }}>
-                                  {opp.terminated_outcome === "won" ? "Ganada" : opp.terminated_outcome === "lost" ? "Perdida" : "Sin respuesta"}
-                                </span>
-                                <button
-                                  type="button"
-                                  style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#6B6B6B", background: "none", border: "none", cursor: "pointer", padding: "2px 4px" }}
-                                  onClick={() => reopenMutation.mutate(opp.opportunity_id)}
-                                  disabled={reopenMutation.isPending}
-                                >
-                                  <RotateCcw size={11} /> Reabrir
-                                </button>
+            {/* Kanban or Table view */}
+            {viewMode === "kanban" ? (
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <div className="dboard-kanban">
+                  <div className="dboard-kanban-inner">
+                    {stepsOrdered.map((step, idx) => (
+                      <StepColumn
+                        key={step.id}
+                        step={step}
+                        stepIndex={idx}
+                        items={filteredItemsByStep.get(step.id) ?? []}
+                        jobMap={jobMap}
+                        selectedIds={selectedIds}
+                        onToggleSelect={toggleSelect}
+                        onSelectAll={selectAllInStep}
+                        onDeselectAll={deselectAllInStep}
+                      />
+                    ))}
+
+                    {terminatedItems.length > 0 && (
+                      <div className="dboard-column">
+                        <div className="dboard-column-head">
+                          <h3>
+                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#9CA3AF", display: "inline-block", flexShrink: 0 }} />
+                            Terminadas
+                          </h3>
+                          <span className="dboard-count">{terminatedItems.length}</span>
+                        </div>
+                        <ul className="dboard-column-list">
+                          {terminatedItems.map((opp) => (
+                            <li key={opp.opportunity_id}>
+                              <div className={`dboard-card dboard-card--${opp.terminated_outcome}`}>
+                                <Link to={`/opportunities/${opp.opportunity_id}`} className="dboard-card-link">
+                                  <strong className="dboard-card-title">{opp.title || "Sin título"}</strong>
+                                </Link>
+                                <div className="dboard-card-footer" style={{ marginTop: 8 }}>
+                                  <span style={{
+                                    fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 20,
+                                    background: opp.terminated_outcome === "won" ? "#F0FDF4" : "#FEF2F2",
+                                    color: opp.terminated_outcome === "won" ? "#059669" : "#EF4444",
+                                    border: `1px solid ${opp.terminated_outcome === "won" ? "#BBF7D0" : "#FECACA"}`,
+                                  }}>
+                                    {opp.terminated_outcome === "won" ? "Ganada" : opp.terminated_outcome === "lost" ? "Perdida" : "Sin respuesta"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#6B6B6B", background: "none", border: "none", cursor: "pointer", padding: "2px 4px" }}
+                                    onClick={() => reopenMutation.mutate(opp.opportunity_id)}
+                                    disabled={reopenMutation.isPending}
+                                  >
+                                    <RotateCcw size={11} /> Reabrir
+                                  </button>
+                                </div>
                               </div>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </DndContext>
+              </DndContext>
+            ) : (
+              <OpportunitiesTable
+                items={itemsQuery.data?.items ?? []}
+                stepsOrdered={stepsOrdered}
+                jobMap={jobMap}
+                directoryId={directoryId}
+                onExport={() => downloadDirectoryOpportunitiesXlsx(directoryId)}
+              />
+            )}
           </div>
         )}
 
@@ -764,6 +1129,101 @@ export function DirectoryBoardPage(): JSX.Element {
           void queryClient.invalidateQueries({ queryKey: ["directory-sources", directoryId] });
         }}
       />
+
+      {/* Excel Import Modal */}
+      <ImportExcelModal
+        isOpen={importExcelOpen}
+        directoryId={directoryId}
+        steps={stepsOrdered}
+        onClose={() => { setImportExcelOpen(false); void queryClient.invalidateQueries({ queryKey: ["directory-items", directoryId] }); }}
+      />
+
+      {/* Action Bar para seleccionados */}
+      {selectedIds.size > 0 && (
+        <div style={{
+          position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+          background: "#1E293B", color: "white", borderRadius: 12, padding: "10px 20px",
+          display: "flex", alignItems: "center", gap: 12,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.25)", zIndex: 100,
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{selectedIds.size} seleccionados</span>
+          <button
+            onClick={handleExportSelected}
+            style={{ fontSize: 12, color: "white", background: "#0EA5E9", border: "none", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontWeight: 500 }}
+          >
+            Exportar Excel
+          </button>
+          <button
+            onClick={() => setMoveSelectedOpen(true)}
+            style={{ fontSize: 12, color: "white", background: "#8B5CF6", border: "none", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontWeight: 500 }}
+          >
+            Mover a...
+          </button>
+          <button
+            onClick={clearSelection}
+            style={{ fontSize: 12, color: "#94A3B8", background: "none", border: "none", cursor: "pointer", padding: "6px 8px" }}
+          >
+            ✕ Cancelar
+          </button>
+        </div>
+      )}
+
+      {/* Modal para mover seleccionados */}
+      {moveSelectedOpen && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 1000, padding: 20,
+        }}>
+          <div style={{
+            background: "var(--c-card-bg)", borderRadius: 12, padding: "20px", maxWidth: 400, width: "100%",
+            boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1)",
+          }}>
+            <h2 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 700, color: "#0F172A" }}>
+              Mover {selectedIds.size} {selectedIds.size === 1 ? "oportunidad" : "oportunidades"}
+            </h2>
+            <select
+              value={moveSelectedStep}
+              onChange={(e) => setMoveSelectedStep(e.target.value)}
+              style={{
+                width: "100%", padding: "8px 12px", border: "1px solid #E2E8F0", borderRadius: 8,
+                fontSize: 13, color: "#374151", background: "var(--c-card-bg)", outline: "none", marginBottom: 16,
+              }}
+            >
+              <option value="">Selecciona un estado...</option>
+              {stepsOrdered.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => { setMoveSelectedOpen(false); setMoveSelectedStep(""); }}
+                style={{
+                  padding: "8px 16px", background: "transparent", color: "#64748B", border: "1px solid #E2E8F0",
+                  borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleMoveSelected}
+                disabled={!moveSelectedStep || moveSelectedLoading}
+                style={{
+                  padding: "8px 16px", background: !moveSelectedStep || moveSelectedLoading ? "#CBD5E1" : "#8B5CF6",
+                  color: "white", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600,
+                  cursor: !moveSelectedStep || moveSelectedLoading ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                {moveSelectedLoading && <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />}
+                Mover
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

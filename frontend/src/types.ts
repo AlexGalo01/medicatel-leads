@@ -69,6 +69,7 @@ export interface SearchJobCreateRequest {
   search_focus?: SearchFocus;
   exa_category?: ExaCategoryChoice;
   exa_criteria?: string;
+  scraping_site_ids?: string[];
 }
 
 export interface SearchJobCreateResponse {
@@ -247,6 +248,7 @@ export interface OpportunityListItem {
   response_outcome: OpportunityResponseOutcome | null;
   terminated_at: string | null;
   terminated_outcome: OpportunityTerminatedOutcome | null;
+  import_source: string | null; // 'search', 'url_scrape', 'excel', 'manual'
   updated_at: string;
   owner: OpportunityOwnerSnippet | null;
 }
@@ -458,6 +460,7 @@ export interface UrlScrapeResultPreviewItem {
   city: string;
   phones: string[];
   emails: string[];
+  whatsapp: string[];
 }
 
 export interface UrlScrapeJobStatusResponse {
@@ -473,6 +476,7 @@ export interface UrlScrapeJobStatusResponse {
   updated_at: string;
   pages_scraped?: number;
   pages_total?: number;
+  stage?: string | null;
 }
 
 export interface UrlScrapeJobListItem {
@@ -520,4 +524,37 @@ export interface DirectorySourceItem {
 
 export interface DirectorySourcesListResponse {
   items: DirectorySourceItem[];
+}
+
+// ---- Scraping Sites (Global) ----
+
+export interface ScrapingSite {
+  site_id: string;
+  url: string;
+  title: string;
+  notes: string | null;
+  scrape_prompt: string | null;
+  enrich_prompt: string | null;
+  last_scrape_job_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScrapingSiteCreateRequest {
+  url: string;
+  title?: string;
+  notes?: string | null;
+  scrape_prompt?: string | null;
+  enrich_prompt?: string | null;
+}
+
+export interface ScrapingSiteUpdateRequest {
+  title?: string;
+  notes?: string | null;
+  scrape_prompt?: string | null;
+  enrich_prompt?: string | null;
+}
+
+export interface ScrapingSitesListResponse {
+  items: ScrapingSite[];
 }

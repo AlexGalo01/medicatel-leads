@@ -52,16 +52,35 @@ _EXTRACT_SYSTEM_PROMPT = """\
 Eres un extractor de datos estructurados. Se te dará texto visible de una página web de directorio.
 
 Extrae TODAS las entidades (médicos, clínicas, hospitales, empresas, etc.) que encuentres.
+El texto puede incluir una sección "ENLACES DE PERFILES ENCONTRADOS" con líneas tipo:
+  LINK: Nombre → https://ejemplo.com/perfil/nombre
+Usa estas URLs como primary_url de cada entidad correspondiente.
+
 Devuelve un objeto JSON con la clave "entries" que contiene un array de objetos con estas claves exactas:
 - display_title: nombre completo
-- primary_url: URL del perfil si aparece en el texto, sino ""
+- primary_url: URL del perfil (tómala de la sección LINK si coincide con el nombre, sino "")
 - snippet: especialidad, descripción, horario — máx 500 chars, sino null
 - entity_type: tipo inferido (médico, clínica, hospital, empresa, etc.)
 - city: ciudad si aparece, sino ""
 - country: país si aparece, sino ""
 - phones: lista de teléfonos encontrados (puede ser vacía)
 - emails: lista de emails encontrados (puede ser vacía)
+- whatsapp: lista de números de WhatsApp encontrados (busca "WhatsApp", "wa.me", números cerca de "asistente") (puede ser vacía)
 - social_urls: lista de URLs de redes sociales (puede ser vacía)
+
+Devuelve SOLO el JSON, sin markdown, sin explicación.
+No inventes datos que no estén en el texto.
+"""
+
+_ENRICH_SYSTEM_PROMPT = """\
+Visitas una página de perfil individual. Extrae la información de contacto.
+Devuelve un objeto JSON con estas claves exactas:
+- phones: lista de teléfonos (incluyendo extensiones, ej: "+504 2216-6400 ext. 3230")
+- emails: lista de emails encontrados
+- whatsapp: lista de números de WhatsApp (busca "WhatsApp", "wa.me/", números cerca de "asistente")
+- assistant_name: nombre del asistente si aparece, sino ""
+- schedule: horario de atención si aparece, sino ""
+- location: ubicación exacta (piso, área, clínica) si aparece, sino ""
 
 Devuelve SOLO el JSON, sin markdown, sin explicación.
 No inventes datos que no estén en el texto.
@@ -90,6 +109,7 @@ class _ScrapedEntry(BaseModel):
     country: str = ""
     phones: list[str] = PydanticField(default_factory=list)
     emails: list[str] = PydanticField(default_factory=list)
+    whatsapp: list[str] = PydanticField(default_factory=list)
     social_urls: list[str] = PydanticField(default_factory=list)
 
 
@@ -232,6 +252,31 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
             # — DOM text —
             text = await page.inner_text("body")
 
+            # — Extract profile/detail links from the page (for LLM to map to entries) —
+            profile_links: list[str] = await page.evaluate("""() => {
+                const links = [];
+                const seen = new Set();
+                // Cards, products, list items that link to profiles
+                const anchors = document.querySelectorAll(
+                    '.product a, .entry a, .card a, article a, ' +
+                    '[class*="doctor"] a, [class*="medic"] a, [class*="profile"] a, ' +
+                    'a.doctor-badge, a.doctor-card, ' +
+                    '.woocommerce a.woocommerce-LoopProduct-link, ' +
+                    'a[href*="/dr/"], a[href*="/doctor"], a[href*="/perfil"], a[href*="/profile"], a[href*="/medicos/"]'
+                );
+                for (const a of anchors) {
+                    const href = a.href || '';
+                    const text = (a.innerText || '').trim().slice(0, 100);
+                    if (href && !seen.has(href) && text.length > 2
+                        && !href.includes('add-to-cart') && !href.includes('?add_to_wishlist')
+                        && !href.includes('#') && !href.endsWith('.jpg') && !href.endsWith('.png')) {
+                        seen.add(href);
+                        links.push('LINK: ' + text + ' → ' + href);
+                    }
+                }
+                return links.slice(0, 200);
+            }""")
+
             # — Combinar todas las fuentes —
             parts: list[str] = []
             if captured_api_chunks:
@@ -243,6 +288,11 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
                 parts.append(
                     "=== JSON EMBEBIDO EN PÁGINA ===\n"
                     + "\n---\n".join(embedded_json[:3])
+                )
+            if profile_links:
+                parts.append(
+                    "=== ENLACES DE PERFILES ENCONTRADOS ===\n"
+                    + "\n".join(profile_links)
                 )
             parts.append("=== TEXTO DOM ===\n" + text)
             combined = "\n\n".join(parts)
@@ -640,6 +690,7 @@ def _build_preview(entries: list[_ScrapedEntry]) -> list[dict[str, Any]]:
             "city": entry.city[:120],
             "phones": entry.phones,
             "emails": entry.emails,
+            "whatsapp": entry.whatsapp,
         })
     return preview
 
@@ -654,6 +705,7 @@ async def run_url_scrape_pipeline(job_id: UUID) -> None:
             logger.error("UrlScrapeJob not found job_id=%s", job_id)
             return
         await repo.update_status(job_id, "running", 10)
+
 
     brave_client = BraveSearchClient(api_key=settings.brave_search_api_key)
 
@@ -807,3 +859,222 @@ async def run_url_scrape_pipeline(job_id: UUID) -> None:
         )
 
     logger.info("URL scrape done job_id=%s pages=%d entries=%d", job_id, total_pages, len(all_entries))
+
+
+async def _enrich_single_profile(url: str, enrich_prompt: str | None, settings: Any) -> dict[str, Any]:
+    """Visita una URL de perfil y extrae contactos usando LLM."""
+    try:
+        text = await asyncio.wait_for(_scrape_url_text(url), timeout=30)
+        if not text or len(text.strip()) < 50:
+            return {}
+    except Exception as exc:
+        logger.warning("Enrich scrape failed for %s: %s", url, exc)
+        return {}
+
+    system_prompt = enrich_prompt or _ENRICH_SYSTEM_PROMPT
+    user_message = f"{system_prompt}\n\nTexto de la página:\n---\n{text[:20_000]}\n---"
+
+    import httpx
+
+    # Gemini primero
+    if settings.google_api_key:
+        try:
+            body = {"contents": [{"parts": [{"text": user_message}]}]}
+            gemini_url = (
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{settings.google_model}:generateContent?key={settings.google_api_key}"
+            )
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                r = await client.post(gemini_url, json=body, headers={"Content-Type": "application/json"})
+                r.raise_for_status()
+                raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            return _parse_enrich_json(raw)
+        except Exception as exc:
+            logger.warning("Gemini enrich failed for %s: %s", url, exc)
+
+    # Fallback: OpenAI
+    if settings.openai_api_key:
+        try:
+            oai = AsyncOpenAI(api_key=settings.openai_api_key)
+            response = await oai.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Texto de la página:\n---\n{text[:20_000]}\n---"},
+                ],
+                temperature=0,
+                response_format={"type": "json_object"},
+            )
+            raw = response.choices[0].message.content or ""
+            return _parse_enrich_json(raw)
+        except Exception as exc:
+            logger.warning("OpenAI enrich failed for %s: %s", url, exc)
+
+    return {}
+
+
+def _parse_enrich_json(raw: str) -> dict[str, Any]:
+    """Parsea la respuesta JSON del LLM de enriquecimiento."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1]
+        if "```" in text:
+            text = text[: text.rfind("```")]
+    try:
+        parsed = json.loads(text)
+        if not isinstance(parsed, dict):
+            return {}
+        return {
+            "phones": parsed.get("phones", []) or [],
+            "emails": parsed.get("emails", []) or [],
+            "whatsapp": parsed.get("whatsapp", []) or [],
+            "assistant_name": parsed.get("assistant_name", ""),
+            "schedule": parsed.get("schedule", ""),
+            "location": parsed.get("location", ""),
+        }
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("Enrich parse error: %s | raw=%s", exc, raw[:300])
+        return {}
+
+
+async def run_url_scrape_enrichment(job_id: UUID, entry_indices: list[int] | None = None) -> None:
+    """Enriquecimiento de nivel 2: visita URLs de perfil para extraer contactos directos."""
+    settings = get_settings()
+
+    async with async_session_factory() as session:
+        repo = UrlScrapeJobsRepository(session)
+        job = await repo.get_by_id(job_id)
+        if job is None:
+            logger.error("Enrich: job not found job_id=%s", job_id)
+            return
+
+    meta = job.metadata_json if isinstance(job.metadata_json, dict) else {}
+    preview_raw = meta.get("scrape_results_preview") or []
+    if not isinstance(preview_raw, list) or not preview_raw:
+        logger.warning("Enrich: no preview items job_id=%s", job_id)
+        async with async_session_factory() as session:
+            repo = UrlScrapeJobsRepository(session)
+            await repo.update_status(job_id, "completed", 100)
+        return
+
+    # Buscar enrich_prompt del ScrapingSite vinculado (por dominio)
+    enrich_prompt: str | None = None
+    try:
+        from mle.repositories.scraping_sites_repository import ScrapingSitesRepository
+        target_domain = urlparse(job.target_url).netloc.lower()
+        async with async_session_factory() as session:
+            sites_repo = ScrapingSitesRepository(session)
+            all_sites = await sites_repo.list_all()
+            for site in all_sites:
+                if target_domain in urlparse(site.url).netloc.lower():
+                    enrich_prompt = site.enrich_prompt
+                    break
+    except Exception as exc:
+        logger.warning("Could not load enrich_prompt: %s", exc)
+
+    # Filtrar items a enriquecer
+    indices_set = set(entry_indices) if entry_indices else None
+    items_to_enrich = []
+    for item in preview_raw:
+        if not isinstance(item, dict):
+            continue
+        idx = item.get("index", 0)
+        url = item.get("url", "").strip()
+        if not url:
+            continue
+        if indices_set is not None and idx not in indices_set:
+            continue
+        items_to_enrich.append((idx, item))
+
+    if not items_to_enrich:
+        logger.info("Enrich: no items with URLs to enrich job_id=%s", job_id)
+        async with async_session_factory() as session:
+            repo = UrlScrapeJobsRepository(session)
+            await repo.update_status(job_id, "completed", 100)
+        return
+
+    logger.info("Enrich: starting %d profiles job_id=%s", len(items_to_enrich), job_id)
+
+    # Construir mapa idx→preview_item para actualizar in-place
+    preview_map: dict[int, dict] = {item.get("index", 0): item for item in preview_raw if isinstance(item, dict)}
+
+    enriched_count = 0
+    total = len(items_to_enrich)
+
+    for i, (idx, item) in enumerate(items_to_enrich):
+        # Check cancellation
+        async with async_session_factory() as session:
+            repo = UrlScrapeJobsRepository(session)
+            current = await repo.get_by_id(job_id)
+            if current and current.status == "cancelled":
+                logger.info("Enrich cancelled job_id=%s", job_id)
+                return
+
+        profile_url = item.get("url", "")
+        # Resolve relative URLs
+        if profile_url.startswith("/"):
+            parsed = urlparse(job.target_url)
+            profile_url = f"{parsed.scheme}://{parsed.netloc}{profile_url}"
+
+        logger.info("Enrich %d/%d: visiting %s", i + 1, total, profile_url)
+
+        contacts = await _enrich_single_profile(profile_url, enrich_prompt, settings)
+
+        if contacts:
+            # Merge contacts into preview item
+            existing = preview_map.get(idx, item)
+            if contacts.get("phones"):
+                existing_phones = existing.get("phones", [])
+                existing["phones"] = list(dict.fromkeys(existing_phones + contacts["phones"]))
+            if contacts.get("emails"):
+                existing_emails = existing.get("emails", [])
+                existing["emails"] = list(dict.fromkeys(existing_emails + contacts["emails"]))
+            if contacts.get("whatsapp"):
+                existing_wa = existing.get("whatsapp", [])
+                existing["whatsapp"] = list(dict.fromkeys(existing_wa + contacts["whatsapp"]))
+            # Enrich snippet with extra data
+            extra_parts = []
+            if contacts.get("assistant_name"):
+                extra_parts.append(f"Asistente: {contacts['assistant_name']}")
+            if contacts.get("schedule"):
+                extra_parts.append(f"Horario: {contacts['schedule']}")
+            if contacts.get("location"):
+                extra_parts.append(f"Ubicación: {contacts['location']}")
+            if extra_parts:
+                current_snippet = existing.get("snippet") or ""
+                existing["snippet"] = (current_snippet + " | " + " | ".join(extra_parts))[:2000]
+            enriched_count += 1
+
+        # Update progress
+        progress = int((i + 1) / total * 100)
+        updated_preview = list(preview_map.values())
+        async with async_session_factory() as session:
+            repo = UrlScrapeJobsRepository(session)
+            await repo.update_status(
+                job_id, "running", progress,
+                metadata_json={
+                    **meta,
+                    "scrape_results_preview": updated_preview,
+                    "entries_count": len(updated_preview),
+                    "stage": "enriching",
+                },
+            )
+
+        # Rate limit: wait between requests
+        await asyncio.sleep(1.5)
+
+    # Final save
+    final_preview = list(preview_map.values())
+    async with async_session_factory() as session:
+        repo = UrlScrapeJobsRepository(session)
+        await repo.update_status(
+            job_id, "completed", 100,
+            metadata_json={
+                **meta,
+                "scrape_results_preview": final_preview,
+                "entries_count": len(final_preview),
+                "stage": "done",
+            },
+        )
+
+    logger.info("Enrich done job_id=%s enriched=%d/%d", job_id, enriched_count, total)

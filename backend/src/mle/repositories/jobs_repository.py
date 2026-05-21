@@ -25,6 +25,7 @@ class JobsRepository:
         metadata_json: dict[str, Any] | None = None,
         directory_id: UUID | None = None,
         user_id: UUID | None = None,
+        scraping_site_ids: list[UUID] | None = None,
     ) -> SearchJob:
         normalized_query = expanded_query_text.strip()
         meta = dict(metadata_json or {})
@@ -37,6 +38,7 @@ class JobsRepository:
             progress=0,
             requested_contact_channels=requested_contact_channels,
             notes=notes,
+            scraping_site_ids=scraping_site_ids or [],
             directory_id=directory_id,
             user_id=user_id,
             metadata_json=meta,

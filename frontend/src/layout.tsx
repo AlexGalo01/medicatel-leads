@@ -1,4 +1,4 @@
-import { Bot, FolderKanban, LogOut, Search, UserCog } from "lucide-react";
+import { Bot, FolderKanban, LogOut, Search, UserCog, Globe } from "lucide-react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { useAuth } from "./auth/AuthContext";
@@ -62,6 +62,12 @@ export function AppLayout(): JSX.Element {
             <FolderKanban size={16} aria-hidden />
             <span>Listas</span>
           </NavLink>
+          {canSearch && (
+            <NavLink to="/sources" className={({ isActive }) => `app-sidebar-link ui-nav-link${isActive ? " is-active" : ""}`}>
+              <Globe size={16} aria-hidden />
+              <span>Fuentes</span>
+            </NavLink>
+          )}
           {isAdmin && (
             <NavLink
               to="/admin/users"
@@ -86,18 +92,20 @@ export function AppLayout(): JSX.Element {
               <div className="app-sidebar-user-role">{roleLabel}</div>
             </div>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            className="workspace-tool-btn app-sidebar-logout"
-            onClick={() => {
-              logout();
-              navigate("/login", { replace: true });
-            }}
-          >
-            <LogOut size={14} aria-hidden />
-            Cerrar sesión
-          </Button>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <Button
+              type="button"
+              variant="outline"
+              className="workspace-tool-btn app-sidebar-logout"
+              onClick={() => {
+                logout();
+                navigate("/login", { replace: true });
+              }}
+            >
+              <LogOut size={14} aria-hidden />
+              Cerrar sesión
+            </Button>
+          </div>
         </div>
       </aside>
 

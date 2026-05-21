@@ -144,7 +144,7 @@ class DirectoriesRepository:
     async def list_steps(self, directory_id: UUID) -> list[DirectoryStep]:
         result = await self.session.execute(
             select(DirectoryStep)
-            .where(DirectoryStep.directory_id == directory_id)
+            .where(DirectoryStep.directory_id == directory_id, DirectoryStep.deleted_at.is_(None))
             .order_by(DirectoryStep.display_order.asc())
         )
         return list(result.scalars().all())
@@ -210,15 +210,20 @@ class DirectoriesRepository:
         step_id: UUID,
         *,
         move_items_to_step_id: UUID | None = None,
+        deleted_by_user_id: UUID | None = None,
     ) -> bool:
         step = await self.session.get(DirectoryStep, step_id)
-        if step is None:
+        if step is None or step.deleted_at is not None:
             return False
-        # Contar items en el step.
+        # Contar items no-borrados en el step.
         items_count_result = await self.session.execute(
-            select(func.count(Opportunity.id)).where(Opportunity.current_step_id == step_id)
+            select(func.count(Opportunity.id)).where(
+                Opportunity.current_step_id == step_id,
+                Opportunity.deleted_at.is_(None),
+            )
         )
         items_count = int(items_count_result.scalar() or 0)
+        now = datetime.now(timezone.utc)
         if items_count > 0:
             if move_items_to_step_id is None:
                 raise ValueError(
@@ -233,8 +238,12 @@ class DirectoriesRepository:
             )
             for opp in items_result.scalars().all():
                 opp.current_step_id = move_items_to_step_id
-                opp.updated_at = datetime.now(timezone.utc)
-        await self.session.delete(step)
+                opp.updated_at = now
+        # Soft delete del step
+        step.deleted_at = now
+        if deleted_by_user_id:
+            step.deleted_by = deleted_by_user_id
+        self.session.add(step)
         await self.session.commit()
         return True
 

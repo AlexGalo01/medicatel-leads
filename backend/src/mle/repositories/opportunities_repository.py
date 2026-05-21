@@ -127,7 +127,7 @@ class OpportunitiesRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[Opportunity]:
-        q = select(Opportunity).order_by(Opportunity.updated_at.desc())
+        q = select(Opportunity).where(Opportunity.deleted_at.is_(None)).order_by(Opportunity.updated_at.desc())
         if stage and stage in OPPORTUNITY_STAGE_KEYS:
             q = q.where(Opportunity.stage == stage)
         if job_id is not None:
@@ -278,6 +278,7 @@ class OpportunitiesRepository:
             current_step_id=current_step_id,
             activity_timeline=[initial_note],
             owner_user_id=owner_user_id,
+            import_source="manual",
             created_at=now,
             updated_at=now,
         )
@@ -399,3 +400,15 @@ class OpportunitiesRepository:
         await self.session.commit()
         await self.session.refresh(opp)
         return opp
+
+    async def delete(self, opportunity_id: UUID, *, deleted_by_user_id: UUID) -> bool:
+        opp = await self.get_by_id(opportunity_id)
+        if opp is None or opp.deleted_at is not None:
+            return False
+        now = datetime.now(timezone.utc)
+        opp.deleted_by = deleted_by_user_id
+        opp.deleted_at = now
+        opp.updated_at = now
+        self.session.add(opp)
+        await self.session.commit()
+        return True

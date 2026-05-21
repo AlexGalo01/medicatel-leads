@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, ExternalLink, Globe, Loader, MapPin, Phone, Mail, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, Globe, Loader, MapPin, Phone, Mail, MessageCircle, Sparkles } from "lucide-react";
 
 const SCRAPE_TABLE_COLS = "48px minmax(150px,1fr) minmax(150px,1fr) 100px";
 
@@ -335,6 +335,9 @@ export function UrlScrapeJobPage(): JSX.Element {
           borderRadius: 12, overflow: "hidden",
           boxShadow: "var(--c-card-shadow)",
           margin: "16px 0",
+          maxHeight: "calc(100vh - 280px)",
+          display: "flex",
+          flexDirection: "column",
         }}>
           {/* Table header */}
           <div style={{
@@ -357,21 +360,22 @@ export function UrlScrapeJobPage(): JSX.Element {
             <div>Contacto</div>
           </div>
 
-          {/* Data rows */}
-          {paginatedItems.map((item) => {
-            const avStyle = getAvatarStyle(item.title || "?");
-            let hostname = "";
-            try { hostname = new URL(item.url).hostname.replace(/^www\./, ""); } catch { hostname = item.url; }
+          {/* Data rows — scrollable container */}
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {paginatedItems.map((item) => {
+              const avStyle = getAvatarStyle(item.title || "?");
+              let hostname = "";
+              try { hostname = new URL(item.url).hostname.replace(/^www\./, ""); } catch { hostname = item.url; }
 
-            return (
-              <div
-                key={item.index}
-                className="ws-result-row"
-                style={{
-                  display: "grid", gridTemplateColumns: SCRAPE_TABLE_COLS, gap: "0 12px",
-                  padding: "12px 16px", borderBottom: "1px solid var(--color-border)",
-                  alignItems: "center",
-                }}
+              return (
+                <div
+                  key={item.index}
+                  className="ws-result-row"
+                  style={{
+                    display: "grid", gridTemplateColumns: SCRAPE_TABLE_COLS, gap: "0 12px",
+                    padding: "12px 16px", borderBottom: "1px solid var(--color-border)",
+                    alignItems: "center",
+                  }}
               >
                 {/* Checkbox */}
                 <div style={{ display: "flex", justifyContent: "center" }}>
@@ -447,14 +451,17 @@ export function UrlScrapeJobPage(): JSX.Element {
 
                 {/* Contact icons */}
                 <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  {item.emails[0] && (
+                  {item.whatsapp?.[0] && (
                     <a
-                      href={`mailto:${item.emails[0]}`}
+                      href={`https://wa.me/${item.whatsapp[0].replace(/\D/g, "")}`}
+                      target="_blank"
+                      rel="noreferrer"
                       className="ws-contact-btn"
-                      title={item.emails[0]}
+                      title={`WhatsApp: ${item.whatsapp[0]}`}
                       onClick={(e) => e.stopPropagation()}
+                      style={{ color: "#25D366" }}
                     >
-                      <Mail size={12} />
+                      <MessageCircle size={12} />
                     </a>
                   )}
                   {item.phones[0] && (
@@ -467,7 +474,17 @@ export function UrlScrapeJobPage(): JSX.Element {
                       <Phone size={12} />
                     </a>
                   )}
-                  {!item.emails[0] && !item.phones[0] && item.url && (
+                  {item.emails[0] && (
+                    <a
+                      href={`mailto:${item.emails[0]}`}
+                      className="ws-contact-btn"
+                      title={item.emails[0]}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Mail size={12} />
+                    </a>
+                  )}
+                  {!item.whatsapp?.[0] && !item.emails[0] && !item.phones[0] && item.url && (
                     <button
                       className="ws-contact-btn"
                       title="Enriquecer perfil"
@@ -479,13 +496,14 @@ export function UrlScrapeJobPage(): JSX.Element {
                         : <Sparkles size={12} />}
                     </button>
                   )}
-                  {!item.emails[0] && !item.phones[0] && !item.url && (
+                  {!item.whatsapp?.[0] && !item.emails[0] && !item.phones[0] && !item.url && (
                     <span style={{ fontSize: 11, color: "var(--color-neutral)" }}>—</span>
                   )}
                 </div>
               </div>
             );
           })}
+          </div>
 
           {/* Pagination inside table */}
           {totalPages > 1 && (

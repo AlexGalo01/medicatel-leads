@@ -24,22 +24,22 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import type { JobSearchLocationState } from "./JobSearchWorkspacePage";
 
-import { clarifySearchJob, createSearchJob, createUrlScrapeJob, listDirectories } from "../api";
+import { clarifySearchJob, createSearchJob, createUrlScrapeJob, listDirectories, listScrapingSites } from "../api";
 import { Button } from "../components/ui/button";
 import { SearchableSelect } from "../components/ui/SearchableSelect";
 import { defaultChannelsForFocus } from "../data/searchSuggestions";
 import type { ExaCategoryChoice, SearchFocus } from "../types";
 
-const PRIMARY = "#0000FF";
-const BORDER = "#D3D3D3";
-const TEXT_MAIN = "#1F2937";
-const TEXT_MUTED = "#6B7280";
-const BG_LIGHT = "#F3F4F6";
+const PRIMARY = "var(--color-primary)";
+const BORDER = "var(--color-border)";
+const TEXT_MAIN = "var(--color-text)";
+const TEXT_MUTED = "var(--color-text-secondary)";
+const BG_LIGHT = "var(--color-surface-alt)";
 
 const cardStyle: React.CSSProperties = {
-  background: "white",
+  background: "var(--c-card-bg)",
   borderRadius: 16,
-  boxShadow: "0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)",
+  boxShadow: "var(--c-card-shadow)",
   border: `1px solid ${BORDER}`,
   padding: "8px 32px 32px",
 };
@@ -54,7 +54,7 @@ const labelStyle: React.CSSProperties = {
 
 const inputBaseStyle: React.CSSProperties = {
   width: "100%",
-  background: "white",
+  background: "var(--c-input-bg)",
   border: `1px solid ${BORDER}`,
   borderRadius: 12,
   fontSize: 14,
@@ -85,7 +85,7 @@ function TypeCard({
         padding: 16,
         borderRadius: 12,
         border: selected ? `2px solid ${PRIMARY}` : `1px solid ${BORDER}`,
-        background: selected ? "rgba(239,246,255,0.5)" : "white",
+        background: selected ? "var(--color-primary-tint)" : "var(--c-card-bg)",
         cursor: "pointer",
         position: "relative",
         textAlign: "center",
@@ -103,7 +103,7 @@ function TypeCard({
           width: 40,
           height: 40,
           borderRadius: "50%",
-          background: selected ? "#DBEAFE" : "#F3F4F6",
+          background: selected ? "var(--color-primary-tint)" : "var(--color-surface-alt)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -172,11 +172,16 @@ export function SearchPage(): JSX.Element {
   const [activeMode, setActiveMode] = useState<"search" | "import">("search");
   const [targetUrl, setTargetUrl] = useState("");
   const [userPrompt, setUserPrompt] = useState("");
+  const [selectedScrapingSiteIds, setSelectedScrapingSiteIds] = useState<Set<string>>(new Set());
   const searchFocus: SearchFocus = "general";
   const contactChannels = defaultChannelsForFocus(searchFocus);
   const directoriesQuery = useQuery({
     queryKey: ["directories"],
     queryFn: () => listDirectories(),
+  });
+  const scrapingSitesQuery = useQuery({
+    queryKey: ["scraping-sites"],
+    queryFn: () => listScrapingSites(),
   });
 
   useEffect(() => {
@@ -251,6 +256,7 @@ export function SearchPage(): JSX.Element {
       contact_channels: contactChannels,
       search_focus: searchFocus,
       exa_category: exaCategoryUi,
+      scraping_site_ids: selectedScrapingSiteIds.size > 0 ? Array.from(selectedScrapingSiteIds) : undefined,
     });
   };
 
@@ -282,7 +288,7 @@ export function SearchPage(): JSX.Element {
     fontWeight: 500,
     fontSize: 14,
     border: "none",
-    background: active ? "white" : "transparent",
+    background: active ? "var(--c-card-bg)" : "transparent",
     color: active ? PRIMARY : TEXT_MUTED,
     boxShadow: active ? "0 1px 3px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.05)" : "none",
     cursor: "pointer",
@@ -401,7 +407,7 @@ export function SearchPage(): JSX.Element {
           left: 0,
           right: 0,
           height: "40%",
-          background: "linear-gradient(to bottom, white, transparent)",
+          background: "linear-gradient(to bottom, var(--c-card-bg), transparent)",
           pointerEvents: "none",
           zIndex: 0,
         }}
@@ -486,7 +492,7 @@ export function SearchPage(): JSX.Element {
                     { icon: <Instagram size={14} />, label: "Instagram", color: "#E1306C", bg: "#FDF2F8" },
                     { icon: <Facebook size={14} />, label: "Facebook", color: "#1877F2", bg: "#EFF6FF" },
                     { icon: <Linkedin size={14} />, label: "LinkedIn", color: "#0A66C2", bg: "#EFF6FF" },
-                    { icon: <Twitter size={14} />, label: "Twitter / X", color: "#000000", bg: "#F3F4F6" },
+                    { icon: <Twitter size={14} />, label: "Twitter / X", color: "var(--color-text)", bg: "var(--color-surface-alt)" },
                     { icon: <Youtube size={14} />, label: "YouTube", color: "#FF0000", bg: "#FEF2F2" },
                     { icon: <Map size={14} />, label: "Google Maps", color: "#059669", bg: "#F0FDF4" },
                   ].map(({ icon, label, color, bg }) => (
@@ -513,6 +519,59 @@ export function SearchPage(): JSX.Element {
                   Próximamente disponibles — por ahora usa la búsqueda general.
                 </p>
               </div>
+
+              {/* Scraping Sources */}
+              {(scrapingSitesQuery.data?.items ?? []).length > 0 && (
+                <div>
+                  <label style={{ ...labelStyle, marginBottom: 8 }}>Incluir fuentes de scraping</label>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {scrapingSitesQuery.data?.items.map((site) => (
+                      <label
+                        key={site.site_id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: 8,
+                          borderRadius: 8,
+                          border: `1px solid ${BORDER}`,
+                          cursor: "pointer",
+                          transition: "background 0.15s",
+                          background: selectedScrapingSiteIds.has(site.site_id)
+                            ? "rgba(239, 246, 255, 0.5)"
+                            : "transparent",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedScrapingSiteIds.has(site.site_id)}
+                          onChange={(e) => {
+                            const next = new Set(selectedScrapingSiteIds);
+                            if (e.target.checked) {
+                              next.add(site.site_id);
+                            } else {
+                              next.delete(site.site_id);
+                            }
+                            setSelectedScrapingSiteIds(next);
+                          }}
+                          style={{ cursor: "pointer" }}
+                        />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500, color: TEXT_MAIN }}>
+                            {site.title || new URL(site.url).hostname}
+                          </div>
+                          <div style={{ fontSize: 12, color: TEXT_MUTED }}>
+                            {site.url}
+                          </div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 6 }}>
+                    Las fuentes se scraped en paralelo y sus resultados se agregan al directorio.
+                  </p>
+                </div>
+              )}
 
               {/* Directory */}
               <DirectoryRow
@@ -725,15 +784,6 @@ export function SearchPage(): JSX.Element {
           )}
         </div>
 
-        {/* Footer */}
-        <div style={{ marginTop: 32, textAlign: "center", fontSize: 14, color: TEXT_MUTED }}>
-          <p style={{ margin: 0 }}>
-            ¿Necesitas ayuda con tus búsquedas?{" "}
-            <a href="#" style={{ color: PRIMARY, textDecoration: "none" }}>
-              Consulta la documentación
-            </a>
-          </p>
-        </div>
       </div>
     </section>
   );

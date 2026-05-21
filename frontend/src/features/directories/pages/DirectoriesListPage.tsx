@@ -155,11 +155,11 @@ export function DirectoriesListPage(): JSX.Element {
 
       {/* ── HEADER ── */}
       <header style={{
-        height: 72, background: "white", borderBottom: "1px solid #D3D3D3",
+        height: 72, background: "var(--c-card-bg)", borderBottom: "1px solid #D3D3D3",
         padding: "0 32px", display: "flex", alignItems: "center",
         justifyContent: "space-between", flexShrink: 0,
       }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: "#0F172A", margin: 0 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: "var(--color-text)", margin: 0 }}>
           Listas
         </h1>
 
@@ -168,7 +168,7 @@ export function DirectoriesListPage(): JSX.Element {
           <div style={{ position: "relative", width: 280 }}>
             <Search size={15} aria-hidden style={{
               position: "absolute", left: 14, top: "50%",
-              transform: "translateY(-50%)", color: "#808080", pointerEvents: "none",
+              transform: "translateY(-50%)", color: "var(--color-text-secondary)", pointerEvents: "none",
             }} />
             <input
               type="text"
@@ -178,8 +178,8 @@ export function DirectoriesListPage(): JSX.Element {
               style={{
                 width: "100%", height: 38, paddingLeft: 40, paddingRight: 14,
                 borderRadius: 999, border: "1px solid #D3D3D3",
-                background: "#F8FAFC", fontSize: 13, outline: "none",
-                fontFamily: "inherit", color: "#0F172A", boxSizing: "border-box",
+                background: "var(--color-surface-alt)", fontSize: 13, outline: "none",
+                fontFamily: "inherit", color: "var(--color-text)", boxSizing: "border-box",
                 transition: "border-color 0.2s",
               }}
             />
@@ -188,7 +188,7 @@ export function DirectoriesListPage(): JSX.Element {
           {/* View toggle */}
           <div style={{
             display: "flex", alignItems: "center",
-            background: "#F8FAFC", borderRadius: 8,
+            background: "var(--color-surface-alt)", borderRadius: 8,
             border: "1px solid #D3D3D3", padding: 4, gap: 2,
           }}>
             <button
@@ -256,7 +256,7 @@ export function DirectoriesListPage(): JSX.Element {
               { icon: <TrendingUp size={22} />, iconBg: "#FED7AA", iconColor: "#D97706", label: "Tasa de Conversión", value: "0%" },
             ].map((stat, i) => (
               <div key={i} style={{
-                background: "white", borderRadius: 14, border: "1px solid #E5E7EB",
+                background: "var(--c-card-bg)", borderRadius: 14, border: "1px solid var(--color-border)",
                 padding: "18px 20px", display: "flex", alignItems: "center", gap: 16,
                 boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
               }}>
@@ -268,8 +268,8 @@ export function DirectoriesListPage(): JSX.Element {
                   {stat.icon}
                 </div>
                 <div>
-                  <p style={{ fontSize: 12, color: "#808080", fontWeight: 500, margin: "0 0 4px" }}>{stat.label}</p>
-                  <p style={{ fontSize: 22, fontWeight: 700, color: "#0F172A", margin: 0 }}>{stat.value}</p>
+                  <p style={{ fontSize: 12, color: "var(--color-text-secondary)", fontWeight: 500, margin: "0 0 4px" }}>{stat.label}</p>
+                  <p style={{ fontSize: 22, fontWeight: 700, color: "var(--color-text)", margin: 0 }}>{stat.value}</p>
                 </div>
               </div>
             ))}
@@ -345,7 +345,7 @@ export function DirectoriesListPage(): JSX.Element {
 
                         {/* Title */}
                         <h3 style={{
-                          fontSize: 15, fontWeight: 700, color: "#0F172A",
+                          fontSize: 15, fontWeight: 700, color: "var(--color-text)",
                           margin: "0 0 8px", paddingRight: 48,
                           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                         }}>
@@ -354,7 +354,7 @@ export function DirectoriesListPage(): JSX.Element {
 
                         {/* Description */}
                         <p style={{
-                          fontSize: 13, color: "#808080", margin: "0 0 16px",
+                          fontSize: 13, color: "var(--color-text-secondary)", margin: "0 0 16px",
                           lineHeight: 1.5, height: "2.9em",
                           overflow: "hidden",
                           display: "-webkit-box",
@@ -370,7 +370,7 @@ export function DirectoriesListPage(): JSX.Element {
                             display: "flex", justifyContent: "space-between",
                             alignItems: "center", marginBottom: 8,
                           }}>
-                            <span style={{ fontSize: 11, color: "#808080", fontWeight: 500 }}>
+                            <span style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 500 }}>
                               Progreso de campaña
                             </span>
                             <span style={{ fontSize: 11, fontWeight: 700, color: pal.iconColor }}>0%</span>
@@ -385,25 +385,25 @@ export function DirectoriesListPage(): JSX.Element {
                           {/* Mini stats */}
                           <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
                             <div style={{
-                              flex: 1, background: "#F8FAFC", border: "1px solid #E5E7EB",
+                              flex: 1, background: "var(--color-surface-alt)", border: "1px solid var(--color-border)",
                               borderRadius: 8, padding: "7px 10px",
                               display: "flex", alignItems: "center", gap: 6,
                             }}>
                               <Target size={11} style={{ color: "#059669" }} />
-                              <span style={{ fontSize: 12, fontWeight: 600, color: "#0F172A" }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
                                 {dir.item_count}{" "}
-                                <span style={{ fontWeight: 400, color: "#808080" }}>oport.</span>
+                                <span style={{ fontWeight: 400, color: "var(--color-text-secondary)" }}>oport.</span>
                               </span>
                             </div>
                             <div style={{
-                              flex: 1, background: "#F8FAFC", border: "1px solid #E5E7EB",
+                              flex: 1, background: "var(--color-surface-alt)", border: "1px solid var(--color-border)",
                               borderRadius: 8, padding: "7px 10px",
                               display: "flex", alignItems: "center", gap: 6,
                             }}>
                               <Activity size={11} style={{ color: "#0000FF" }} />
-                              <span style={{ fontSize: 12, fontWeight: 600, color: "#0F172A" }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
                                 {dir.steps.length}{" "}
-                                <span style={{ fontWeight: 400, color: "#808080" }}>pasos</span>
+                                <span style={{ fontWeight: 400, color: "var(--color-text-secondary)" }}>pasos</span>
                               </span>
                             </div>
                           </div>
@@ -423,14 +423,14 @@ export function DirectoriesListPage(): JSX.Element {
                     width: 48, height: 48, borderRadius: "50%",
                     border: "2px dashed #0000FF", color: "#0000FF",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    background: "white", marginBottom: 12,
+                    background: "var(--c-card-bg)", marginBottom: 12,
                   }}>
                     <Plus size={22} />
                   </div>
-                  <h3 style={{ fontSize: 15, fontWeight: 700, color: "#0F172A", margin: "0 0 6px" }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text)", margin: "0 0 6px" }}>
                     Nuevo Lista
                   </h3>
-                  <p style={{ fontSize: 12, color: "#808080", margin: 0 }}>
+                  <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: 0 }}>
                     Comienza a prospectar un nuevo segmento
                   </p>
                 </Link>
@@ -465,12 +465,12 @@ export function DirectoriesListPage(): JSX.Element {
                               }}>
                                 <FolderOpen size={15} />
                               </div>
-                              <span style={{ fontWeight: 700, color: "#0F172A", fontSize: 14 }}>
+                              <span style={{ fontWeight: 700, color: "var(--color-text)", fontSize: 14 }}>
                                 {dir.name}
                               </span>
                             </Link>
                           </td>
-                          <td style={{ fontSize: 13, color: "#808080", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 300 }}>
+                          <td style={{ fontSize: 13, color: "var(--color-text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 300 }}>
                             {dir.description ?? "—"}
                           </td>
                           <td>
@@ -528,7 +528,7 @@ export function DirectoriesListPage(): JSX.Element {
                     display: "flex", alignItems: "center", justifyContent: "space-between",
                     background: "#F8FAFC50",
                   }}>
-                    <span style={{ fontSize: 13, color: "#808080" }}>
+                    <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
                       Mostrando {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} de {filtered.length}
                     </span>
                     <div style={{ display: "flex", gap: 4 }}>
@@ -558,8 +558,8 @@ export function DirectoriesListPage(): JSX.Element {
             {/* ── EMPTY STATE ── */}
             {filtered.length === 0 && !query.isLoading && (
               <div style={{
-                background: "white", borderRadius: 16,
-                border: "1px solid #E5E7EB",
+                background: "var(--c-card-bg)", borderRadius: 16,
+                border: "1px solid var(--color-border)",
                 padding: "64px 32px",
                 display: "flex", flexDirection: "column",
                 alignItems: "center", textAlign: "center",
@@ -572,10 +572,10 @@ export function DirectoriesListPage(): JSX.Element {
                 }}>
                   <FolderOpen size={30} />
                 </div>
-                <h2 style={{ fontSize: 20, fontWeight: 700, color: "#0F172A", margin: "0 0 10px" }}>
+                <h2 style={{ fontSize: 20, fontWeight: 700, color: "var(--color-text)", margin: "0 0 10px" }}>
                   {search ? "Sin coincidencias" : "No tienes directorios aún"}
                 </h2>
-                <p style={{ color: "#808080", maxWidth: 400, margin: "0 0 24px", lineHeight: 1.6 }}>
+                <p style={{ color: "var(--color-text-secondary)", maxWidth: 400, margin: "0 0 24px", lineHeight: 1.6 }}>
                   {search
                     ? `No hay directorios que coincidan con "${search}".`
                     : "Comienza a organizar tus prospectos creando tu primer lista."}
@@ -605,13 +605,13 @@ export function DirectoriesListPage(): JSX.Element {
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   style={{
                     padding: "6px 14px", borderRadius: 8, border: "1px solid #D3D3D3",
-                    background: "white", fontSize: 13, cursor: safePage === 1 ? "not-allowed" : "pointer",
+                    background: "var(--c-card-bg)", fontSize: 13, cursor: safePage === 1 ? "not-allowed" : "pointer",
                     color: safePage === 1 ? "#9CA3AF" : "#374151", fontFamily: "inherit",
                   }}
                 >
                   ← Anterior
                 </button>
-                <span style={{ fontSize: 13, color: "#808080" }}>
+                <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
                   {safePage} / {totalPages}
                 </span>
                 <button
@@ -620,7 +620,7 @@ export function DirectoriesListPage(): JSX.Element {
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   style={{
                     padding: "6px 14px", borderRadius: 8, border: "1px solid #D3D3D3",
-                    background: "white", fontSize: 13,
+                    background: "var(--c-card-bg)", fontSize: 13,
                     cursor: safePage === totalPages ? "not-allowed" : "pointer",
                     color: safePage === totalPages ? "#9CA3AF" : "#374151", fontFamily: "inherit",
                   }}

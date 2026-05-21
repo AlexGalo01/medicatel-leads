@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select
@@ -21,7 +22,7 @@ class UsersRepository:
         return r.scalar_one_or_none()
 
     async def list_all(self) -> list[User]:
-        q = select(User).order_by(User.email.asc())
+        q = select(User).where(User.deleted_at.is_(None)).order_by(User.email.asc())
         r = await self.session.execute(q)
         return list(r.scalars().all())
 
@@ -75,10 +76,13 @@ class UsersRepository:
         await self.session.refresh(user)
         return user
 
-    async def delete(self, user_id: UUID) -> bool:
+    async def delete(self, user_id: UUID, *, deleted_by_user_id: UUID) -> bool:
         user = await self.get_by_id(user_id)
-        if user is None:
+        if user is None or user.deleted_at is not None:
             return False
-        await self.session.delete(user)
+        now = datetime.now(timezone.utc)
+        user.deleted_by = deleted_by_user_id
+        user.deleted_at = now
+        self.session.add(user)
         await self.session.commit()
         return True

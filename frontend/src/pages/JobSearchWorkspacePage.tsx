@@ -80,7 +80,7 @@ const LABEL_OPTIONS: { value: PreviewLabel; label: string }[] = [
 const LABEL_STYLE: Record<PreviewLabel, { bg: string; color: string }> = {
   no_relevante: { bg: "rgba(239,68,68,0.10)", color: "#DC2626" },
   duplicado: { bg: "rgba(245,158,11,0.12)", color: "#B45309" },
-  ya_contactado: { bg: "rgba(59,130,246,0.10)", color: "#1D4ED8" },
+  ya_contactado: { bg: "rgba(59,130,246,0.10)", color: "var(--color-primary)" },
   fuente: { bg: "rgba(139,92,246,0.10)", color: "#7C3AED" },
 };
 
@@ -120,12 +120,12 @@ function initial(text: string): string {
 }
 
 const AVATAR_PALETTE = [
-  { bg: "#DBEAFE", color: "#1D4ED8" },
+  { bg: "var(--color-primary-tint)", color: "var(--color-primary)" },
   { bg: "#FEF3C7", color: "#D97706" },
   { bg: "#D1FAE5", color: "#059669" },
   { bg: "#EDE9FE", color: "#7C3AED" },
   { bg: "#FCE7F3", color: "#DB2777" },
-  { bg: "#FEE2E2", color: "#DC2626" },
+  { bg: "var(--color-error-bg)", color: "#DC2626" },
 ];
 
 function getAvatarStyle(text: string) {
@@ -465,7 +465,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
   const statusBg =
     awaitingClarification ? "#FEF3C7" :
     jobStatus === "completed" ? "#D1FAE5" :
-    jobStatus === "error" || jobStatus === "cancelled" ? "#FEE2E2" : "#DBEAFE";
+    jobStatus === "error" || jobStatus === "cancelled" ? "var(--color-error-bg)" : "var(--color-primary-tint)";
 
   const suggestedSources = jobStatusQuery.data?.suggested_source_urls ?? [];
   const lpaItems = jobStatusQuery.data?.lpa_preview ?? [];
@@ -481,7 +481,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
 
       {/* ── TOP HEADER BAR ── */}
       <header style={{
-        height: 72, background: "white", borderBottom: "1px solid #D3D3D3",
+        height: 72, background: "var(--c-card-bg)", borderBottom: "1px solid var(--color-border)",
         padding: "0 32px", display: "flex", alignItems: "center",
         justifyContent: "space-between", flexShrink: 0, zIndex: 10,
       }}>
@@ -527,7 +527,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
               onChange={(e) => setFilterText(e.target.value)}
               style={{
                 width: 220, paddingLeft: 32, paddingRight: 12, paddingTop: 8, paddingBottom: 8,
-                background: "#F8FAFC", border: "1px solid #D3D3D3", borderRadius: 8,
+                background: "#F8FAFC", border: "1px solid var(--color-border)", borderRadius: 8,
                 fontSize: 13, outline: "none", fontFamily: "inherit", color: "#0F172A",
               }}
             />
@@ -535,8 +535,8 @@ export function JobSearchWorkspacePage(): JSX.Element {
           <button
             type="button"
             style={{
-              width: 36, height: 36, borderRadius: 8, border: "1px solid #D3D3D3",
-              background: "white", display: "flex", alignItems: "center", justifyContent: "center",
+              width: 36, height: 36, borderRadius: 8, border: "1px solid var(--color-border)",
+              background: "var(--c-card-bg)", display: "flex", alignItems: "center", justifyContent: "center",
               cursor: "pointer", color: "#808080",
             }}
             title="Filtrar"
@@ -552,14 +552,14 @@ export function JobSearchWorkspacePage(): JSX.Element {
         {/* LEFT: RESULTS COLUMN */}
         <div style={{
           flex: 1, display: "flex", flexDirection: "column", minWidth: 0,
-          borderRight: hasSidebar ? "1px solid #D3D3D3" : "none",
+          borderRight: hasSidebar ? "1px solid var(--color-border)" : "none",
           background: "#F8FAFC", overflow: "hidden",
         }}>
 
           {/* STATUS + ACTIONS BAR */}
           <div style={{
-            padding: "16px 24px", background: "white",
-            borderBottom: "1px solid #D3D3D3", flexShrink: 0,
+            padding: "16px 24px", background: "var(--c-card-bg)",
+            borderBottom: "1px solid var(--color-border)", flexShrink: 0,
           }}>
             <div style={{
               display: "flex", alignItems: "flex-start",
@@ -585,7 +585,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                 <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 5px" }}>Progreso del Job</p>
                 <div style={{
                   width: 120, height: 6, background: "#F3F4F6",
-                  borderRadius: 999, overflow: "hidden", border: "1px solid #E5E7EB",
+                  borderRadius: 999, overflow: "hidden", border: "1px solid var(--color-border)",
                 }}>
                   <div style={{
                     height: "100%",
@@ -630,8 +630,8 @@ export function JobSearchWorkspacePage(): JSX.Element {
                         onClick={() => setSaveModalOpen(true)}
                         style={{
                           display: "flex", alignItems: "center", gap: 7,
-                          padding: "7px 14px", background: "white",
-                          border: "1px solid #D3D3D3", borderRadius: 8,
+                          padding: "7px 14px", background: "var(--c-card-bg)",
+                          border: "1px solid var(--color-border)", borderRadius: 8,
                           fontSize: 13, fontWeight: 500, cursor: "pointer",
                           fontFamily: "inherit", color: "#0F172A",
                         }}
@@ -652,8 +652,8 @@ export function JobSearchWorkspacePage(): JSX.Element {
                     onClick={() => downloadPreviewXlsxMutation.mutate()}
                     style={{
                       display: "flex", alignItems: "center", gap: 6,
-                      padding: "7px 14px", background: "white",
-                      border: "1px solid #D3D3D3", borderRadius: 8,
+                      padding: "7px 14px", background: "var(--c-card-bg)",
+                      border: "1px solid var(--color-border)", borderRadius: 8,
                       fontSize: 13, fontWeight: 500, cursor: "pointer",
                       fontFamily: "inherit", color: "#0F172A",
                     }}
@@ -690,7 +690,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
           {filterStats && (filterStats.relevance_filter_kept != null || filterStats.relevance_filter_dropped != null) && (
             <div style={{
               padding: "12px 24px", background: "#FAFAFA",
-              borderBottom: "1px solid #E5E7EB", flexShrink: 0,
+              borderBottom: "1px solid var(--color-border)", flexShrink: 0,
               display: "flex", alignItems: "flex-start", gap: 24, flexWrap: "wrap",
             }}>
               {/* Pill stats */}
@@ -711,7 +711,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                   <span style={{
                     display: "inline-flex", alignItems: "center", gap: 4,
                     padding: "3px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600,
-                    background: "#FEE2E2", color: "#991B1B", border: "1px solid #FECACA",
+                    background: "var(--color-error-bg)", color: "#991B1B", border: "1px solid #FECACA",
                   }}>
                     ✕ {filterStats.relevance_filter_dropped} descartados
                   </span>
@@ -729,7 +729,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                   <span style={{
                     display: "inline-flex", alignItems: "center", gap: 4,
                     padding: "3px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600,
-                    background: "#FFF7ED", color: "#C2410C", border: "1px solid #FDBA74",
+                    background: "var(--color-warning-bg)", color: "var(--color-warning)", border: "1px solid var(--color-warning-bg)",
                   }}>
                     ⚠ Filtro degradado
                   </span>
@@ -755,7 +755,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                           <span key={reason} style={{
                             fontSize: 11, padding: "2px 8px", borderRadius: 5,
                             background: "#F3F4F6", color: "#6B7280",
-                            border: "1px solid #E5E7EB",
+                            border: "1px solid var(--color-border)",
                           }}>
                             {count > 1 ? `${count}× ` : ""}{reason}
                           </span>
@@ -769,7 +769,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
 
           {/* TAB SWITCHER */}
           {filterStats?.relevance_filter_discarded_sample && filterStats.relevance_filter_discarded_sample.length > 0 && (
-            <div style={{ display: "flex", borderBottom: "1px solid #E5E7EB", background: "white", flexShrink: 0, paddingLeft: 24 }}>
+            <div style={{ display: "flex", borderBottom: "1px solid var(--color-border)", background: "var(--c-card-bg)", flexShrink: 0, paddingLeft: 24 }}>
               <button
                 type="button"
                 onClick={() => setActiveTab("results")}
@@ -813,12 +813,12 @@ export function JobSearchWorkspacePage(): JSX.Element {
             )}
             {placesError && (
               <div role="alert" style={{
-                background: "#FFF7ED", border: "2px solid #F97316", borderRadius: 12,
+                background: "var(--color-warning-bg)", border: "2px solid var(--color-warning)", borderRadius: 12,
                 padding: "16px 20px", marginBottom: 16, display: "flex", gap: 14, alignItems: "flex-start",
               }}>
                 <span style={{ fontSize: 22, flexShrink: 0 }}>⚠️</span>
                 <div>
-                  <p style={{ fontWeight: 700, color: "#C2410C", margin: "0 0 6px", fontSize: 15 }}>
+                  <p style={{ fontWeight: 700, color: "var(--color-warning)", margin: "0 0 6px", fontSize: 15 }}>
                     Google Places API no está habilitada
                   </p>
                   <p style={{ color: "#9A3412", fontSize: 13, margin: "0 0 10px" }}>
@@ -843,14 +843,14 @@ export function JobSearchWorkspacePage(): JSX.Element {
             {/* MAIN CONTENT */}
             {activeTab === "dropped" && filterStats?.relevance_filter_discarded_sample && filterStats.relevance_filter_discarded_sample.length > 0 ? (
               <div style={{
-                background: "white", border: "1px solid #D3D3D3",
+                background: "var(--c-card-bg)", border: "1px solid var(--color-border)",
                 borderRadius: 12, overflow: "hidden",
                 boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
               }}>
                 <div style={{
                   display: "grid", gridTemplateColumns: "1fr 220px",
                   gap: "0 12px", padding: "10px 16px",
-                  borderBottom: "1px solid #D3D3D3", background: "#F8FAFC",
+                  borderBottom: "1px solid var(--color-border)", background: "#F8FAFC",
                   fontSize: 11, fontWeight: 600, color: "#808080",
                   textTransform: "uppercase", letterSpacing: "0.05em",
                 }}>
@@ -881,7 +881,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
               </div>
             ) : awaitingClarification ? (
               <div style={{
-                background: "white", border: "1px solid #D3D3D3",
+                background: "var(--c-card-bg)", border: "1px solid var(--color-border)",
                 borderRadius: 12, padding: 24, maxWidth: 560,
               }}>
                 <p style={{ fontWeight: 600, color: "#0F172A", marginBottom: 8 }}>
@@ -923,7 +923,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
               </div>
             ) : jobStatus === "error" ? (
               <div style={{
-                background: "white", border: "1px solid #FCA5A5",
+                background: "var(--c-card-bg)", border: "1px solid var(--color-error-bg)",
                 borderRadius: 12, padding: 24,
               }}>
                 <p className="error-text" style={{ marginBottom: 8 }}>
@@ -964,7 +964,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                   {jobStatusQuery.data?.activity_log && jobStatusQuery.data.activity_log.length > 0 && (
                     <div style={{
                       marginTop: 16, background: "#F8FAFC", borderRadius: 8,
-                      border: "1px solid #E5E7EB", padding: "10px 14px",
+                      border: "1px solid var(--color-border)", padding: "10px 14px",
                       fontFamily: "monospace", fontSize: 11, color: "#6B7280",
                       maxHeight: 130, overflowY: "auto", textAlign: "left",
                     }}>
@@ -998,7 +998,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
               <>
                 {/* RESULTS TABLE */}
                 <div style={{
-                  background: "white", border: "1px solid #D3D3D3",
+                  background: "var(--c-card-bg)", border: "1px solid var(--color-border)",
                   borderRadius: 12, overflow: "hidden",
                   boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
                 }}>
@@ -1006,7 +1006,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                   {/* Table header row */}
                   <div style={{
                     display: "grid", gridTemplateColumns: TABLE_COLS, gap: "0 12px",
-                    padding: "10px 16px", borderBottom: "1px solid #D3D3D3",
+                    padding: "10px 16px", borderBottom: "1px solid var(--color-border)",
                     background: "#F8FAFC", fontSize: 11, fontWeight: 600,
                     color: "#808080", textTransform: "uppercase", letterSpacing: "0.05em",
                     alignItems: "center",
@@ -1270,8 +1270,8 @@ export function JobSearchWorkspacePage(): JSX.Element {
                       onClick={() => { setExaMoreMessage(null); exaMoreMutation.mutate(); }}
                       style={{
                         display: "flex", alignItems: "center", gap: 8,
-                        padding: "9px 20px", background: "white",
-                        border: "1px solid #D3D3D3", borderRadius: 8,
+                        padding: "9px 20px", background: "var(--c-card-bg)",
+                        border: "1px solid var(--color-border)", borderRadius: 8,
                         fontSize: 13, fontWeight: 500,
                         cursor: exaMoreMutation.isPending ? "not-allowed" : "pointer",
                         fontFamily: "inherit", color: "#0F172A",
@@ -1293,7 +1293,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
         {/* RIGHT: INSIGHTS SIDEBAR */}
         {hasSidebar && (
           <aside style={{
-            width: 310, background: "white", flexShrink: 0,
+            width: 310, background: "var(--c-card-bg)", flexShrink: 0,
             overflowY: "auto",
           }}>
 
@@ -1301,7 +1301,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
             {suggestedSources.length > 0 && (
               <div style={{
                 padding: "20px 18px 16px",
-                borderBottom: lpaItems.length > 0 ? "1px solid #D3D3D3" : "none",
+                borderBottom: lpaItems.length > 0 ? "1px solid var(--color-border)" : "none",
               }}>
                 <h3 style={{
                   margin: "0 0 14px", fontSize: 11, fontWeight: 700, color: "#0F172A",
@@ -1381,7 +1381,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                   {suggestedSources.map((s) => (
                     <div key={s.url} style={{
                       padding: "10px 12px", background: "#F8FAFC",
-                      border: "1px solid #E5E7EB", borderRadius: 10,
+                      border: "1px solid var(--color-border)", borderRadius: 10,
                     }}>
                       <div style={{
                         display: "flex", justifyContent: "space-between",
@@ -1533,7 +1533,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                           to={`/jobs/${jobId}/result/${row.index}`}
                           style={{
                             display: "flex", alignItems: "center", gap: 10,
-                            padding: "8px 10px", background: "#FFF7ED",
+                            padding: "8px 10px", background: "var(--color-warning-bg)",
                             border: "1px solid #FED7AA", borderRadius: 8,
                             textDecoration: "none",
                           }}

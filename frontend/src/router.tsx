@@ -19,6 +19,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { SearchPage } from "./pages/SearchPage";
 import { UrlScrapeJobPage } from "./pages/UrlScrapeJobPage";
+import { ScrapingSourcesPage } from "./pages/ScrapingSourcesPage";
 
 export const appRouter = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -33,6 +34,7 @@ export const appRouter = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/search" replace /> },
       { path: "search", element: <SearchPage /> },
+      { path: "sources", element: <ScrapingSourcesPage /> },
       { path: "jobs/:jobId/result/:resultIndex", element: <JobExaResultDetailPage /> },
       { path: "jobs/:jobId", element: <JobSearchWorkspacePage /> },
       { path: "url-scrape-jobs/:jobId", element: <UrlScrapeJobPage /> },

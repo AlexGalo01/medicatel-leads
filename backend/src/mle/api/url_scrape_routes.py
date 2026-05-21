@@ -15,13 +15,14 @@ from mle.api.schemas import (
     UrlScrapeJobListItemResponse,
     UrlScrapeJobPushRequest,
     UrlScrapeResultPreviewItem,
+    UrlScrapeEnrichRequest,
 )
 from mle.db.base import async_session_factory
 from mle.db.models import User, Opportunity, DirectoryStep
 from mle.repositories.url_scrape_jobs_repository import UrlScrapeJobsRepository
 from mle.repositories.opportunities_repository import OpportunitiesRepository
 from mle.repositories.directories_repository import DirectoriesRepository
-from mle.services.url_scrape_service import run_url_scrape_pipeline
+from mle.services.url_scrape_service import run_url_scrape_pipeline, run_url_scrape_enrichment
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ async def get_url_scrape_job(
                         city=item.get("city", ""),
                         phones=item.get("phones", []),
                         emails=item.get("emails", []),
+                        whatsapp=item.get("whatsapp", []),
                     )
                 )
 
@@ -106,6 +108,7 @@ async def get_url_scrape_job(
         updated_at=job.updated_at,
         pages_scraped=meta.get("pages_scraped"),
         pages_total=meta.get("pages_total"),
+        stage=meta.get("stage"),
     )
 
 
@@ -216,6 +219,8 @@ async def push_entries_to_directory(
                 phones = preview_item.get("phones", [])
                 emails = preview_item.get("emails", [])
 
+                whatsapp_nums = preview_item.get("whatsapp", [])
+
                 # Build contacts list
                 contacts = []
                 for j, phone in enumerate(phones or []):
@@ -232,6 +237,14 @@ async def push_entries_to_directory(
                             "kind": "email",
                             "value": email,
                             "is_primary": False,
+                        }
+                    )
+                for wa in whatsapp_nums or []:
+                    contacts.append(
+                        {
+                            "kind": "whatsapp",
+                            "value": wa,
+                            "is_primary": not phones,
                         }
                     )
 
@@ -267,3 +280,38 @@ async def push_entries_to_directory(
         await session.commit()
 
     return {"created": created_opps, "directory_id": str(payload.directory_id)}
+
+
+@url_scrape_router.post("/{job_id}/enrich-profiles", status_code=202)
+async def enrich_url_scrape_profiles(
+    job_id: str,
+    payload: UrlScrapeEnrichRequest,
+    _u: User = Depends(require_permission("use_search")),
+) -> dict[str, str]:
+    """
+    Enrich scrape results by visiting individual profile URLs and extracting contact info (level 2 scraping).
+    Only works on completed jobs. Changes status to 'running' while enriching.
+    """
+    try:
+        job_uuid = UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job_id")
+
+    async with async_session_factory() as session:
+        repo = UrlScrapeJobsRepository(session)
+        job = await repo.get(job_uuid)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job.status != "completed":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Job must be completed to enrich. Current status: {job.status}",
+            )
+
+        # Change status to running
+        await repo.update_status(job_uuid, "running", job.progress)
+
+    # Launch enrichment as background task
+    asyncio.create_task(run_url_scrape_enrichment(job_uuid, payload.entry_indices))
+
+    return {"status": "enriching"}
