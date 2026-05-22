@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 from urllib.parse import urlparse
 
+import httpx
 from openai import AsyncOpenAI
 from playwright.async_api import async_playwright
 from pydantic import BaseModel, Field as PydanticField
@@ -18,7 +19,7 @@ from mle.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_MAX_PAGES = 10
+_MAX_PAGES = 100
 
 _BROWSER_ARGS = [
     "--no-sandbox",
@@ -225,7 +226,14 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
 
             await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
 
-            # — Espera inicial + múltiples scrolls para infinite scroll —
+            # — Espera a que SPAs rendericen contenido (Firebase, React, Vue, etc.) —
+            try:
+                await page.wait_for_function(
+                    "document.body.innerText.length > 500",
+                    timeout=8_000,
+                )
+            except Exception:
+                pass  # Fallback: proceed with whatever loaded
             await page.wait_for_timeout(2_500)
             prev_height = -1
             for _ in range(5):
@@ -260,9 +268,9 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
                 const anchors = document.querySelectorAll(
                     '.product a, .entry a, .card a, article a, ' +
                     '[class*="doctor"] a, [class*="medic"] a, [class*="profile"] a, ' +
-                    'a.doctor-badge, a.doctor-card, ' +
+                    'a.doctor-badge, a.doctor-card, a.doctor-card-modern, ' +
                     '.woocommerce a.woocommerce-LoopProduct-link, ' +
-                    'a[href*="/dr/"], a[href*="/doctor"], a[href*="/perfil"], a[href*="/profile"], a[href*="/medicos/"]'
+                    'a[href*="/dr/"], a[href*="/doctor" i], a[href*="/perfil"], a[href*="/profile"], a[href*="/medicos/"], a[href*="/Detalles/"]'
                 );
                 for (const a of anchors) {
                     const href = a.href || '';
@@ -304,12 +312,16 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
                     '.page-numbers.current',
                     '.wp-pagenavi span.current',
                     '.pagination .active',
+                    '.pagination .page-item.active',
+                    '.page-link.active',
                     '[aria-current="page"]',
                 ];
                 for (const sel of currentSelectors) {
                     const current = document.querySelector(sel);
                     if (current) {
-                        let el = current.nextElementSibling;
+                        // Walk up to the <li> if needed (Bootstrap pagination)
+                        const li = current.closest('li') || current;
+                        let el = li.nextElementSibling;
                         while (el) {
                             if (el.tagName === 'A' && el.href) return el.href;
                             const a = el.querySelector && el.querySelector('a[href]');
@@ -323,6 +335,8 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
                     'a.next', 'a[rel="next"]', '.page-numbers.next',
                     'a[class*="next"]',
                     'a[aria-label*="next" i]', 'a[aria-label*="siguiente" i]',
+                    '.page-item a[aria-label*="Next" i]', '.page-item a[aria-label*="Siguiente" i]',
+                    'a.page-link[aria-label*="Next" i]', 'a.page-link[aria-label*="Siguiente" i]',
                 ];
                 for (const sel of nextSelectors) {
                     const el = document.querySelector(sel);
@@ -566,11 +580,13 @@ async def _navigate_and_scrape(
 
                 next_url: str | None = await page.evaluate("""() => {
                     const currentSelectors = ['.page-numbers.current', '.wp-pagenavi span.current',
-                        '.pagination .active', '[aria-current="page"]'];
+                        '.pagination .active', '.pagination .page-item.active',
+                        '.page-link.active', '[aria-current="page"]'];
                     for (const sel of currentSelectors) {
                         const cur = document.querySelector(sel);
                         if (cur) {
-                            let el = cur.nextElementSibling;
+                            const li = cur.closest('li') || cur;
+                            let el = li.nextElementSibling;
                             while (el) {
                                 if (el.tagName === 'A' && el.href) return el.href;
                                 const a = el.querySelector && el.querySelector('a[href]');
@@ -580,7 +596,9 @@ async def _navigate_and_scrape(
                         }
                     }
                     const nextSelectors = ['a.next', 'a[rel="next"]', '.page-numbers.next',
-                        'a[class*="next"]', 'a[aria-label*="next" i]', 'a[aria-label*="siguiente" i]'];
+                        'a[class*="next"]', 'a[aria-label*="next" i]', 'a[aria-label*="siguiente" i]',
+                        '.page-item a[aria-label*="Next" i]', '.page-item a[aria-label*="Siguiente" i]',
+                        'a.page-link[aria-label*="Next" i]', 'a.page-link[aria-label*="Siguiente" i]'];
                     for (const sel of nextSelectors) {
                         const el = document.querySelector(sel);
                         if (el && el.href) return el.href;
@@ -695,6 +713,47 @@ def _build_preview(entries: list[_ScrapedEntry]) -> list[dict[str, Any]]:
     return preview
 
 
+def _is_pdf_url(url: str) -> bool:
+    """Detecta si la URL apunta a un PDF."""
+    parsed = urlparse(url.split("?")[0].split("#")[0])
+    return parsed.path.lower().endswith(".pdf")
+
+
+async def _download_and_extract_pdf(url: str) -> list[tuple[str, str]]:
+    """Descarga un PDF via httpx y extrae texto de cada página con pdfplumber."""
+    import pdfplumber
+    import tempfile
+    import os
+
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+
+    # Guardar a archivo temporal
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(response.content)
+        tmp_path = tmp.name
+
+    try:
+        pages: list[tuple[str, str]] = []
+        with pdfplumber.open(tmp_path) as pdf:
+            for i, page in enumerate(pdf.pages):
+                text = page.extract_text() or ""
+                # También extraer tablas como texto
+                tables = page.extract_tables() or []
+                for table in tables:
+                    for row in table:
+                        if row:
+                            cells = [str(c or "").strip() for c in row]
+                            text += "\n" + " | ".join(cells)
+                if text.strip():
+                    pages.append((text, f"{url}#page={i + 1}"))
+        logger.info("PDF extracted %d pages with text from %s", len(pages), url)
+        return pages
+    finally:
+        os.unlink(tmp_path)
+
+
 async def run_url_scrape_pipeline(job_id: UUID) -> None:
     settings = get_settings()
 
@@ -706,81 +765,99 @@ async def run_url_scrape_pipeline(job_id: UUID) -> None:
             return
         await repo.update_status(job_id, "running", 10)
 
-
-    brave_client = BraveSearchClient(api_key=settings.brave_search_api_key)
-
     all_entries: list[_ScrapedEntry] = []
     pages_loaded: list[tuple[str, str]] = []
 
-    # --- Strategy 1: LLM-guided navigation ---
-    try:
-        pages_loaded = await asyncio.wait_for(
-            _navigate_and_scrape(job.target_url, job.user_prompt, settings, job_id),
-            timeout=180,
-        )
-        logger.info("LLM navigation found %d pages job_id=%s", len(pages_loaded), job_id)
-    except Exception as exc:
-        logger.warning("LLM navigation failed job_id=%s: %s", job_id, exc)
-
-    # --- Strategy 2: Brave discovery + Playwright scraping ---
-    if not pages_loaded:
+    # --- PDF branch: download + pdfplumber ---
+    if _is_pdf_url(job.target_url):
         try:
-            brave_url_pairs = await asyncio.wait_for(
-                _discover_pages_via_brave(job.target_url, brave_client),
-                timeout=60,
+            logger.info("Detected PDF URL, downloading job_id=%s", job_id)
+            pages_loaded = await asyncio.wait_for(
+                _download_and_extract_pdf(job.target_url),
+                timeout=120,
             )
-            logger.info("Brave discovered %d URLs job_id=%s", len(brave_url_pairs), job_id)
-            if brave_url_pairs:
-                pages_loaded = await _fetch_pages_content(brave_url_pairs[:_MAX_PAGES], job_id)
-                logger.info("Scraped full content for %d pages job_id=%s", len(pages_loaded), job_id)
-        except asyncio.TimeoutError:
-            logger.warning("Brave discover timeout, falling back to Playwright job_id=%s", job_id)
+            logger.info("PDF: %d pages extracted job_id=%s", len(pages_loaded), job_id)
         except Exception as exc:
-            logger.warning("Brave discover failed (fallback to Playwright) job_id=%s: %s", job_id, exc)
-
-    # --- Fallback to Playwright if Brave found nothing ---
-    if not pages_loaded:
-        logger.info("No pages from Brave, using Playwright pagination job_id=%s", job_id)
-        current_url: str | None = job.target_url
-        page_num = 0
-
-        while current_url and page_num < _MAX_PAGES:
-            # Check if job was cancelled
+            logger.error("PDF download/extract failed job_id=%s: %s", job_id, exc)
             async with async_session_factory() as session:
                 repo = UrlScrapeJobsRepository(session)
-                current_job = await repo.get_by_id(job_id)
-                if current_job and current_job.status == "cancelled":
-                    logger.info("Job cancelled during Playwright phase job_id=%s", job_id)
-                    return
-            page_num += 1
-            progress = min(10 + page_num * 12, 85)
-
-            async with async_session_factory() as session:
-                repo = UrlScrapeJobsRepository(session)
-                await repo.update_status(job_id, "running", progress)
-
-            try:
-                page_text, next_url = await asyncio.wait_for(
-                    _load_page_text_and_next_url(current_url),
-                    timeout=45,
+                await repo.update_status(
+                    job_id, "error", 10,
+                    metadata_json={"error": str(exc), "stage": "pdf_download"},
                 )
-                pages_loaded.append((page_text, current_url))
-            except asyncio.TimeoutError:
-                logger.warning("Playwright page %d load timed out, stopping job_id=%s", page_num, job_id)
-                break
-            except Exception as exc:
-                logger.error("Playwright page %d load failed job_id=%s: %s", page_num, job_id, exc)
-                if page_num == 1:
-                    async with async_session_factory() as session:
-                        repo = UrlScrapeJobsRepository(session)
-                        await repo.update_status(
-                            job_id, "error", progress,
-                            metadata_json={"error": str(exc), "stage": "page_load"},
-                        )
-                    return
-                break
+            return
+    else:
+        # --- Web scraping strategies (existing flow) ---
+        brave_client = BraveSearchClient(api_key=settings.brave_search_api_key)
 
-            current_url = next_url
+        # Strategy 1: LLM-guided navigation
+        try:
+            pages_loaded = await asyncio.wait_for(
+                _navigate_and_scrape(job.target_url, job.user_prompt, settings, job_id),
+                timeout=180,
+            )
+            logger.info("LLM navigation found %d pages job_id=%s", len(pages_loaded), job_id)
+        except Exception as exc:
+            logger.warning("LLM navigation failed job_id=%s: %s", job_id, exc)
+
+        # Strategy 2: Brave discovery + Playwright scraping
+        if not pages_loaded:
+            try:
+                brave_url_pairs = await asyncio.wait_for(
+                    _discover_pages_via_brave(job.target_url, brave_client),
+                    timeout=60,
+                )
+                logger.info("Brave discovered %d URLs job_id=%s", len(brave_url_pairs), job_id)
+                if brave_url_pairs:
+                    pages_loaded = await _fetch_pages_content(brave_url_pairs[:_MAX_PAGES], job_id)
+                    logger.info("Scraped full content for %d pages job_id=%s", len(pages_loaded), job_id)
+            except asyncio.TimeoutError:
+                logger.warning("Brave discover timeout, falling back to Playwright job_id=%s", job_id)
+            except Exception as exc:
+                logger.warning("Brave discover failed (fallback to Playwright) job_id=%s: %s", job_id, exc)
+
+        # Strategy 3: Playwright pagination fallback
+        if not pages_loaded:
+            logger.info("No pages from Brave, using Playwright pagination job_id=%s", job_id)
+            current_url: str | None = job.target_url
+            page_num = 0
+
+            while current_url and page_num < _MAX_PAGES:
+                async with async_session_factory() as session:
+                    repo = UrlScrapeJobsRepository(session)
+                    current_job = await repo.get_by_id(job_id)
+                    if current_job and current_job.status == "cancelled":
+                        logger.info("Job cancelled during Playwright phase job_id=%s", job_id)
+                        return
+                page_num += 1
+                progress = min(10 + page_num * 12, 85)
+
+                async with async_session_factory() as session:
+                    repo = UrlScrapeJobsRepository(session)
+                    await repo.update_status(job_id, "running", progress)
+
+                try:
+                    page_text, next_url = await asyncio.wait_for(
+                        _load_page_text_and_next_url(current_url),
+                        timeout=45,
+                    )
+                    pages_loaded.append((page_text, current_url))
+                except asyncio.TimeoutError:
+                    logger.warning("Playwright page %d load timed out, stopping job_id=%s", page_num, job_id)
+                    break
+                except Exception as exc:
+                    logger.error("Playwright page %d load failed job_id=%s: %s", page_num, job_id, exc)
+                    if page_num == 1:
+                        async with async_session_factory() as session:
+                            repo = UrlScrapeJobsRepository(session)
+                            await repo.update_status(
+                                job_id, "error", progress,
+                                metadata_json={"error": str(exc), "stage": "page_load"},
+                            )
+                        return
+                    break
+
+                current_url = next_url
 
     # --- Check if cancelled before LLM extraction ---
     async with async_session_factory() as session:
