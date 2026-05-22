@@ -1,50 +1,49 @@
-FROM python:3.12-slim AS base
+# ── Stage 1: Build deps ──────────────────────────────────────────────
+FROM python:3.12-slim AS builder
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
-# System deps: build tools + Node.js (no apt chromium — playwright manages its own below)
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
+# Build tools only in this stage
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    curl \
-    ca-certificates \
-    gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs
+    && rm -rf /var/lib/apt/lists/*
 
-# uv: much faster than pip
 RUN pip install --no-cache-dir uv
 
-# --- Python deps layer (cached until pyproject.toml changes) ---
+# Install Python deps (cached until pyproject.toml changes)
 COPY pyproject.toml .
-# Stub src so setuptools can resolve the package, then install all dependencies
 RUN mkdir -p src/mle && touch src/mle/__init__.py \
     && uv pip install --system --no-cache .
 
-# Copy real source and re-install only the local package (deps already cached above)
+# Install actual source
 COPY src /app/src
 RUN uv pip install --system --no-cache --no-deps .
 
-# --- Node/npm layer for playwright_tool (cached until package-lock.json changes) ---
-COPY playwright_tool/package.json playwright_tool/package-lock.json /app/playwright_tool/
-RUN --mount=type=cache,target=/root/.npm \
-    cd /app/playwright_tool && npm ci --omit=dev
+# ── Stage 2: Runtime ─────────────────────────────────────────────────
+FROM python:3.12-slim AS runtime
 
-COPY playwright_tool /app/playwright_tool
-RUN cd /app/playwright_tool && npm run build && chmod +x /app/playwright_tool/bin/mle-search
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Single Chromium install via Playwright (includes all system deps via --with-deps)
-# Symlink to /usr/bin/chromium so playwright_tool finds it at its hardcoded default path
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Playwright Chromium + system deps (only runtime libs, no build tools)
 RUN python -m playwright install chromium --with-deps \
-    && ln -s "$(find /ms-playwright -name 'chrome' -type f | head -1)" /usr/bin/chromium
+    && ln -sf "$(find /ms-playwright -name 'chrome' -type f | head -1)" /usr/bin/chromium \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --create-home --shell /bin/bash appuser
-RUN mkdir -p /app/exports /data/chrome-profile && chown -R appuser:appuser /app /data
+# Non-root user
+RUN useradd --create-home --shell /bin/bash appuser \
+    && mkdir -p /app/exports /data/chrome-profile \
+    && chown -R appuser:appuser /app /data
+
 USER appuser
 
 EXPOSE 8000

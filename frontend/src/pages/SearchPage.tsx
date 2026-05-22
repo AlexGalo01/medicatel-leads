@@ -173,7 +173,8 @@ export function SearchPage(): JSX.Element {
   const [targetUrl, setTargetUrl] = useState("");
   const [userPrompt, setUserPrompt] = useState("");
   const [selectedScrapingSiteIds, setSelectedScrapingSiteIds] = useState<Set<string>>(new Set());
-  const searchFocus: SearchFocus = "general";
+  const [socialNetwork, setSocialNetwork] = useState<string | null>(null);
+  const searchFocus: SearchFocus = socialNetwork === "facebook" ? "facebook" : "general";
   const contactChannels = defaultChannelsForFocus(searchFocus);
   const directoriesQuery = useQuery({
     queryKey: ["directories"],
@@ -455,7 +456,7 @@ export function SearchPage(): JSX.Element {
             }}
           >
             <button type="button" style={modeTabStyle(activeMode === "search")} onClick={() => setActiveMode("search")}>
-              <Zap size={15} aria-hidden /> Búsqueda EXA
+              <Zap size={15} aria-hidden /> Búsqueda Agéntica
             </button>
             <button type="button" style={modeTabStyle(activeMode === "import")} onClick={() => setActiveMode("import")}>
               <LinkIcon size={15} aria-hidden /> Importar URL
@@ -484,40 +485,54 @@ export function SearchPage(): JSX.Element {
                 </div>
               </div>
 
-              {/* Social network quick search — not yet functional */}
+              {/* Social network search */}
               <div>
                 <label style={{ ...labelStyle, marginBottom: 8 }}>Buscar en red específica</label>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {[
-                    { icon: <Instagram size={14} />, label: "Instagram", color: "#E1306C", bg: "#FDF2F8" },
-                    { icon: <Facebook size={14} />, label: "Facebook", color: "#1877F2", bg: "#EFF6FF" },
-                    { icon: <Linkedin size={14} />, label: "LinkedIn", color: "#0A66C2", bg: "#EFF6FF" },
-                    { icon: <Twitter size={14} />, label: "Twitter / X", color: "var(--color-text)", bg: "var(--color-surface-alt)" },
-                    { icon: <Youtube size={14} />, label: "YouTube", color: "#FF0000", bg: "#FEF2F2" },
-                    { icon: <Map size={14} />, label: "Google Maps", color: "#059669", bg: "#F0FDF4" },
-                  ].map(({ icon, label, color, bg }) => (
-                    <button
-                      key={label}
-                      type="button"
-                      disabled
-                      title="Próximamente"
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 6,
-                        padding: "6px 12px", borderRadius: 8,
-                        border: `1px solid ${color}30`,
-                        background: bg, color,
-                        fontSize: 12, fontWeight: 500,
-                        fontFamily: "inherit",
-                        cursor: "not-allowed", opacity: 0.65,
-                      }}
-                    >
-                      {icon} {label}
-                    </button>
-                  ))}
+                    { key: "facebook", icon: <Facebook size={14} />, label: "Facebook", color: "#1877F2", bg: "#EFF6FF", enabled: true },
+                    { key: "instagram", icon: <Instagram size={14} />, label: "Instagram", color: "#E1306C", bg: "#FDF2F8", enabled: false },
+                    { key: "linkedin", icon: <Linkedin size={14} />, label: "LinkedIn", color: "#0A66C2", bg: "#EFF6FF", enabled: false },
+                    { key: "twitter", icon: <Twitter size={14} />, label: "Twitter / X", color: "var(--color-text)", bg: "var(--color-surface-alt)", enabled: false },
+                    { key: "youtube", icon: <Youtube size={14} />, label: "YouTube", color: "#FF0000", bg: "#FEF2F2", enabled: false },
+                    { key: "maps", icon: <Map size={14} />, label: "Google Maps", color: "#059669", bg: "#F0FDF4", enabled: false },
+                  ].map(({ key, icon, label, color, bg, enabled }) => {
+                    const isActive = socialNetwork === key;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        disabled={!enabled}
+                        title={enabled ? (isActive ? "Desactivar" : `Buscar en ${label}`) : "Próximamente"}
+                        onClick={() => setSocialNetwork(isActive ? null : key)}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 6,
+                          padding: "6px 12px", borderRadius: 8,
+                          border: isActive ? `2px solid ${color}` : `1px solid ${color}30`,
+                          background: isActive ? color : bg,
+                          color: isActive ? "#fff" : color,
+                          fontSize: 12, fontWeight: 600,
+                          fontFamily: "inherit",
+                          cursor: enabled ? "pointer" : "not-allowed",
+                          opacity: enabled ? 1 : 0.45,
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        {icon} {label}
+                      </button>
+                    );
+                  })}
                 </div>
-                <p style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 6 }}>
-                  Próximamente disponibles — por ahora usa la búsqueda general.
-                </p>
+                {socialNetwork === "facebook" && (
+                  <p style={{ fontSize: 11, color: "#1877F2", marginTop: 6, fontWeight: 500 }}>
+                    Se buscará con site:facebook.com via Brave/Exa en paralelo con la búsqueda normal.
+                  </p>
+                )}
+                {!socialNetwork && (
+                  <p style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 6 }}>
+                    Selecciona una red para incluirla en la búsqueda.
+                  </p>
+                )}
               </div>
 
 

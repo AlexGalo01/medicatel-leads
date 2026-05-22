@@ -34,6 +34,7 @@ class UsersRepository:
         display_name: str,
         role: str = "user",
         permissions: list[str] | None = None,
+        allowed_directory_ids: list[str] | None = None,
     ) -> User:
         u = User(
             email=email.strip().lower(),
@@ -41,12 +42,15 @@ class UsersRepository:
             display_name=display_name.strip()[:160] or "Usuario",
             role=role if role in ("admin", "user") else "user",
             permissions=permissions or [],
+            allowed_directory_ids=allowed_directory_ids,
             is_active=True,
         )
         self.session.add(u)
         await self.session.commit()
         await self.session.refresh(u)
         return u
+
+    _SENTINEL = object()
 
     async def update(
         self,
@@ -57,6 +61,7 @@ class UsersRepository:
         role: str | None = None,
         is_active: bool | None = None,
         permissions: list[str] | None = None,
+        allowed_directory_ids: list[str] | None | object = _SENTINEL,
     ) -> User | None:
         user = await self.get_by_id(user_id)
         if user is None:
@@ -71,6 +76,8 @@ class UsersRepository:
             user.is_active = is_active
         if permissions is not None:
             user.permissions = permissions
+        if allowed_directory_ids is not UsersRepository._SENTINEL:
+            user.allowed_directory_ids = allowed_directory_ids  # type: ignore[assignment]
         self.session.add(user)
         await self.session.commit()
         await self.session.refresh(user)

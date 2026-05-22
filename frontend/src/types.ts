@@ -8,6 +8,7 @@ export interface UserPublic {
   display_name: string;
   role: UserRole;
   permissions: Permission[];
+  allowed_directory_ids: string[] | null;
   is_active: boolean;
 }
 
@@ -29,6 +30,7 @@ export interface AdminCreateUserRequest {
   display_name: string;
   role: UserRole;
   permissions: Permission[];
+  allowed_directory_ids?: string[] | null;
 }
 
 export interface AdminUpdateUserRequest {
@@ -37,6 +39,7 @@ export interface AdminUpdateUserRequest {
   role?: UserRole;
   is_active?: boolean;
   permissions?: Permission[];
+  allowed_directory_ids?: string[] | null;
 }
 
 export interface AdminUsersListResponse {
@@ -49,7 +52,7 @@ export interface AdminUserJobsResponse {
   user: UserPublic;
 }
 
-export type SearchFocus = "general" | "linkedin" | "instagram";
+export type SearchFocus = "general" | "linkedin" | "instagram" | "facebook";
 
 export type ExaCategoryChoice = "people" | "company" | "local_business";
 
@@ -558,4 +561,81 @@ export interface ScrapingSiteUpdateRequest {
 
 export interface ScrapingSitesListResponse {
   items: ScrapingSite[];
+}
+
+// ── Dashboard ────────────────────────────────────────────────────
+
+export interface StepMetric {
+  step_id: string;
+  step_name: string;
+  directory_id: string;
+  directory_name: string;
+  count: number;
+  display_order: number;
+}
+
+export interface ConversionStep {
+  from_step: string;
+  to_step: string;
+  from_count: number;
+  to_count: number;
+  rate: number;
+}
+
+export interface OwnerMetric {
+  user_id: string;
+  display_name: string;
+  count: number;
+}
+
+export interface AvgTimeStep {
+  step_name: string;
+  avg_hours: number;
+}
+
+export interface DashboardPipelineResponse {
+  total_opportunities: number;
+  active_opportunities: number;
+  won_count: number;
+  lost_count: number;
+  overall_win_rate: number;
+  opportunities_by_step: StepMetric[];
+  conversion_rates: ConversionStep[];
+  won_lost: Record<string, number>;
+  response_outcomes: Record<string, number>;
+  by_owner: OwnerMetric[];
+  avg_time_per_step: AvgTimeStep[];
+}
+
+export interface DailyCount {
+  date: string;
+  count: number;
+}
+
+export interface CategoryCount {
+  name: string;
+  count: number;
+}
+
+export interface ScoreRange {
+  range: string;
+  count: number;
+}
+
+export interface DashboardActivityResponse {
+  total_searches: number;
+  avg_leads_per_search: number;
+  avg_lead_score: number;
+  search_jobs_by_status: Record<string, number>;
+  lead_score_distribution: ScoreRange[];
+  validation_rates: Record<string, number>;
+  by_import_source: Record<string, number>;
+  scrape_jobs_by_status: Record<string, number>;
+  top_scraping_sites: CategoryCount[];
+  contact_coverage: Record<string, number>;
+  opportunities_per_day: DailyCount[];
+  top_specialties: CategoryCount[];
+  top_cities: CategoryCount[];
+  top_countries: CategoryCount[];
+  active_directories: CategoryCount[];
 }

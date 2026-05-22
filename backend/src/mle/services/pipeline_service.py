@@ -37,6 +37,13 @@ async def run_job_pipeline(job_id: UUID) -> None:
 
         base_query = str(job.metadata_json.get("query_text", "")).strip() or job.specialty
         query_text = _build_query_text(base_query=base_query)
+
+        # Inject domain restriction for social network searches
+        focus = str(job.metadata_json.get("focus", "general"))
+        if focus == "facebook":
+            search_plan["include_domains"] = ["facebook.com"]
+            logger.info("Facebook focus: restricting search to facebook.com job_id=%s", job_id)
+
         await jobs_repository.update_status(
             job_id=job.id,
             status="running",

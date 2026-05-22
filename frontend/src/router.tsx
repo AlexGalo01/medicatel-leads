@@ -20,6 +20,7 @@ import { RegisterPage } from "./pages/RegisterPage";
 import { SearchPage } from "./pages/SearchPage";
 import { UrlScrapeJobPage } from "./pages/UrlScrapeJobPage";
 import { ScrapingSourcesPage } from "./pages/ScrapingSourcesPage";
+import { DashboardPage } from "./pages/DashboardPage";
 
 export const appRouter = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -32,7 +33,8 @@ export const appRouter = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      { index: true, element: <Navigate to="/search" replace /> },
+      { index: true, element: <Navigate to="/dashboard" replace /> },
+      { path: "dashboard", element: <DashboardPage /> },
       { path: "search", element: <SearchPage /> },
       { path: "sources", element: <ScrapingSourcesPage /> },
       { path: "jobs/:jobId/result/:resultIndex", element: <JobExaResultDetailPage /> },

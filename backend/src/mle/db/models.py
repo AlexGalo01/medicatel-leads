@@ -56,6 +56,10 @@ class User(SQLModel, table=True):
     permissions: list[str] = Field(
         default_factory=list, sa_column=Column(JSON, nullable=False, server_default="[]")
     )
+    allowed_directory_ids: list[str] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True),
+        description="NULL = all directories; [] = none; ['uuid',...] = only those",
+    )
     is_active: bool = Field(default=True, index=True)
     deleted_by: UUID | None = Field(default=None, index=True, foreign_key="users.id")
     deleted_at: datetime | None = Field(

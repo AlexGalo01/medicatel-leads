@@ -17,7 +17,7 @@ class ApiErrorResponse(BaseModel):
     error: ApiErrorBody
 
 
-SearchFocusLiteral = Literal["general", "linkedin", "instagram"]
+SearchFocusLiteral = Literal["general", "linkedin", "instagram", "facebook"]
 ExaCategoryLiteral = Literal["people", "company", "local_business"]
 
 
@@ -150,6 +150,7 @@ class UserPublic(BaseModel):
     display_name: str
     role: str
     permissions: list[str] = Field(default_factory=list)
+    allowed_directory_ids: list[str] | None = None
     is_active: bool = True
 
 
@@ -176,6 +177,7 @@ class AdminCreateUserRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=160)
     role: Literal["admin", "user"] = "user"
     permissions: list[str] = Field(default_factory=list)
+    allowed_directory_ids: list[str] | None = None
 
 
 class AdminUpdateUserRequest(BaseModel):
@@ -184,6 +186,7 @@ class AdminUpdateUserRequest(BaseModel):
     role: Literal["admin", "user"] | None = None
     is_active: bool | None = None
     permissions: list[str] | None = None
+    allowed_directory_ids: list[str] | None = None
 
 
 class AdminUsersListResponse(BaseModel):

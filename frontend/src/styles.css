@@ -8603,9 +8603,8 @@ textarea.ui-input {
 .dir-table-row { cursor: pointer; transition: background 0.12s; }
 .dir-table-row:hover { background: #F8F8FC; }
 .dir-table-row-actions {
-  display: flex; gap: 6px; opacity: 0; transition: opacity 0.15s;
+  display: flex; gap: 6px; justify-content: flex-end;
 }
-.dir-table-row:hover .dir-table-row-actions { opacity: 1; }
 
 /* ===== Opportunities List v2 ===== */
 .opp-table-row-v2:hover { background: #F1F5F9; cursor: pointer; }

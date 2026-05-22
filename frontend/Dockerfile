@@ -1,17 +1,19 @@
+# ── Stage 1: Build ───────────────────────────────────────────────────
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package*.json /app/
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
 
-COPY . /app
+COPY . .
 
 ARG VITE_API_BASE_URL=/api
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 RUN npm run build
 
+# ── Stage 2: Runtime ─────────────────────────────────────────────────
 FROM nginx:1.27-alpine AS runtime
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf

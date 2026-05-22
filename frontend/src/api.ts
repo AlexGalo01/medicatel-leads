@@ -42,6 +42,8 @@ import type {
   UrlScrapeJobStatusResponse,
   UrlScrapeJobsListResponse,
   UserPublic,
+  DashboardPipelineResponse,
+  DashboardActivityResponse,
 } from "./types";
 
 const DEFAULT_API_ORIGIN = "http://localhost:8000";
@@ -1133,6 +1135,18 @@ export async function updateScrapingSite(
     body: JSON.stringify(payload),
   });
   return parseJsonResponse<ScrapingSite>(response);
+}
+
+// ── Dashboard ────────────────────────────────────────────────────
+
+export async function getDashboardPipeline(): Promise<DashboardPipelineResponse> {
+  const response = await apiFetch(buildApiUrl("/dashboard/pipeline"));
+  return parseJsonResponse<DashboardPipelineResponse>(response);
+}
+
+export async function getDashboardActivity(): Promise<DashboardActivityResponse> {
+  const response = await apiFetch(buildApiUrl("/dashboard/activity"));
+  return parseJsonResponse<DashboardActivityResponse>(response);
 }
 
 export async function deleteScrapingSite(siteId: string): Promise<void> {

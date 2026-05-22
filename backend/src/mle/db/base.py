@@ -267,6 +267,11 @@ async def init_db() -> None:
                 text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ")
             )
 
+        # 014: allowed_directory_ids on users
+        await connection.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_directory_ids JSONB"
+        ))
+
         # 012: scraping_sites table
         await connection.execute(text("""
             CREATE TABLE IF NOT EXISTS scraping_sites (

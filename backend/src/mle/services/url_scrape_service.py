@@ -357,6 +357,10 @@ async def _scrape_url_text(url: str) -> str:
         try:
             page = await browser.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            # Dismiss Facebook login modal if present
+            if "facebook.com" in url.lower():
+                from mle.services.facebook_search_service import dismiss_facebook_modal
+                await dismiss_facebook_modal(page)
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await page.wait_for_timeout(1_500)
             return await page.inner_text("body")

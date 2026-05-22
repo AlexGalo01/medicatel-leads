@@ -218,7 +218,12 @@ async def _execute_web_search(
             timeout_seconds=settings.brave_search_timeout_seconds,
         )
         brave_country = iso if len(iso) == 2 else None
-        brave_coros.append(brave_client.web_search(query, country=brave_country, count=20, pages=2))
+        # Append site: restriction for Brave if include_domains is set
+        brave_query = query
+        include_domains = list(search_config.get("include_domains", []))
+        if include_domains:
+            brave_query = f"site:{include_domains[0]} {query}"
+        brave_coros.append(brave_client.web_search(brave_query, country=brave_country, count=20, pages=2))
 
     # Ejecutar en paralelo
     coros_to_run = ([exa_coro] if exa_coro else []) + brave_coros
@@ -304,6 +309,14 @@ async def agentic_search_node(state: LeadSearchGraphState) -> dict[str, object]:
 
         # 1. Ejecutar planner para obtener contexto estructurado
         planner_output = _build_planner_output(state).model_dump()
+
+        # Inject include_domains from search_plan (e.g., facebook focus)
+        plan_domains = state.search_plan.get("include_domains")
+        if plan_domains and isinstance(plan_domains, list):
+            sc = dict(planner_output.get("search_config", {}))
+            sc["include_domains"] = plan_domains
+            planner_output["search_config"] = sc
+            logger.info("Injected include_domains=%s from search_plan job_id=%s", plan_domains, state.job_id)
 
         # 2. Ejecutar company_anchor si aplica (reutilizar lógica inline)
         company_anchor = planner_output.get("company_anchor")

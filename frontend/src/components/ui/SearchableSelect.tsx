@@ -34,16 +34,23 @@ export function SearchableSelect({
 
   const selectedOption = options.find((opt) => opt.id === value);
 
-  // Update menu position when opened
+  // Update menu position when opened and on scroll/resize
   useEffect(() => {
-    if (isOpen && buttonRef.current) {
+    if (!isOpen || !buttonRef.current) return;
+
+    function updatePosition() {
+      if (!buttonRef.current) return;
       const rect = buttonRef.current.getBoundingClientRect();
-      setMenuPosition({
-        top: rect.bottom,
-        left: rect.left,
-        width: rect.width,
-      });
+      setMenuPosition({ top: rect.bottom, left: rect.left, width: rect.width });
     }
+
+    updatePosition();
+    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("resize", updatePosition);
+    };
   }, [isOpen]);
 
   useEffect(() => {

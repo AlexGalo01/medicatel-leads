@@ -1,4 +1,4 @@
-import { Bot, FolderKanban, LogOut, Search, UserCog, Globe } from "lucide-react";
+import { Bot, FolderKanban, LayoutDashboard, LogOut, Search, UserCog, Globe } from "lucide-react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { useAuth } from "./auth/AuthContext";
@@ -52,6 +52,10 @@ export function AppLayout(): JSX.Element {
 
         {/* Nav */}
         <nav className="app-sidebar-nav">
+          <NavLink to="/dashboard" className={({ isActive }) => `app-sidebar-link ui-nav-link${isActive ? " is-active" : ""}`}>
+            <LayoutDashboard size={16} aria-hidden />
+            <span>Dashboard</span>
+          </NavLink>
           {canSearch && (
             <NavLink to="/search" className={({ isActive }) => `app-sidebar-link ui-nav-link${isActive ? " is-active" : ""}`}>
               <Search size={16} aria-hidden />
@@ -62,12 +66,7 @@ export function AppLayout(): JSX.Element {
             <FolderKanban size={16} aria-hidden />
             <span>Listas</span>
           </NavLink>
-          {canSearch && (
-            <NavLink to="/sources" className={({ isActive }) => `app-sidebar-link ui-nav-link${isActive ? " is-active" : ""}`}>
-              <Globe size={16} aria-hidden />
-              <span>Fuentes</span>
-            </NavLink>
-          )}
+          {/* Sources tab hidden — directory scraping now runs automatically in parallel with search */}
           {isAdmin && (
             <NavLink
               to="/admin/users"

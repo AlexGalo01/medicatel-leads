@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     llm_provider: str = Field(default="openai", alias="LLM_PROVIDER")
     # Concurrencia de auto_enrich_node para controlar rate limit LLM (OpenAI 500 RPM, Gemini 15 RPM).
     auto_enrich_concurrency: int = Field(default=5, ge=1, le=20, alias="AUTO_ENRICH_CONCURRENCY")
+    facebook_session_path: str = Field(default="sessions/facebook_state.json", alias="FACEBOOK_SESSION_PATH")
     export_dir: str = Field(default="/app/exports", alias="EXPORT_DIR")
     langsmith_tracing: bool = Field(default=False, alias="LANGSMITH_TRACING")
     langsmith_endpoint: AnyUrl | None = Field(default=None, alias="LANGSMITH_ENDPOINT")

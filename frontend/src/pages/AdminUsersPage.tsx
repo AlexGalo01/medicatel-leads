@@ -13,9 +13,9 @@ import {
   X,
 } from "lucide-react";
 
-import { createAdminUser, deleteAdminUser, listAdminUsers, updateAdminUser } from "../api";
+import { createAdminUser, deleteAdminUser, listAdminUsers, listDirectories, updateAdminUser } from "../api";
 import { useAuth } from "../auth/AuthContext";
-import type { Permission, UserPublic, UserRole } from "../types";
+import type { Directory, Permission, UserPublic, UserRole } from "../types";
 
 // ── Avatar helpers ──────────────────────────────────────────────────────────
 const AVATAR_PALETTE = [
@@ -54,9 +54,11 @@ interface PanelUser {
 function UserPanel({
   panel,
   onClose,
+  directories,
 }: {
   panel: PanelUser;
   onClose: () => void;
+  directories: Directory[];
 }) {
   const queryClient = useQueryClient();
   const isEdit = panel.mode === "edit" && panel.user != null;
@@ -66,11 +68,18 @@ function UserPanel({
   const [email, setEmail] = useState(u?.email ?? "");
   const [role, setRole] = useState<UserRole>(u?.role ?? "user");
   const [perms, setPerms] = useState<Permission[]>(u?.permissions ?? []);
+  const [restrictDirs, setRestrictDirs] = useState(u?.allowed_directory_ids != null);
+  const [allowedDirs, setAllowedDirs] = useState<string[]>(u?.allowed_directory_ids ?? []);
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const togglePerm = (p: Permission) =>
     setPerms((prev) => prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]);
+
+  const toggleDir = (dirId: string) =>
+    setAllowedDirs((prev) => prev.includes(dirId) ? prev.filter((x) => x !== dirId) : [...prev, dirId]);
+
+  const computedAllowedDirs = restrictDirs ? allowedDirs : null;
 
   const saveMut = useMutation({
     mutationFn: () =>
@@ -80,6 +89,7 @@ function UserPanel({
             display_name: displayName,
             role,
             permissions: perms,
+            allowed_directory_ids: computedAllowedDirs,
             ...(password ? { password } : {}),
           } as any)
         : createAdminUser({
@@ -87,6 +97,7 @@ function UserPanel({
             display_name: displayName,
             role,
             permissions: perms,
+            allowed_directory_ids: computedAllowedDirs,
             password,
           }),
     onSuccess: () => {
@@ -201,6 +212,47 @@ function UserPanel({
                   </label>
                 ))}
               </div>
+            </div>
+
+            {/* Directory restriction */}
+            <div style={{ opacity: isAdminRole ? 0.5 : 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <p style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text)", margin: 0 }}>
+                  Restringir directorios
+                </p>
+                <ToggleSwitch
+                  checked={restrictDirs && !isAdminRole}
+                  disabled={isAdminRole}
+                  onChange={() => setRestrictDirs((v) => !v)}
+                />
+              </div>
+              {restrictDirs && !isAdminRole && (
+                <div style={{
+                  background: "var(--color-surface-alt)", border: "1px solid var(--color-border)",
+                  borderRadius: 8, padding: "14px 16px",
+                  display: "flex", flexDirection: "column", gap: 10,
+                  maxHeight: 180, overflowY: "auto",
+                }}>
+                  {directories.length === 0 ? (
+                    <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Sin directorios disponibles</span>
+                  ) : directories.map((d) => (
+                    <label key={d.id} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={allowedDirs.includes(d.id)}
+                        onChange={() => toggleDir(d.id)}
+                        style={{ width: 15, height: 15, accentColor: "#4F46E5" }}
+                      />
+                      <span style={{ fontSize: 13, color: "var(--color-text)" }}>{d.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {!restrictDirs && !isAdminRole && (
+                <p style={{ fontSize: 11, color: "var(--color-text-secondary)", margin: 0 }}>
+                  Acceso a todos los directorios
+                </p>
+              )}
             </div>
 
             <div style={{ borderTop: "1px solid #E5E7EB", paddingTop: 16 }}>
@@ -384,6 +436,13 @@ export function AdminUsersPage(): JSX.Element {
     enabled: user?.role === "admin",
   });
 
+  const dirQuery = useQuery({
+    queryKey: ["directories"],
+    queryFn: listDirectories,
+    enabled: user?.role === "admin",
+  });
+  const directories = dirQuery.data?.items ?? [];
+
   const toggleActiveMut = useMutation({
     mutationFn: ({ userId, isActive }: { userId: string; isActive: boolean }) =>
       updateAdminUser(userId, { is_active: isActive }),
@@ -552,7 +611,16 @@ export function AdminUsersPage(): JSX.Element {
                                     {p === "use_search" ? "Búsqueda" : "Oportunidades"}
                                   </span>
                                 ))}
-                                {(u.permissions ?? []).length === 0 && (
+                                {u.allowed_directory_ids != null && (
+                                  <span style={{
+                                    display: "inline-flex", alignItems: "center",
+                                    padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 500,
+                                    background: "#FEF3C7", color: "#D97706",
+                                  }}>
+                                    {u.allowed_directory_ids.length} dir.
+                                  </span>
+                                )}
+                                {(u.permissions ?? []).length === 0 && u.allowed_directory_ids == null && (
                                   <span style={{ fontSize: 12, color: "#D1D5DB" }}>Sin permisos</span>
                                 )}
                               </div>
@@ -618,7 +686,7 @@ export function AdminUsersPage(): JSX.Element {
       </div>
 
       {/* Slide Panel */}
-      {panel && <UserPanel panel={panel} onClose={() => setPanel(null)} />}
+      {panel && <UserPanel panel={panel} onClose={() => setPanel(null)} directories={directories} />}
 
       {/* Delete Modal */}
       {deleteTarget && (

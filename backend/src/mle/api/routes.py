@@ -1264,6 +1264,8 @@ async def export_directory_opportunities_xlsx(
     _u: User = Depends(require_permission("manage_opportunities")),
 ) -> FileResponse:
     """Exportar todas las oportunidades de un directorio a Excel."""
+    if not _user_can_access_directory(_u, directory_id):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este directorio.")
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
     from mle.services.export_service import _sanitize_filename, _strip_markdown
@@ -2273,6 +2275,7 @@ def _user_to_public(u: User) -> UserPublic:
         display_name=u.display_name,
         role=u.role,
         permissions=u.permissions if isinstance(u.permissions, list) else [],
+        allowed_directory_ids=u.allowed_directory_ids,
         is_active=u.is_active,
     )
 
@@ -2360,6 +2363,7 @@ async def admin_create_user(
             display_name=payload.display_name,
             role=payload.role,
             permissions=perms,
+            allowed_directory_ids=payload.allowed_directory_ids,
         )
     return _user_to_public(u)
 
@@ -2377,14 +2381,16 @@ async def admin_update_user(
             existing = await repo.get_by_email(payload.email)
             if existing and existing.id != user_id:
                 raise HTTPException(status_code=400, detail="El correo ya está registrado.")
-        u = await repo.update(
-            user_id,
+        update_kwargs: dict = dict(
             email=payload.email,
             display_name=payload.display_name,
             role=payload.role,
             is_active=payload.is_active,
             permissions=perms,
         )
+        if "allowed_directory_ids" in payload.model_fields_set:
+            update_kwargs["allowed_directory_ids"] = payload.allowed_directory_ids
+        u = await repo.update(user_id, **update_kwargs)
         if u is None:
             _raise_not_found("Usuario")
     return _user_to_public(u)
@@ -2436,6 +2442,10 @@ async def list_directories(
     async with async_session_factory() as session:
         repo = DirectoriesRepository(session)
         directories = await repo.list_all()
+        # Filter by allowed_directory_ids (admins and None = unrestricted)
+        if _u.role != "admin" and _u.allowed_directory_ids is not None:
+            allowed = {UUID(d) for d in _u.allowed_directory_ids}
+            directories = [d for d in directories if d.id in allowed]
         items = [await _directory_to_read(repo, d) for d in directories]
     return DirectoryListResponse(items=items)
 
@@ -2456,11 +2466,20 @@ async def create_directory(
         return await _directory_to_read(repo, directory)
 
 
+def _user_can_access_directory(user: User, directory_id: UUID) -> bool:
+    """Check if user has access to the given directory."""
+    if user.role == "admin" or user.allowed_directory_ids is None:
+        return True
+    return str(directory_id) in user.allowed_directory_ids
+
+
 @protected_router.get("/directories/{directory_id}", response_model=DirectoryRead)
 async def get_directory(
     directory_id: UUID,
     _u: User = Depends(require_permission("use_search")),
 ) -> DirectoryRead:
+    if not _user_can_access_directory(_u, directory_id):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este directorio.")
     async with async_session_factory() as session:
         repo = DirectoriesRepository(session)
         directory = await repo.get(directory_id)
@@ -2475,6 +2494,8 @@ async def update_directory(
     payload: DirectoryUpdateRequest,
     _u: User = Depends(require_permission("use_search")),
 ) -> DirectoryRead:
+    if not _user_can_access_directory(_u, directory_id):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este directorio.")
     async with async_session_factory() as session:
         repo = DirectoriesRepository(session)
         directory = await repo.update(
@@ -2493,6 +2514,8 @@ async def delete_directory(
     payload: DirectoryDeleteRequest = DirectoryDeleteRequest(),
     current_user: User = Depends(require_permission("use_search")),
 ) -> Response:
+    if not _user_can_access_directory(current_user, directory_id):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este directorio.")
     async with async_session_factory() as session:
         repo = DirectoriesRepository(session)
         ok = await repo.delete(
@@ -2519,6 +2542,8 @@ async def list_directory_sources(
     status: str | None = Query(default=None, max_length=32),
     _u: User = Depends(require_permission("use_search")),
 ) -> DirectorySourcesListResponse:
+    if not _user_can_access_directory(_u, directory_id):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este directorio.")
     from mle.repositories.directory_sources_repository import (
         DirectorySourcesRepository,
     )
@@ -2561,6 +2586,8 @@ async def create_directory_source(
     payload: DirectorySourceCreateRequest,
     current: User = Depends(require_permission("use_search")),
 ) -> DirectorySourceItemResponse:
+    if not _user_can_access_directory(current, directory_id):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este directorio.")
     from mle.repositories.directory_sources_repository import (
         DirectorySourcesRepository,
     )
@@ -2604,6 +2631,8 @@ async def update_directory_source(
     payload: DirectorySourceUpdateRequest,
     _u: User = Depends(require_permission("use_search")),
 ) -> DirectorySourceItemResponse:
+    if not _user_can_access_directory(_u, directory_id):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este directorio.")
     from mle.repositories.directory_sources_repository import (
         DirectorySourcesRepository,
     )
@@ -2647,6 +2676,8 @@ async def delete_directory_source(
     source_id: UUID,
     _u: User = Depends(require_permission("use_search")),
 ) -> Response:
+    if not _user_can_access_directory(_u, directory_id):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este directorio.")
     from mle.repositories.directory_sources_repository import (
         DirectorySourcesRepository,
     )
@@ -2672,6 +2703,8 @@ async def scrape_directory_source(
     current: User = Depends(require_permission("use_search")),
 ) -> dict[str, str]:
     """Crea un URL scrape job a partir de una fuente guardada y la vincula."""
+    if not _user_can_access_directory(current, directory_id):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este directorio.")
     from mle.repositories.directory_sources_repository import (
         DirectorySourcesRepository,
     )
@@ -3017,8 +3050,10 @@ async def scrape_scraping_site(
 
 # Incluir sub-routers al final: si no, FastAPI copia public/protected *vacíos* y /api/v1/* devuelve 404.
 from mle.api.url_scrape_routes import url_scrape_router
+from mle.api.dashboard_routes import dashboard_router
 
 protected_router.include_router(url_scrape_router)
+protected_router.include_router(dashboard_router)
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(public_router)

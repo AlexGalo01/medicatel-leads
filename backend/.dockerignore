@@ -4,3 +4,6 @@ __pycache__
 tests
 exports
 README.md
+.git
+.env
+playwright_tool
