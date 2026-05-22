@@ -71,6 +71,47 @@ async def run_job_pipeline(job_id: UUID) -> None:
                 for scrape_job_id in scraping_jobs:
                     asyncio.create_task(run_url_scrape_pipeline(scrape_job_id))
 
+    # Auto-launch all scraping sites in parallel for people/health searches
+    # This complements the EXA search — does NOT replace or block it
+    if not job.scraping_site_ids:  # Only if not already manually specified
+        exa_cat = search_plan.get("exa_category")
+        if exa_cat in ("people", None):  # people searches or unspecified
+            try:
+                async with async_session_factory() as session:
+                    sites_repo = ScrapingSitesRepository(session)
+                    url_jobs_repo = UrlScrapeJobsRepository(session)
+                    all_sites = await sites_repo.list_all()
+                    if all_sites:
+                        logger.info(
+                            "Auto-launching %d scraping sites in parallel job_id=%s",
+                            len(all_sites), job_id,
+                        )
+                        auto_scrape_ids: list[UUID] = []
+                        for site in all_sites:
+                            prompt = site.scrape_prompt or f"Extraer profesionales: {site.title or site.url}"
+                            scrape_job = await url_jobs_repo.create(
+                                target_url=site.url,
+                                user_prompt=prompt,
+                                directory_id=job.directory_id,
+                            )
+                            scrape_job.auto_push = True
+                            session.add(scrape_job)
+                            auto_scrape_ids.append(scrape_job.id)
+                        if auto_scrape_ids:
+                            await session.commit()
+                            # Stagger launches to avoid overwhelming DB/network
+                            async def _launch_staggered(ids: list[UUID]) -> None:
+                                for i, sid in enumerate(ids):
+                                    if i > 0:
+                                        await asyncio.sleep(3)
+                                    try:
+                                        await run_url_scrape_pipeline(sid)
+                                    except Exception as e:
+                                        logger.warning("Scrape site failed sid=%s: %s", sid, e)
+                            asyncio.create_task(_launch_staggered(auto_scrape_ids))
+            except Exception as exc:
+                logger.warning("Auto-launch scraping sites failed: %s", exc)
+
     initial_state = LeadSearchGraphState(
         job_id=job_id,
         query_text=query_text,

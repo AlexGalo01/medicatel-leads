@@ -29,7 +29,9 @@ import {
   cancelSearchJob,
   clarifySearchJob,
   createDirectorySource,
+  createManualOpportunity,
   createOpportunityFromPreview,
+  createScrapingSite,
   downloadLeadsCsvFile,
   downloadLeadsXlsxFile,
   downloadPreviewXlsxFile,
@@ -70,11 +72,11 @@ function formatRelative(iso: string | undefined): string {
 
 type PreviewLabel = "no_relevante" | "duplicado" | "ya_contactado" | "fuente";
 
-const LABEL_OPTIONS: { value: PreviewLabel; label: string }[] = [
-  { value: "no_relevante", label: "No relevante" },
-  { value: "duplicado", label: "Duplicado" },
-  { value: "ya_contactado", label: "Ya contactado" },
-  { value: "fuente", label: "Fuente" },
+const LABEL_OPTIONS: { value: PreviewLabel; label: string; icon: string; desc: string }[] = [
+  { value: "no_relevante", label: "No relevante", icon: "x", desc: "No aplica a esta busqueda" },
+  { value: "duplicado", label: "Duplicado", icon: "copy", desc: "Ya existe en otra fuente" },
+  { value: "ya_contactado", label: "Ya contactado", icon: "check", desc: "Ya se hizo contacto" },
+  { value: "fuente", label: "Fuente", icon: "globe", desc: "Directorio o fuente de datos" },
 ];
 
 const LABEL_STYLE: Record<PreviewLabel, { bg: string; color: string }> = {
@@ -142,7 +144,7 @@ const LOADING_MESSAGES = [
   "Casi listo…",
 ];
 
-const TABLE_COLS = "48px minmax(220px,1fr) 150px 170px 110px";
+const TABLE_COLS = "48px minmax(220px,1fr) 150px 170px";
 
 export function JobSearchWorkspacePage(): JSX.Element {
   const { jobId = "" } = useParams();
@@ -722,7 +724,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
                     padding: "3px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600,
                     background: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A",
                   }}>
-                    ⚡ {filterStats.relevance_filter_heuristic_drops} por heurística
+                    ⚡ {filterStats.relevance_filter_heuristic_drops} filtrados automáticamente
                   </span>
                 )}
                 {filterStats.relevance_filter_mode === "degraded_exception" && (
@@ -841,43 +843,27 @@ export function JobSearchWorkspacePage(): JSX.Element {
             )}
 
             {/* MAIN CONTENT */}
-            {activeTab === "dropped" && filterStats?.relevance_filter_discarded_sample && filterStats.relevance_filter_discarded_sample.length > 0 ? (
-              <div style={{
-                background: "var(--c-card-bg)", border: "1px solid var(--color-border)",
-                borderRadius: 12, overflow: "hidden",
-                boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-              }}>
-                <div style={{
-                  display: "grid", gridTemplateColumns: "1fr 220px",
-                  gap: "0 12px", padding: "10px 16px",
-                  borderBottom: "1px solid var(--color-border)", background: "#F8FAFC",
-                  fontSize: 11, fontWeight: 600, color: "#808080",
-                  textTransform: "uppercase", letterSpacing: "0.05em",
-                }}>
-                  <div>URL descartada</div>
-                  <div>Razón</div>
-                </div>
-                {filterStats.relevance_filter_discarded_sample.map((item, i) => (
-                  <div key={i} style={{
-                    display: "grid", gridTemplateColumns: "1fr 220px",
-                    gap: "0 12px", padding: "9px 16px",
-                    borderBottom: "1px solid #F3F4F6", alignItems: "center",
-                  }}>
-                    <a
-                      href={item.url.startsWith("http") ? item.url : `https://${item.url}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{
-                        fontSize: 12, color: "#4F46E5", textDecoration: "none",
-                        overflow: "hidden", textOverflow: "ellipsis",
-                        whiteSpace: "nowrap", display: "block",
-                      }}
-                    >
-                      {item.url}
-                    </a>
-                    <span style={{ fontSize: 12, color: "#6B7280" }}>{item.reason_es || "—"}</span>
+            {activeTab === "dropped" && (
+              (filterStats?.relevance_filter_discarded_sample?.length ?? 0) > 0 ||
+              (filterStats?.heuristic_discarded_sample?.length ?? 0) > 0
+            ) ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {filterStats?.relevance_filter_discarded_sample && filterStats.relevance_filter_discarded_sample.length > 0 && (
+                  <div>
+                    <h4 style={{ fontSize: 13, fontWeight: 600, color: "#6B7280", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                      <Filter size={13} /> Descartados por IA ({filterStats.relevance_filter_discarded_sample.length})
+                    </h4>
+                    <DroppedItemsPanel items={filterStats.relevance_filter_discarded_sample} directoryId={directoryId ?? ""} />
                   </div>
-                ))}
+                )}
+                {filterStats?.heuristic_discarded_sample && filterStats.heuristic_discarded_sample.length > 0 && (
+                  <div>
+                    <h4 style={{ fontSize: 13, fontWeight: 600, color: "#6B7280", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                      ⚡ Filtrados automáticamente ({filterStats.heuristic_discarded_sample.length})
+                    </h4>
+                    <DroppedItemsPanel items={filterStats.heuristic_discarded_sample} directoryId={directoryId ?? ""} />
+                  </div>
+                )}
               </div>
             ) : awaitingClarification ? (
               <div style={{
@@ -1034,7 +1020,6 @@ export function JobSearchWorkspacePage(): JSX.Element {
                     <div>Perfil</div>
                     <div>Contacto</div>
                     <div>Acción</div>
-                    <div style={{ textAlign: "right" }}>Estado</div>
                   </div>
 
                   {/* Data rows */}
@@ -1189,47 +1174,20 @@ export function JobSearchWorkspacePage(): JSX.Element {
                         {/* Action / label */}
                         <div>
                           {searchOnlyDemo && row.previewIndex != null ? (
-                            <select
-                              className="preview-label-select"
-                              value={row.label ?? ""}
-                              style={row.label ? {
-                                background: LABEL_STYLE[row.label].bg,
-                                color: LABEL_STYLE[row.label].color,
-                                borderColor: LABEL_STYLE[row.label].color,
-                              } : undefined}
-                              onClick={(e) => e.preventDefault()}
-                              onChange={async (e) => {
-                                e.stopPropagation();
-                                const val = e.target.value || null;
+                            <LabelDropdown
+                              currentLabel={row.label ?? null}
+                              onSelect={async (val) => {
                                 try {
                                   await setPreviewItemLabel(jobId, row.previewIndex!, val);
                                   void queryClient.invalidateQueries({ queryKey: ["job-status", jobId] });
                                 } catch { /* silent */ }
                               }}
-                            >
-                              <option value="">Marcar como...</option>
-                              {LABEL_OPTIONS.map((o) => (
-                                <option key={o.value} value={o.value}>{o.label}</option>
-                              ))}
-                            </select>
+                            />
                           ) : row.stepLabel ? (
                             <span className="workspace-v3-row-step">{row.stepLabel}</span>
                           ) : null}
                         </div>
 
-                        {/* Status badge */}
-                        <div style={{ textAlign: "right" }}>
-                          {isSaved ? (
-                            <span style={{
-                              display: "inline-flex", alignItems: "center", gap: 5,
-                              padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 500,
-                              background: "#D1FAE5", color: "#059669",
-                            }}>
-                              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#059669", flexShrink: 0 }} />
-                              Guardado
-                            </span>
-                          ) : null}
-                        </div>
                       </div>
                     );
                   })}
@@ -1293,7 +1251,7 @@ export function JobSearchWorkspacePage(): JSX.Element {
         {/* RIGHT: INSIGHTS SIDEBAR */}
         {hasSidebar && (
           <aside style={{
-            width: 310, background: "var(--c-card-bg)", flexShrink: 0,
+            width: 380, background: "var(--c-card-bg)", flexShrink: 0,
             overflowY: "auto",
           }}>
 
@@ -1685,5 +1643,308 @@ export function JobSearchWorkspacePage(): JSX.Element {
         </div>
       )}
     </section>
+  );
+}
+
+/* ─── Label Dropdown ─────────────────────────────────────────────────── */
+
+const LABEL_ICONS: Record<PreviewLabel, JSX.Element> = {
+  no_relevante: <AlertTriangle size={13} />,
+  duplicado: <Bookmark size={13} />,
+  ya_contactado: <Phone size={13} />,
+  fuente: <Globe size={13} />,
+};
+
+function LabelDropdown({
+  currentLabel,
+  onSelect,
+}: {
+  currentLabel: PreviewLabel | null;
+  onSelect: (val: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const current = currentLabel ? LABEL_OPTIONS.find((o) => o.value === currentLabel) : null;
+  const style = currentLabel ? LABEL_STYLE[currentLabel] : null;
+
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
+      <button
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(!open); }}
+        style={{
+          display: "flex", alignItems: "center", gap: 5,
+          padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 500,
+          border: `1px solid ${style ? style.color : "#D1D5DB"}`,
+          background: style ? style.bg : "#fff",
+          color: style ? style.color : "#6B7280",
+          cursor: "pointer", whiteSpace: "nowrap",
+        }}
+      >
+        {current ? (
+          <>
+            {LABEL_ICONS[currentLabel!]}
+            {current.label}
+          </>
+        ) : (
+          <>
+            <ChevronDown size={12} />
+            Marcar
+          </>
+        )}
+      </button>
+
+      {open && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 50,
+            background: "#fff", borderRadius: 10, padding: 4,
+            boxShadow: "0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)",
+            border: "1px solid #E5E7EB", minWidth: 200,
+          }}
+        >
+          {currentLabel && (
+            <button
+              onClick={() => { onSelect(null); setOpen(false); }}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 8,
+                padding: "8px 10px", border: "none", background: "transparent",
+                borderRadius: 6, cursor: "pointer", fontSize: 12, color: "#9CA3AF",
+                textAlign: "left",
+              }}
+              onMouseEnter={(e) => { (e.target as HTMLElement).style.background = "#F9FAFB"; }}
+              onMouseLeave={(e) => { (e.target as HTMLElement).style.background = "transparent"; }}
+            >
+              Quitar etiqueta
+            </button>
+          )}
+          {LABEL_OPTIONS.map((o) => {
+            const s = LABEL_STYLE[o.value];
+            const isActive = currentLabel === o.value;
+            return (
+              <button
+                key={o.value}
+                onClick={() => { onSelect(o.value); setOpen(false); }}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 8,
+                  padding: "8px 10px", border: "none",
+                  background: isActive ? s.bg : "transparent",
+                  borderRadius: 6, cursor: "pointer", textAlign: "left",
+                }}
+                onMouseEnter={(e) => { if (!isActive) (e.target as HTMLElement).style.background = "#F9FAFB"; }}
+                onMouseLeave={(e) => { if (!isActive) (e.target as HTMLElement).style.background = "transparent"; }}
+              >
+                <span style={{
+                  width: 26, height: 26, borderRadius: 6, display: "flex",
+                  alignItems: "center", justifyContent: "center",
+                  background: s.bg, color: s.color, flexShrink: 0,
+                }}>
+                  {LABEL_ICONS[o.value]}
+                </span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "#111827" }}>{o.label}</div>
+                  <div style={{ fontSize: 11, color: "#9CA3AF" }}>{o.desc}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Dropped Items Panel with Save as Source / Lead ─────────────────── */
+
+function DroppedItemsPanel({
+  items,
+  directoryId,
+}: {
+  items: { url: string; reason_es?: string }[];
+  directoryId: string;
+}) {
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [savingAs, setSavingAs] = useState<"source" | "lead" | null>(null);
+  const [savedCount, setSavedCount] = useState(0);
+  const queryClient = useQueryClient();
+
+  const toggleAll = () => {
+    if (selected.size === items.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(items.map((_, i) => i)));
+    }
+  };
+
+  const toggle = (i: number) => {
+    const next = new Set(selected);
+    if (next.has(i)) next.delete(i);
+    else next.add(i);
+    setSelected(next);
+  };
+
+  const saveAsSource = async () => {
+    setSavingAs("source");
+    let count = 0;
+    for (const i of selected) {
+      const item = items[i];
+      if (!item) continue;
+      try {
+        let host = item.url;
+        try { host = new URL(item.url.startsWith("http") ? item.url : `https://${item.url}`).hostname; } catch {}
+        await createScrapingSite({
+          url: item.url.startsWith("http") ? item.url : `https://${item.url}`,
+          title: host,
+        });
+        count++;
+      } catch { /* skip duplicates */ }
+    }
+    setSavedCount(count);
+    setSavingAs(null);
+    setSelected(new Set());
+    void queryClient.invalidateQueries({ queryKey: ["scraping-sites"] });
+  };
+
+  const saveAsLead = async () => {
+    setSavingAs("lead");
+    let count = 0;
+    for (const i of selected) {
+      const item = items[i];
+      if (!item) continue;
+      try {
+        const fullUrl = item.url.startsWith("http") ? item.url : `https://${item.url}`;
+        let title = item.url;
+        try { title = new URL(fullUrl).hostname; } catch {}
+        await createManualOpportunity({
+          title,
+          source_url: fullUrl,
+          directory_id: directoryId || null,
+        });
+        count++;
+      } catch { /* skip */ }
+    }
+    setSavedCount(count);
+    setSavingAs(null);
+    setSelected(new Set());
+    void queryClient.invalidateQueries({ queryKey: ["opportunities"] });
+  };
+
+  return (
+    <div style={{
+      background: "var(--c-card-bg)", border: "1px solid var(--color-border)",
+      borderRadius: 12, overflow: "hidden",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+    }}>
+      {/* Action bar */}
+      {selected.size > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "8px 16px", background: "#EFF6FF",
+          borderBottom: "1px solid var(--color-border)",
+        }}>
+          <span style={{ fontSize: 12, color: "#1E40AF", fontWeight: 600 }}>
+            {selected.size} seleccionados
+          </span>
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={saveAsSource}
+            disabled={savingAs !== null}
+            style={{
+              padding: "5px 12px", fontSize: 12, fontWeight: 600,
+              background: "#4F46E5", color: "#fff", border: "none",
+              borderRadius: 6, cursor: savingAs ? "not-allowed" : "pointer",
+              display: "flex", alignItems: "center", gap: 4,
+            }}
+          >
+            <Globe size={12} />
+            {savingAs === "source" ? "Guardando..." : "Guardar como Fuente"}
+          </button>
+          <button
+            onClick={saveAsLead}
+            disabled={savingAs !== null}
+            style={{
+              padding: "5px 12px", fontSize: 12, fontWeight: 600,
+              background: "#059669", color: "#fff", border: "none",
+              borderRadius: 6, cursor: savingAs ? "not-allowed" : "pointer",
+              display: "flex", alignItems: "center", gap: 4,
+            }}
+          >
+            <Plus size={12} />
+            {savingAs === "lead" ? "Guardando..." : "Guardar como Lead"}
+          </button>
+        </div>
+      )}
+
+      {savedCount > 0 && (
+        <div style={{
+          padding: "6px 16px", background: "#D1FAE5", fontSize: 12, color: "#065F46",
+        }}>
+          {savedCount} guardados exitosamente.
+        </div>
+      )}
+
+      {/* Table header */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "36px 1fr 220px",
+        gap: "0 12px", padding: "10px 16px",
+        borderBottom: "1px solid var(--color-border)", background: "#F8FAFC",
+        fontSize: 11, fontWeight: 600, color: "#808080",
+        textTransform: "uppercase", letterSpacing: "0.05em",
+        alignItems: "center",
+      }}>
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <input
+            type="checkbox"
+            checked={selected.size === items.length && items.length > 0}
+            onChange={toggleAll}
+            style={{ cursor: "pointer" }}
+          />
+        </div>
+        <div>URL descartada</div>
+        <div>Razón</div>
+      </div>
+
+      {/* Rows */}
+      {items.map((item, i) => (
+        <div key={i} style={{
+          display: "grid", gridTemplateColumns: "36px 1fr 220px",
+          gap: "0 12px", padding: "9px 16px",
+          borderBottom: "1px solid #F3F4F6", alignItems: "center",
+          background: selected.has(i) ? "#EFF6FF" : "transparent",
+        }}>
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <input
+              type="checkbox"
+              checked={selected.has(i)}
+              onChange={() => toggle(i)}
+              style={{ cursor: "pointer" }}
+            />
+          </div>
+          <a
+            href={item.url.startsWith("http") ? item.url : `https://${item.url}`}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              fontSize: 12, color: "#4F46E5", textDecoration: "none",
+              overflow: "hidden", textOverflow: "ellipsis",
+              whiteSpace: "nowrap", display: "block",
+            }}
+          >
+            {item.url}
+          </a>
+          <span style={{ fontSize: 12, color: "#6B7280" }}>{item.reason_es || "—"}</span>
+        </div>
+      ))}
+    </div>
   );
 }

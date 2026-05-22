@@ -520,58 +520,6 @@ export function SearchPage(): JSX.Element {
                 </p>
               </div>
 
-              {/* Scraping Sources */}
-              {(scrapingSitesQuery.data?.items ?? []).length > 0 && (
-                <div>
-                  <label style={{ ...labelStyle, marginBottom: 8 }}>Incluir fuentes de scraping</label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {scrapingSitesQuery.data?.items.map((site) => (
-                      <label
-                        key={site.site_id}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          padding: 8,
-                          borderRadius: 8,
-                          border: `1px solid ${BORDER}`,
-                          cursor: "pointer",
-                          transition: "background 0.15s",
-                          background: selectedScrapingSiteIds.has(site.site_id)
-                            ? "rgba(239, 246, 255, 0.5)"
-                            : "transparent",
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedScrapingSiteIds.has(site.site_id)}
-                          onChange={(e) => {
-                            const next = new Set(selectedScrapingSiteIds);
-                            if (e.target.checked) {
-                              next.add(site.site_id);
-                            } else {
-                              next.delete(site.site_id);
-                            }
-                            setSelectedScrapingSiteIds(next);
-                          }}
-                          style={{ cursor: "pointer" }}
-                        />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 500, color: TEXT_MAIN }}>
-                            {site.title || new URL(site.url).hostname}
-                          </div>
-                          <div style={{ fontSize: 12, color: TEXT_MUTED }}>
-                            {site.url}
-                          </div>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                  <p style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 6 }}>
-                    Las fuentes se scraped en paralelo y sus resultados se agregan al directorio.
-                  </p>
-                </div>
-              )}
 
               {/* Directory */}
               <DirectoryRow

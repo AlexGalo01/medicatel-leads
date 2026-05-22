@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     google_places_enabled: bool = Field(default=True, alias="GOOGLE_PLACES_ENABLED")
     google_places_max_pages: int = Field(default=3, ge=1, le=3, alias="GOOGLE_PLACES_MAX_PAGES")
     # Grid search: 0 = deshabilitado, 2 = 2x2 (4 celdas), 3 = 3x3 (9 celdas), máx 4x4
-    google_places_grid_size: int = Field(default=3, ge=0, le=4, alias="GOOGLE_PLACES_GRID_SIZE")
+    google_places_grid_size: int = Field(default=4, ge=0, le=4, alias="GOOGLE_PLACES_GRID_SIZE")
     # Concurrencia máxima de llamadas paralelas a Google Places (evita rate limit 429)
     google_places_concurrency: int = Field(default=5, ge=1, le=10, alias="GOOGLE_PLACES_CONCURRENCY")
     google_model: str = Field(default="gemini-flash-latest", alias="GOOGLE_MODEL")

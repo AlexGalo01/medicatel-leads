@@ -253,6 +253,46 @@ async def local_business_search_node(state: LeadSearchGraphState) -> dict[str, o
             except Exception as exc:
                 logger.warning("Brave local bulk falló job_id=%s: %s", state.job_id, exc)
 
+        # 3b. Exa Search — complemento web para negocios locales
+        exa_count = 0
+        if settings.exa_api_key:
+            try:
+                from mle.clients.exa_client import ExaClient, exa_contents_highlights_config, finalize_exa_search_payload
+                exa_client = ExaClient(api_key=settings.exa_api_key)
+                exa_query = state.query_text
+                if "Honduras" not in exa_query and "honduras" not in exa_query:
+                    exa_query = f"{exa_query} Honduras"
+                exa_payload = finalize_exa_search_payload({
+                    "query": exa_query,
+                    "type": "neural",
+                    "numResults": 50,
+                    "category": "company",
+                    "userLocation": "HN",
+                    "contents": exa_contents_highlights_config(300),
+                })
+                exa_resp = await exa_client.search(exa_payload)
+                for r in exa_resp.get("results", []):
+                    all_results.append({
+                        "url": r.get("url", ""),
+                        "title": r.get("title", ""),
+                        "text": r.get("text", ""),
+                        "highlights": r.get("highlights", []),
+                        "source_type": "exa_company",
+                        "phone": "",
+                        "address": "",
+                        "website": r.get("url", ""),
+                        "hours": "",
+                        "rating": None,
+                        "review_count": None,
+                        "place_id": "",
+                        "lat": None,
+                        "lng": None,
+                    })
+                exa_count = len(exa_resp.get("results", []))
+                logger.info("Exa company search job_id=%s: %d results", state.job_id, exa_count)
+            except Exception as exc:
+                logger.warning("Exa local search failed job_id=%s: %s", state.job_id, exc)
+
         # 4. Dedup global por place_id + cap
         unique_results = _dedup_by_place_id(all_results)[:MAX_RESULTS]
 
@@ -289,6 +329,7 @@ async def local_business_search_node(state: LeadSearchGraphState) -> dict[str, o
                     "raw_count": len(all_results),
                     "unique_count": len(unique_results),
                     "brave_count": brave_count,
+                    "exa_count": exa_count,
                     "places_api_error": places_api_error,
                 },
                 "results_count": len(unique_results),

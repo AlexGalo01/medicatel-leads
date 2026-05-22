@@ -587,7 +587,8 @@ async def get_search_job_status(
     filter_stats: dict[str, Any] = {}
     for key in ("relevance_filter_kept", "relevance_filter_dropped",
                 "relevance_filter_heuristic_drops", "relevance_filter_mode",
-                "relevance_filter_discarded_sample", "relevance_filter_error"):
+                "relevance_filter_discarded_sample", "relevance_filter_error",
+                "heuristic_discarded_sample"):
         if key in job.metadata_json:
             filter_stats[key] = job.metadata_json[key]
 

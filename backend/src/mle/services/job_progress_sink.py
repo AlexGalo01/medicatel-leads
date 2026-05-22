@@ -59,6 +59,7 @@ async def persist_pipeline_progress(job_id: UUID, state: LeadSearchGraphState) -
                 "relevance_filter_kept", "relevance_filter_dropped",
                 "relevance_filter_heuristic_drops", "relevance_filter_mode",
                 "relevance_filter_discarded_sample", "relevance_filter_error",
+                "heuristic_discarded_sample",
                 "lpa_preview", "lpa_count",
             ):
                 if key in meta_from_state:

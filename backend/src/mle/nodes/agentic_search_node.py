@@ -23,8 +23,8 @@ from mle.state.graph_state import LeadSearchGraphState
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 8
-MAX_ACCUMULATED_RESULTS = 200
-MAX_EXA_CALLS_PER_PIPELINE = 5
+MAX_ACCUMULATED_RESULTS = 400
+MAX_EXA_CALLS_PER_PIPELINE = 8
 
 # Restricción geográfica fija — mientras el producto opera exclusivamente en Honduras
 FORCED_COUNTRY_ISO2 = "HN"

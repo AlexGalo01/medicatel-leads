@@ -253,6 +253,44 @@ async def init_db() -> None:
             )
         )
 
+        # 010: import_source column
+        await connection.execute(
+            text("ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS import_source VARCHAR(32)")
+        )
+
+        # 011: soft delete columns for users, steps, sources
+        for tbl in ("users", "directory_steps", "directory_sources"):
+            await connection.execute(
+                text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS deleted_by UUID")
+            )
+            await connection.execute(
+                text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ")
+            )
+
+        # 012: scraping_sites table
+        await connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS scraping_sites (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                url VARCHAR(2000) NOT NULL,
+                title VARCHAR(500) NOT NULL DEFAULT '',
+                notes TEXT,
+                scrape_prompt TEXT,
+                enrich_prompt TEXT,
+                last_scrape_job_id UUID,
+                created_by_user_id UUID,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """))
+
+        # 013: scraping_site_ids on search_jobs, auto_push on url_scrape_jobs
+        await connection.execute(text(
+            "ALTER TABLE search_jobs ADD COLUMN IF NOT EXISTS scraping_site_ids JSONB NOT NULL DEFAULT '[]'"
+        ))
+        await connection.execute(text(
+            "ALTER TABLE url_scrape_jobs ADD COLUMN IF NOT EXISTS auto_push BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+
         block = _pg_migration_sql_002()
         if not block:
             return

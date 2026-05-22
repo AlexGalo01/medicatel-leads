@@ -692,22 +692,28 @@ def filter_exa_list_heuristic_only(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """
     Filtra solo con heurística (sin LLM). Útil tras enriquecer con snippet largo o al fusionar 'cargar más'.
+    Retorna (items_kept, metadata) donde metadata incluye heuristic_discarded_sample.
     """
     if not target_iso or len(str(target_iso).strip()) != 2:
         return [x for x in items if isinstance(x, dict)], {"relevance_heuristic_only": "skipped_no_iso"}
     t = str(target_iso).strip().upper()
     kept: list[dict[str, Any]] = []
-    drops = 0
+    discarded: list[dict[str, str]] = []
     for item in items:
         if not isinstance(item, dict):
             continue
-        if _heuristic_should_drop(item, t):
-            drops += 1
+        reason = _heuristic_drop_reason(item, t)
+        if reason:
+            discarded.append({
+                "url": str(item.get("url", "")),
+                "reason_es": reason,
+            })
             continue
         kept.append(item)
     return kept, {
-        "relevance_heuristic_only_drops": drops,
+        "relevance_heuristic_only_drops": len(discarded),
         "relevance_heuristic_only_kept": len(kept),
+        "heuristic_discarded_sample": discarded,
     }
 
 
