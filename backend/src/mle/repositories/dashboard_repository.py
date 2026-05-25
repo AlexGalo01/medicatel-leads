@@ -134,12 +134,13 @@ class DashboardRepository:
         conversion_rates = self._compute_conversion_rates(opportunities_by_step)
 
         # Response outcomes
+        _outcome_col = func.coalesce(Opportunity.response_outcome, "sin_respuesta").label("outcome")
         outcome_rows = (await self.session.execute(
             select(
-                func.coalesce(Opportunity.response_outcome, "sin_respuesta"),
+                _outcome_col,
                 func.count(Opportunity.id),
             ).where(not_deleted)
-            .group_by(func.coalesce(Opportunity.response_outcome, "sin_respuesta"))
+            .group_by(_outcome_col)
         )).all()
         response_outcomes = {r[0]: r[1] for r in outcome_rows}
 
@@ -295,12 +296,13 @@ class DashboardRepository:
 
         # Import source
         not_deleted = Opportunity.deleted_at.is_(None)  # type: ignore[union-attr]
+        _src_col = func.coalesce(Opportunity.import_source, "desconocido").label("src")
         src_rows = (await self.session.execute(
             select(
-                func.coalesce(Opportunity.import_source, "desconocido"),
+                _src_col,
                 func.count(Opportunity.id),
             ).where(not_deleted)
-            .group_by(func.coalesce(Opportunity.import_source, "desconocido"))
+            .group_by(_src_col)
         )).all()
         by_import_source = {r[0]: r[1] for r in src_rows}
 

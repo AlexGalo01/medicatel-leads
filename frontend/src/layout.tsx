@@ -66,7 +66,7 @@ export function AppLayout(): JSX.Element {
             <FolderKanban size={16} aria-hidden />
             <span>Listas</span>
           </NavLink>
-          {/* Sources tab hidden — directory scraping now runs automatically in parallel with search */}
+          {/* NavLink de Fuentes oculto — accesible via /directory-sources */}
           {isAdmin && (
             <NavLink
               to="/admin/users"

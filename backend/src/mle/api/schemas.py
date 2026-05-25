@@ -504,6 +504,14 @@ class DirectorySourcesListResponse(BaseModel):
     items: list[DirectorySourceItemResponse] = Field(default_factory=list)
 
 
+class AllSourcesItemResponse(DirectorySourceItemResponse):
+    directory_name: str
+
+
+class AllSourcesListResponse(BaseModel):
+    items: list[AllSourcesItemResponse] = Field(default_factory=list)
+
+
 class ScrapingSiteCreateRequest(BaseModel):
     url: str = Field(min_length=5, max_length=2000)
     title: str = Field(default="", max_length=500)

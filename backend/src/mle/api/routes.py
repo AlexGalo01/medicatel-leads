@@ -30,6 +30,8 @@ from mle.api.schemas import (
     DirectorySourceItemResponse,
     DirectorySourcesListResponse,
     DirectorySourceUpdateRequest,
+    AllSourcesItemResponse,
+    AllSourcesListResponse,
     ScrapingSiteCreateRequest,
     ScrapingSiteResponse,
     ScrapingSiteUpdateRequest,
@@ -268,6 +270,7 @@ async def create_search_job(
         "user_query": user_query,
         "query_expansion_metadata": expansion_meta,
         "search_plan": plan_dict,
+        "search_focus": payload.search_focus or "general",
     }
     if payload.exa_criteria and payload.exa_criteria.strip():
         job_metadata["exa_criteria"] = payload.exa_criteria.strip()
@@ -2531,6 +2534,51 @@ async def delete_directory(
 # ============================================================================
 # DIRECTORY SOURCES — Referencias/scrapeo dentro de un directorio
 # ============================================================================
+
+
+@protected_router.get("/sources/all", response_model=AllSourcesListResponse)
+async def list_all_sources(
+    status: str | None = Query(default=None, max_length=32),
+    _u: User = Depends(require_permission("use_search")),
+) -> AllSourcesListResponse:
+    from mle.repositories.directory_sources_repository import (
+        DirectorySourcesRepository,
+    )
+
+    async with async_session_factory() as session:
+        dir_repo = DirectoriesRepository(session)
+        directories = await dir_repo.list_all()
+        if _u.role != "admin" and _u.allowed_directory_ids is not None:
+            allowed = {UUID(d) for d in _u.allowed_directory_ids}
+            directories = [d for d in directories if d.id in allowed]
+        dir_map = {d.id: d.name for d in directories}
+
+        src_repo = DirectorySourcesRepository(session)
+        sources = await src_repo.list_all(
+            directory_ids=list(dir_map.keys()), status=status
+        )
+    items = [
+        AllSourcesItemResponse(
+            source_id=str(s.id),
+            directory_id=str(s.directory_id),
+            directory_name=dir_map.get(s.directory_id, ""),
+            url=s.url,
+            title=s.title,
+            notes=s.notes,
+            status=s.status,
+            scrape_job_id=str(s.scrape_job_id) if s.scrape_job_id else None,
+            source_search_job_id=str(s.source_search_job_id)
+            if s.source_search_job_id
+            else None,
+            created_by_user_id=str(s.created_by_user_id)
+            if s.created_by_user_id
+            else None,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in sources
+    ]
+    return AllSourcesListResponse(items=items)
 
 
 @protected_router.get(

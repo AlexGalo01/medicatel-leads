@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 _MAX_PAGES = 100
 
+# Global semaphore to limit concurrent Playwright browsers (avoid "browser closed" errors)
+_BROWSER_SEMAPHORE = asyncio.Semaphore(3)
+
 _BROWSER_ARGS = [
     "--no-sandbox",
     "--disable-gpu",
@@ -194,7 +197,7 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
     3. Extrae JSON embebido en <script> tags (Next.js, SSR, etc.).
     4. Combina todo: API data + DOM text para máxima cobertura.
     """
-    async with async_playwright() as p:
+    async with _BROWSER_SEMAPHORE, async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=_BROWSER_ARGS)
         try:
             page = await browser.new_page()
@@ -352,17 +355,39 @@ async def _load_page_text_and_next_url(url: str) -> tuple[str, str | None]:
 
 async def _scrape_url_text(url: str) -> str:
     """Scrape full visible text from a single URL using Playwright."""
-    async with async_playwright() as p:
+    is_fb = "facebook.com" in url.lower()
+    async with _BROWSER_SEMAPHORE, async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=_BROWSER_ARGS)
         try:
-            page = await browser.new_page()
+            context = await browser.new_context(
+                viewport={"width": 1280, "height": 800},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+            ) if is_fb else await browser.new_context()
+            page = await context.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-            # Dismiss Facebook login modal if present
-            if "facebook.com" in url.lower():
+            if is_fb:
                 from mle.services.facebook_search_service import dismiss_facebook_modal
+                # Wait for FB content to render
+                try:
+                    await page.wait_for_function(
+                        "document.body.innerText.length > 500",
+                        timeout=8_000,
+                    )
+                except Exception:
+                    pass
                 await dismiss_facebook_modal(page)
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(1_500)
+                # Scroll to load "Detalles" section
+                await page.evaluate("window.scrollTo(0, 600)")
+                await page.wait_for_timeout(2_000)
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(1_500)
+            else:
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(1_500)
             return await page.inner_text("body")
         finally:
             await browser.close()
@@ -483,7 +508,7 @@ async def _navigate_and_scrape(
 ) -> list[tuple[str, str]]:
     """Navigate using LLM-guided strategy and scrape results with pagination."""
     results: list[tuple[str, str]] = []
-    async with async_playwright() as p:
+    async with _BROWSER_SEMAPHORE, async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=_BROWSER_ARGS)
         try:
             page = await browser.new_page()

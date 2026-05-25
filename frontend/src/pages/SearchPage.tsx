@@ -9,15 +9,12 @@ import {
   Globe,
   Instagram,
   Link as LinkIcon,
-  Linkedin,
   Loader2,
-  Map,
   Plus,
   Search,
   Sparkles,
   Twitter,
   UserRound,
-  Youtube,
   Zap,
 } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -37,7 +34,7 @@ const TEXT_MUTED = "var(--color-text-secondary)";
 const BG_LIGHT = "var(--color-surface-alt)";
 
 const cardStyle: React.CSSProperties = {
-  background: "var(--c-card-bg)",
+  background: "#ffffff",
   borderRadius: 16,
   boxShadow: "var(--c-card-shadow)",
   border: `1px solid ${BORDER}`,
@@ -492,10 +489,7 @@ export function SearchPage(): JSX.Element {
                   {[
                     { key: "facebook", icon: <Facebook size={14} />, label: "Facebook", color: "#1877F2", bg: "#EFF6FF", enabled: true },
                     { key: "instagram", icon: <Instagram size={14} />, label: "Instagram", color: "#E1306C", bg: "#FDF2F8", enabled: false },
-                    { key: "linkedin", icon: <Linkedin size={14} />, label: "LinkedIn", color: "#0A66C2", bg: "#EFF6FF", enabled: false },
                     { key: "twitter", icon: <Twitter size={14} />, label: "Twitter / X", color: "var(--color-text)", bg: "var(--color-surface-alt)", enabled: false },
-                    { key: "youtube", icon: <Youtube size={14} />, label: "YouTube", color: "#FF0000", bg: "#FEF2F2", enabled: false },
-                    { key: "maps", icon: <Map size={14} />, label: "Google Maps", color: "#059669", bg: "#F0FDF4", enabled: false },
                   ].map(({ key, icon, label, color, bg, enabled }) => {
                     const isActive = socialNetwork === key;
                     return (

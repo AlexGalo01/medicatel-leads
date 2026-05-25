@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import logging
 
-from playwright.async_api import async_playwright
-
 logger = logging.getLogger(__name__)
 
 _BROWSER_ARGS = [
@@ -14,76 +12,79 @@ _BROWSER_ARGS = [
     "--disable-extensions",
 ]
 
-# Selectors for the login modal close button (Facebook uses multiple variants)
-_MODAL_CLOSE_SELECTORS = [
-    'div[aria-label="Cerrar"]',
-    'div[aria-label="Close"]',
-    'div[role="dialog"] div[aria-label="Cerrar"]',
-    'div[role="dialog"] div[aria-label="Close"]',
-    'div[role="dialog"] [data-testid="royal_close_button"]',
-    'div[role="dialog"] i.img[alt="Cerrar"]',
-]
-
 
 async def dismiss_facebook_modal(page) -> None:
-    """Try to close the Facebook login modal if it appears."""
-    await page.wait_for_timeout(2_000)
-    for selector in _MODAL_CLOSE_SELECTORS:
+    """Try to close the Facebook login/signup modal that blocks page content."""
+    await page.wait_for_timeout(2_500)
+
+    # Strategy 1: Click the X button using aria-label (works in most locales)
+    for label in ("Cerrar", "Close", "Schließen", "Fechar"):
         try:
-            el = await page.query_selector(selector)
+            el = await page.query_selector(f'div[aria-label="{label}"]')
             if el and await el.is_visible():
                 await el.click()
-                logger.info("Facebook login modal dismissed via: %s", selector)
+                logger.info("Facebook modal dismissed via aria-label=%s", label)
                 await page.wait_for_timeout(1_000)
                 return
         except Exception:
             continue
-    # Fallback: try pressing Escape
+
+    # Strategy 2: Find the close button inside the dialog via JS
     try:
-        await page.keyboard.press("Escape")
-        await page.wait_for_timeout(500)
-        logger.info("Facebook login modal dismissed via Escape key")
+        closed = await page.evaluate("""() => {
+            // Find the dialog overlay
+            const dialogs = document.querySelectorAll('div[role="dialog"]');
+            for (const d of dialogs) {
+                // Look for any clickable close-like element
+                const closeBtn = d.querySelector('[aria-label="Cerrar"], [aria-label="Close"]')
+                    || d.querySelector('svg')?.closest('div[role="button"]')
+                    || d.querySelector('div[class*="x5an3"] div[role="button"]');
+                if (closeBtn) {
+                    closeBtn.click();
+                    return true;
+                }
+            }
+            // Try clicking the overlay backdrop itself
+            const overlay = document.querySelector('div[class*="x1n2onr6"][class*="x1ja2u2z"]');
+            if (overlay) {
+                overlay.click();
+                return true;
+            }
+            return false;
+        }""")
+        if closed:
+            logger.info("Facebook modal dismissed via JS dialog click")
+            await page.wait_for_timeout(1_000)
+            return
     except Exception:
         pass
 
+    # Strategy 3: Press Escape key
+    try:
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(1_000)
+        # Check if modal is still there
+        still_visible = await page.evaluate("""() => {
+            return !!document.querySelector('div[role="dialog"]');
+        }""")
+        if not still_visible:
+            logger.info("Facebook modal dismissed via Escape key")
+            return
+    except Exception:
+        pass
 
-async def scrape_facebook_page(url: str) -> str:
-    """Visit a Facebook page/profile URL and extract public text after dismissing login modal.
-
-    Used by the enrichment pipeline when visiting individual FB pages found via Exa/Brave.
-    """
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=_BROWSER_ARGS)
-        try:
-            context = await browser.new_context(
-                viewport={"width": 1280, "height": 800},
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-            )
-            page = await context.new_page()
-            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-
-            # Wait for content to render
-            try:
-                await page.wait_for_function(
-                    "document.body.innerText.length > 300",
-                    timeout=8_000,
-                )
-            except Exception:
-                pass
-
-            # Dismiss the login modal
-            await dismiss_facebook_modal(page)
-
-            # Scroll to load more content
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(1_500)
-
-            text = await page.inner_text("body")
-            await context.close()
-            return text
-        finally:
-            await browser.close()
+    # Strategy 4: Remove the modal from DOM entirely via JS
+    try:
+        await page.evaluate("""() => {
+            const dialogs = document.querySelectorAll('div[role="dialog"]');
+            dialogs.forEach(d => d.remove());
+            // Also remove overlay/backdrop
+            const overlays = document.querySelectorAll('div[class*="x1n2onr6"][class*="x1ja2u2z"]');
+            overlays.forEach(o => o.remove());
+            // Re-enable scrolling on body
+            document.body.style.overflow = 'auto';
+            document.documentElement.style.overflow = 'auto';
+        }""")
+        logger.info("Facebook modal removed from DOM via JS")
+    except Exception as exc:
+        logger.warning("Failed to dismiss Facebook modal: %s", exc)

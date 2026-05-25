@@ -160,6 +160,7 @@ async def _execute_web_search(
     seen_urls: set[str],
     job_id: Any,
     use_exa: bool = True,
+    facebook_parallel: bool = False,
 ) -> tuple[list[dict[str, Any]], str]:
     """Ejecuta búsqueda web. Si use_exa=True incluye Exa + Brave, sino solo Brave."""
     query = str(args.get("query", "")).strip()
@@ -224,6 +225,11 @@ async def _execute_web_search(
         if include_domains:
             brave_query = f"site:{include_domains[0]} {query}"
         brave_coros.append(brave_client.web_search(brave_query, country=brave_country, count=20, pages=2))
+
+        # Facebook parallel: add an extra Brave search restricted to facebook.com
+        if facebook_parallel and not include_domains:
+            fb_query = f"site:facebook.com {query}"
+            brave_coros.append(brave_client.web_search(fb_query, country=brave_country, count=20, pages=2))
 
     # Ejecutar en paralelo
     coros_to_run = ([exa_coro] if exa_coro else []) + brave_coros
@@ -311,12 +317,15 @@ async def agentic_search_node(state: LeadSearchGraphState) -> dict[str, object]:
         planner_output = _build_planner_output(state).model_dump()
 
         # Inject include_domains from search_plan (e.g., facebook focus)
+        brave_only = bool(state.search_plan.get("brave_only"))
         plan_domains = state.search_plan.get("include_domains")
         if plan_domains and isinstance(plan_domains, list):
             sc = dict(planner_output.get("search_config", {}))
             sc["include_domains"] = plan_domains
             planner_output["search_config"] = sc
             logger.info("Injected include_domains=%s from search_plan job_id=%s", plan_domains, state.job_id)
+        if brave_only:
+            logger.info("brave_only mode — Exa disabled for job_id=%s", state.job_id)
 
         # 2. Ejecutar company_anchor si aplica (reutilizar lógica inline)
         company_anchor = planner_output.get("company_anchor")
@@ -378,8 +387,8 @@ async def agentic_search_node(state: LeadSearchGraphState) -> dict[str, object]:
         async def tool_executor(fn_name: str, fn_args: dict[str, Any]) -> str:
             nonlocal exa_calls_used
             if fn_name == "web_search":
-                # Cap de Exa: máximo MAX_EXA_CALLS_PER_PIPELINE llamadas
-                should_use_exa = exa_calls_used < MAX_EXA_CALLS_PER_PIPELINE
+                # brave_only desactiva Exa (e.g. Facebook focus)
+                should_use_exa = (not brave_only) and exa_calls_used < MAX_EXA_CALLS_PER_PIPELINE
                 new_items, summary = await _execute_web_search(
                     fn_args,
                     settings=settings,
@@ -387,6 +396,7 @@ async def agentic_search_node(state: LeadSearchGraphState) -> dict[str, object]:
                     seen_urls=seen_urls,
                     job_id=state.job_id,
                     use_exa=should_use_exa,
+                    facebook_parallel=bool(state.search_plan.get("facebook_parallel")),
                 )
                 if should_use_exa:
                     exa_calls_used += 1

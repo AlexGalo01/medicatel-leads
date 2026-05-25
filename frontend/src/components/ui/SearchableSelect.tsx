@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from "react";
-import { createPortal } from "react-dom";
 import { ChevronDown } from "lucide-react";
 
 interface SearchableSelectProps {
@@ -18,14 +17,11 @@ export function SearchableSelect({
   options,
   placeholder = "Buscar...",
   label,
-  required,
   ariaLabel,
 }: SearchableSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0, width: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const filtered = options.filter((opt) =>
@@ -34,52 +30,28 @@ export function SearchableSelect({
 
   const selectedOption = options.find((opt) => opt.id === value);
 
-  // Update menu position when opened and on scroll/resize
+  // Close on click outside
   useEffect(() => {
-    if (!isOpen || !buttonRef.current) return;
-
-    function updatePosition() {
-      if (!buttonRef.current) return;
-      const rect = buttonRef.current.getBoundingClientRect();
-      setMenuPosition({ top: rect.bottom, left: rect.left, width: rect.width });
-    }
-
-    updatePosition();
-    window.addEventListener("scroll", updatePosition, true);
-    window.addEventListener("resize", updatePosition);
-    return () => {
-      window.removeEventListener("scroll", updatePosition, true);
-      window.removeEventListener("resize", updatePosition);
-    };
-  }, [isOpen]);
-
-  useEffect(() => {
+    if (!isOpen) return;
     function handleClickOutside(e: MouseEvent) {
-      const target = e.target as Node;
-      const inContainer = containerRef.current && containerRef.current.contains(target);
-      const inPortal = target && (target as Element).closest?.(".searchable-select-menu");
-      if (!inContainer && !inPortal) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsOpen(false);
       }
     }
-    if (isOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOpen]);
 
+  // Focus input when opened
   useEffect(() => {
-    if (isOpen && inputRef.current) {
-      inputRef.current.focus();
-    }
+    if (isOpen && inputRef.current) inputRef.current.focus();
   }, [isOpen]);
 
   return (
     <div ref={containerRef} className="searchable-select-wrapper">
       {label && <label className="searchable-select-label">{label}</label>}
-      <div className="searchable-select-container">
+      <div className="searchable-select-container" style={{ position: "relative" }}>
         <button
-          ref={buttonRef}
           type="button"
           className="searchable-select-button"
           onClick={() => setIsOpen(!isOpen)}
@@ -91,17 +63,16 @@ export function SearchableSelect({
           </span>
           <ChevronDown size={16} className={`chevron ${isOpen ? "open" : ""}`} aria-hidden />
         </button>
-      </div>
 
-      {isOpen &&
-        createPortal(
+        {isOpen && (
           <div
             className="searchable-select-menu"
             style={{
-              position: "fixed",
-              top: `${menuPosition.top}px`,
-              left: `${menuPosition.left}px`,
-              width: `${menuPosition.width}px`,
+              position: "absolute",
+              top: "100%",
+              left: 0,
+              right: 0,
+              zIndex: 50,
             }}
           >
             <input
@@ -112,9 +83,7 @@ export function SearchableSelect({
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setIsOpen(false);
-                }
+                if (e.key === "Escape") setIsOpen(false);
               }}
             />
             <ul className="searchable-select-list">
@@ -138,9 +107,9 @@ export function SearchableSelect({
                 <li className="searchable-select-empty">No hay listas que coincidan</li>
               )}
             </ul>
-          </div>,
-          document.body
+          </div>
         )}
+      </div>
     </div>
   );
 }

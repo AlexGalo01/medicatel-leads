@@ -11,6 +11,7 @@ import type {
   DirectorySourceItem,
   DirectorySourceUpdateRequest,
   DirectorySourcesListResponse,
+  AllSourcesListResponse,
   DirectoryStep,
   ScrapingSite,
   ScrapingSiteCreateRequest,
@@ -963,6 +964,17 @@ export async function enrichUrlScrapeProfiles(
 }
 
 // ---- Directory Sources (referencias guardadas) ----
+
+export async function listAllSources(
+  status?: string,
+): Promise<AllSourcesListResponse> {
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  const response = await apiFetch(
+    `${buildApiUrl(`/sources/all?${query}`)}`,
+  );
+  return parseJsonResponse<AllSourcesListResponse>(response);
+}
 
 export async function listDirectorySources(
   directoryId: string,

@@ -20,6 +20,7 @@ import { RegisterPage } from "./pages/RegisterPage";
 import { SearchPage } from "./pages/SearchPage";
 import { UrlScrapeJobPage } from "./pages/UrlScrapeJobPage";
 import { ScrapingSourcesPage } from "./pages/ScrapingSourcesPage";
+import { SourcesByDirectoryPage } from "./pages/SourcesByDirectoryPage";
 import { DashboardPage } from "./pages/DashboardPage";
 
 export const appRouter = createBrowserRouter([
@@ -37,6 +38,7 @@ export const appRouter = createBrowserRouter([
       { path: "dashboard", element: <DashboardPage /> },
       { path: "search", element: <SearchPage /> },
       { path: "sources", element: <ScrapingSourcesPage /> },
+      { path: "directory-sources", element: <SourcesByDirectoryPage /> },
       { path: "jobs/:jobId/result/:resultIndex", element: <JobExaResultDetailPage /> },
       { path: "jobs/:jobId", element: <JobSearchWorkspacePage /> },
       { path: "url-scrape-jobs/:jobId", element: <UrlScrapeJobPage /> },

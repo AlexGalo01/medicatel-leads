@@ -530,6 +530,14 @@ export interface DirectorySourcesListResponse {
   items: DirectorySourceItem[];
 }
 
+export interface AllSourcesItem extends DirectorySourceItem {
+  directory_name: string;
+}
+
+export interface AllSourcesListResponse {
+  items: AllSourcesItem[];
+}
+
 // ---- Scraping Sites (Global) ----
 
 export interface ScrapingSite {

@@ -38,11 +38,12 @@ async def run_job_pipeline(job_id: UUID) -> None:
         base_query = str(job.metadata_json.get("query_text", "")).strip() or job.specialty
         query_text = _build_query_text(base_query=base_query)
 
-        # Inject domain restriction for social network searches
+        # If Facebook focus, inject a parallel Brave search restricted to facebook.com
+        # This runs alongside the normal EXA pipeline (does NOT replace it)
         focus = str(job.metadata_json.get("focus", "general"))
         if focus == "facebook":
-            search_plan["include_domains"] = ["facebook.com"]
-            logger.info("Facebook focus: restricting search to facebook.com job_id=%s", job_id)
+            search_plan["facebook_parallel"] = True
+            logger.info("Facebook focus: will add site:facebook.com Brave search in parallel job_id=%s", job_id)
 
         await jobs_repository.update_status(
             job_id=job.id,
@@ -78,46 +79,11 @@ async def run_job_pipeline(job_id: UUID) -> None:
                 for scrape_job_id in scraping_jobs:
                     asyncio.create_task(run_url_scrape_pipeline(scrape_job_id))
 
-    # Auto-launch all scraping sites in parallel for people/health searches
-    # This complements the EXA search — does NOT replace or block it
-    if not job.scraping_site_ids:  # Only if not already manually specified
-        exa_cat = search_plan.get("exa_category")
-        if exa_cat in ("people", None):  # people searches or unspecified
-            try:
-                async with async_session_factory() as session:
-                    sites_repo = ScrapingSitesRepository(session)
-                    url_jobs_repo = UrlScrapeJobsRepository(session)
-                    all_sites = await sites_repo.list_all()
-                    if all_sites:
-                        logger.info(
-                            "Auto-launching %d scraping sites in parallel job_id=%s",
-                            len(all_sites), job_id,
-                        )
-                        auto_scrape_ids: list[UUID] = []
-                        for site in all_sites:
-                            prompt = site.scrape_prompt or f"Extraer profesionales: {site.title or site.url}"
-                            scrape_job = await url_jobs_repo.create(
-                                target_url=site.url,
-                                user_prompt=prompt,
-                                directory_id=job.directory_id,
-                            )
-                            scrape_job.auto_push = True
-                            session.add(scrape_job)
-                            auto_scrape_ids.append(scrape_job.id)
-                        if auto_scrape_ids:
-                            await session.commit()
-                            # Stagger launches to avoid overwhelming DB/network
-                            async def _launch_staggered(ids: list[UUID]) -> None:
-                                for i, sid in enumerate(ids):
-                                    if i > 0:
-                                        await asyncio.sleep(3)
-                                    try:
-                                        await run_url_scrape_pipeline(sid)
-                                    except Exception as e:
-                                        logger.warning("Scrape site failed sid=%s: %s", sid, e)
-                            asyncio.create_task(_launch_staggered(auto_scrape_ids))
-            except Exception as exc:
-                logger.warning("Auto-launch scraping sites failed: %s", exc)
+    # NOTE: Auto-launch of scraping sites disabled — Playwright browser concurrency
+    # causes "Target page, context or browser has been closed" errors when multiple
+    # scrapers run in parallel with the main search pipeline. Re-enable after
+    # implementing browser pooling (single long-lived browser per worker).
+    # Scraping sites can still be run manually from ScrapingSourcesPage.
 
     initial_state = LeadSearchGraphState(
         job_id=job_id,

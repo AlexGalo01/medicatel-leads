@@ -60,6 +60,23 @@ class DirectorySourcesRepository:
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
+    async def list_all(
+        self,
+        directory_ids: list[UUID] | None = None,
+        status: str | None = None,
+        limit: int = 500,
+    ) -> list[DirectorySource]:
+        query = select(DirectorySource).where(
+            DirectorySource.deleted_at.is_(None),
+        )
+        if directory_ids is not None:
+            query = query.where(DirectorySource.directory_id.in_(directory_ids))
+        if status:
+            query = query.where(DirectorySource.status == status)
+        query = query.order_by(DirectorySource.created_at.desc()).limit(limit)
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
     async def update(
         self,
         source_id: UUID,

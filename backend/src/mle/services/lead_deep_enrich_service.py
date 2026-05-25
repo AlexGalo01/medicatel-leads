@@ -447,16 +447,52 @@ async def _brave_social_profiles(brave: BraveSearchClient, lead: LeadCore) -> di
     }
     country_iso = _COUNTRY_ISO.get(lead.country)
     out: dict[str, str] = {}
-    try:
-        fb_q = f'site:facebook.com "{name}" {city}'.strip()
-        fb_items = await brave.web_search(fb_q, country=country_iso, count=5, pages=1)
-        for item in fb_items:
-            url = str(item.get("url", "")).strip()
-            if "facebook.com/" in url and "/profile.php" not in url and "/posts/" not in url:
+
+    # --- Facebook: múltiples queries en paralelo para maximizar cobertura ---
+    _FB_EXCLUDED = ("/profile.php", "/posts/", "/photo", "/videos/", "/reels/", "/stories/")
+
+    def _valid_fb_url(url: str) -> bool:
+        return "facebook.com/" in url and not any(ex in url for ex in _FB_EXCLUDED)
+
+    fb_queries: list[str] = []
+    # 1. Nombre exacto + ciudad (query original)
+    if name and city:
+        fb_queries.append(f'site:facebook.com "{name}" {city}')
+    # 2. Nombre exacto + especialidad
+    if name and specialty:
+        fb_queries.append(f'site:facebook.com "{name}" {specialty}')
+    # 3. Sin comillas: match parcial nombre + especialidad + ciudad
+    if name and specialty and city:
+        fb_queries.append(f'site:facebook.com {name} {specialty} {city}')
+    # 4. Página de negocio: especialidad + ciudad (sin nombre personal)
+    if specialty and city:
+        fb_queries.append(f'site:facebook.com "{specialty}" {city} Honduras')
+    # Fallback: si solo hay nombre
+    if not fb_queries and name:
+        fb_queries.append(f'site:facebook.com "{name}" Honduras')
+
+    async def _fb_search(query: str) -> list[str]:
+        try:
+            items = await brave.web_search(query, country=country_iso, count=5, pages=1)
+            return [str(it.get("url", "")).strip() for it in items if _valid_fb_url(str(it.get("url", "")))]
+        except Exception:  # noqa: BLE001
+            return []
+
+    fb_results = await asyncio.gather(*[_fb_search(q) for q in fb_queries])
+
+    # Priorizar: queries más específicas primero (orden de fb_queries)
+    seen_fb: set[str] = set()
+    for urls in fb_results:
+        for url in urls:
+            normalized = url.rstrip("/").lower()
+            if normalized not in seen_fb:
+                seen_fb.add(normalized)
                 out["facebook_url"] = url
                 break
-    except Exception:  # noqa: BLE001
-        pass
+        if "facebook_url" in out:
+            break
+
+    # --- Instagram: sin cambios ---
     try:
         ig_q = f'site:instagram.com "{name}" {specialty} {city}'.strip()
         ig_items = await brave.web_search(ig_q, country=country_iso, count=5, pages=1)
@@ -467,7 +503,7 @@ async def _brave_social_profiles(brave: BraveSearchClient, lead: LeadCore) -> di
                 break
     except Exception:  # noqa: BLE001
         pass
-    logger.debug("_brave_social_profiles lead=%s result=%s", lead.full_name, out)
+    logger.debug("_brave_social_profiles lead=%s queries=%d result=%s", lead.full_name, len(fb_queries), out)
     return out
 
 
